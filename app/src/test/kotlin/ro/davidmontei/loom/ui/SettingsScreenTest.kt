@@ -305,6 +305,53 @@ class SettingsScreenTest {
         rule.onNodeWithText("The last sync failed: Can't reach the RomM server").assertExists()
     }
 
+    private val rejectedToken = CatalogSyncStatus(running = false, error = "RomM rejected Loom's token. Pair again in Settings.", needsPairing = true)
+
+    /** Found by review: a rejected token's line here said "Pair again in Settings", with no Pair again in the section. */
+    @Test fun aRejectedTokenInLibrarySyncLeadsToPairing() {
+        state = sample.copy(sync = rejectedToken)
+        show()
+        goTo(SettingsSection.LIBRARY)
+        press(Key.DirectionCenter) // the interval
+        rule.onNodeWithText("The last sync failed: RomM rejected Loom's token.").assertExists()
+        press(Key.DirectionDown); press(Key.DirectionDown) // past Only on Wi-Fi
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("repair")
+    }
+
+    /** Pairing again from Library sync comes back to its Pair again, and to the interval once the new token's sync starts. */
+    @Test fun backFromPairingAgainInLibrarySyncFocusesItsPairAgain() {
+        state = sample.copy(sync = rejectedToken)
+        val restore = StateRestorationTester(rule)
+        restore.setContent { LoomTestTheme { SettingsContent(state, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        goTo(SettingsSection.LIBRARY)
+        press(Key.DirectionCenter); press(Key.DirectionDown); press(Key.DirectionDown) // Pair again
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("repair")
+        // Pairing opens on top and Settings leaves composition; coming back recreates it from saved state.
+        restore.emulateSavedInstanceStateRestore()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        update { it.copy(sync = CatalogSyncStatus(running = true)) } // the new token works: its sync replaces the failure
+        rule.onNodeWithText("Every 12 h").assertIsFocused()
+    }
+
+    @Test fun backFromPairingAgainInLibrarySyncWithTheSyncAlreadyStartedFocusesTheInterval() {
+        state = sample.copy(sync = rejectedToken)
+        val restore = StateRestorationTester(rule)
+        restore.setContent { LoomTestTheme { SettingsContent(state, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        goTo(SettingsSection.LIBRARY)
+        press(Key.DirectionCenter); press(Key.DirectionDown); press(Key.DirectionDown) // Pair again
+        press(Key.DirectionCenter)
+        state = state.copy(sync = CatalogSyncStatus(running = true)) // paired while away: the sync is under way on return
+        restore.emulateSavedInstanceStateRestore()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText("Every 12 h").assertIsFocused()
+    }
+
     @Test fun pickingAFolderGivesFocusBackToChangeFolder() {
         show()
         goTo(SettingsSection.STORAGE)

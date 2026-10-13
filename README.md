@@ -187,7 +187,7 @@ Long-press Loom's icon for the **Sync library** and **Downloads** shortcuts.
 | "This card can't hold files over 4 GB (FAT32)" | Reformat the SD card as exFAT. |
 | "Needs X free on the SD card" | Offload something (X on an installed game) and retry from the queue. |
 | Downloads stop in the background | Allow background downloads in Settings → Downloads. Opening Loom resumes them either way. |
-| "RomM rejected Loom's token" | The token expired or was revoked. Use Settings → Server & pairing → Pair again. Your library and games stay. |
+| "RomM rejected Loom's token" | The token expired or was revoked. Press **Pair again** beside the error, in the library or in Settings → Library sync, or use Settings → Server & pairing → Pair again. Your library and games stay. |
 | New games on RomM don't show up | Press Sync in the library. Settings → Library sync shows when the last sync ran. The background one waits for a network and a battery that isn't low, Android may run it later while the Thor sleeps, and it skips its turn when RomM can't be reached. |
 | A multi-disc game shows up as one game per disc | RomM lists loose `(Disc N)` files as separate games; see [Preparing your RomM library](#preparing-your-romm-library). |
 | Multi-disc PS1 games don't start in DuckStation via Cocoon | A known Cocoon issue with relative `.m3u` paths for DuckStation's default player (CocoonFE discussion #414). |

@@ -204,7 +204,7 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
                 message?.let { Text(it, color = LoomColors.Accent, style = MaterialTheme.typography.bodyMedium) }
                 when (section) {
                     SettingsSection.SERVER -> ServerSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
-                    SettingsSection.LIBRARY -> LibrarySyncSection(state, actions, first)
+                    SettingsSection.LIBRARY -> LibrarySyncSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
                     SettingsSection.STORAGE -> StorageSection(state, actions, first)
                     SettingsSection.MAPPING -> MappingSection(state, actions, first)
                     SettingsSection.DOWNLOADS -> DownloadsSection(state, actions, first)
@@ -326,9 +326,34 @@ private fun ServerSection(
 }
 
 @Composable
-private fun LibrarySyncSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
+private fun LibrarySyncSection(
+    state: SettingsUiState,
+    actions: SettingsActions,
+    modifier: Modifier = Modifier,
+    backFromPairing: Boolean = false,
+    onBackFromPairing: () -> Unit = {},
+) {
     val first = modifier
     val refresh = state.settings?.catalogRefresh ?: CatalogRefresh.DEFAULT
+    val sync = state.sync
+    val currentChip = remember { FocusRequester() }
+    val pairAgainFocus = remember { FocusRequester() }
+    // Back from pairing again, focus is where the user left, on Pair again. If the new token already works,
+    // its sync has replaced the failure and the button has gone: the interval instead.
+    LaunchedEffect(Unit) {
+        if (backFromPairing) {
+            delay(50) // as InitialFocus: the button has to be laid out first
+            if (!runCatching { pairAgainFocus.requestFocus() }.getOrDefault(false)) runCatching { currentChip.requestFocus() }
+            onBackFromPairing()
+        }
+    }
+    // That sync can also start once Pair again has focus, taking the button away: focus stays in the section.
+    // (Read while composing: by the time the effect runs, the button has gone and reported losing focus.)
+    var pairAgainFocused by remember { mutableStateOf(false) }
+    val pairAgainHadFocus = pairAgainFocused
+    LaunchedEffect(sync.needsPairing) {
+        if (!sync.needsPairing && pairAgainHadFocus) { delay(50); runCatching { currentChip.requestFocus() } }
+    }
     SectionTop {
         SectionHeader("Automatic refresh")
         Text("Loom checks RomM for new, changed and removed games in the background, while online and the battery isn't low.",
@@ -336,7 +361,7 @@ private fun LibrarySyncSection(state: SettingsUiState, actions: SettingsActions,
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
             CatalogRefresh.entries.forEach { r ->
                 // Focus arrives on the current choice, so a second A changes nothing.
-                LoomChip(r.label, r == refresh, { actions.setCatalogRefresh(r) }, if (r == refresh) first else Modifier)
+                LoomChip(r.label, r == refresh, { actions.setCatalogRefresh(r) }, if (r == refresh) first.focusRequester(currentChip) else Modifier)
             }
         }
     }
@@ -344,15 +369,22 @@ private fun LibrarySyncSection(state: SettingsUiState, actions: SettingsActions,
         subtitle = "Not over mobile data or a phone's hotspot.")
     SectionHeader("Last sync")
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
-        val sync = state.sync
         Column(Modifier.weight(1f)) {
             Text(
                 if (sync.running) sync.total?.let { "Syncing ${sync.fetched} of $it" } ?: "Syncing…"
                 else state.settings?.lastCatalogSyncEpochMs?.let { "Last synced ${ago(it)}" } ?: "Not synced yet",
             )
             if (!sync.running && sync.error != null) {
-                Text("The last sync failed: ${sync.error}", color = LoomColors.Error, style = MaterialTheme.typography.bodySmall)
+                // The sync's own text sends the user to Settings; here the way out is the button beside it.
+                Text("The last sync failed: ${if (sync.needsPairing) "RomM rejected Loom's token." else sync.error}",
+                    color = LoomColors.Error, style = MaterialTheme.typography.bodySmall)
             }
+        }
+        // Nearest the line it answers, so Down from Only on Wi-Fi lands on it. The token is already
+        // rejected, so unlike Server & pairing's Pair again there is nothing to lose and nothing to confirm.
+        if (sync.needsPairing) {
+            LoomButton("Pair again", onClick = actions::repair,
+                modifier = Modifier.focusRequester(pairAgainFocus).onFocusChanged { pairAgainFocused = it.isFocused })
         }
         LoomButton("Full resync", onClick = actions::fullResync)
     }
