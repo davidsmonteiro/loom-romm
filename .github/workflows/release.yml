@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign and publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write # create the GitHub release
+    env:
+      # The release key's certificate, also printed in the README. An APK signed with anything else
+      # (for instance the runner's debug key, if the secrets were missing) is never published.
+      CERT_SHA256: 01cd53468d2a18ceef366089d8c0bfd69db6bd2b6bbe9d1e8e2c03f93081d227
+      BUILD_TOOLS: 37.0.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # versionCode counts commits and versionName comes from the tag
+          persist-credentials: false
+
+      - name: Check the tag is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - uses: ./.github/actions/setup
+
+      - name: Test and lint
+        run: ./gradlew :core-romm:test :core-storage:test :app:testDebugUnitTest :app:lintDebug
+
+      - name: Build the signed APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.LOOM_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.LOOM_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.LOOM_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.LOOM_KEY_PASSWORD }}
+        run: |
+          base64 -d <<<"$KEYSTORE_BASE64" > "$RUNNER_TEMP/loom.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/loom.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+          ./gradlew :app:assembleRelease
+          rm -f keystore.properties "$RUNNER_TEMP/loom.jks"
+
+      - name: Check the signature and version
+        run: |
+          apk=app/build/outputs/apk/release/app-release.apk
+          tools="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
+          "$tools/apksigner" verify --print-certs "$apk" | tee certs.txt
+          grep -q "certificate SHA-256 digest: $CERT_SHA256" certs.txt
+          "$tools/aapt2" dump badging "$apk" > badging.txt
+          grep "^package:" badging.txt
+          grep -q "versionName='${GITHUB_REF_NAME#v}'" badging.txt
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cp app/build/outputs/apk/release/app-release.apk "loom-$version.apk"
+          previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          if [ -n "$previous" ]; then
+            git log --no-merges --format='- %s' "$previous..$GITHUB_REF_NAME" > notes.md
+          else
+            echo "First release: browse your RomM library, install games into Cocoon's folders, and offload them." > notes.md
+          fi
+          gh release create "$GITHUB_REF_NAME" "loom-$version.apk" \
+            --title "Loom $version" --notes-file notes.md --verify-tag

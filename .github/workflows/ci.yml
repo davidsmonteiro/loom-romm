@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Tests, lint and builds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # versionCode counts commits and versionName comes from the last tag
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      # The release build is signed with the runner's debug key here; building it catches R8 problems,
+      # which only show up in minified builds.
+      - name: Test, lint and build
+        run: >-
+          ./gradlew
+          :core-romm:test :core-storage:test :app:testDebugUnitTest
+          :app:lintDebug :app:assembleDebug :app:assembleRelease
+
+      - name: Upload test and lint reports
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports
+          path: |
+            */build/reports/
+            */build/test-results/
+          retention-days: 14
