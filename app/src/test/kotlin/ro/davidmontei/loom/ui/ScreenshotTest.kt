@@ -45,6 +45,17 @@ class ScreenshotTest {
         rule.saveScreenshot("library-details-failed")
     }
 
+    @Test fun queue() {
+        rule.setContent { LoomTestTheme { ro.davidmontei.loom.ui.queue.QueueContent(QueueScreenTest.sample, object : ro.davidmontei.loom.ui.queue.QueueActions {
+            override fun pause(jobId: Long) = Unit
+            override fun resume(jobId: Long) = Unit
+            override fun retry(jobId: Long) = Unit
+            override fun cancel(jobId: Long) = Unit
+        }) } }
+        settle()
+        rule.saveScreenshot("queue")
+    }
+
     @Test fun libraryOffloadConfirm() {
         rule.setContent { LoomTestTheme { LibraryContent(library.state, NoopLibraryActions) } }
         settle()

@@ -7,6 +7,15 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
+data class RecentInstall(
+    @androidx.room.ColumnInfo(name = "rom_id") val romId: Int,
+    val title: String,
+    @androidx.room.ColumnInfo(name = "rel_path") val relPath: String,
+    val bytes: Long,
+    @androidx.room.ColumnInfo(name = "installed_at") val installedAt: Long,
+    @androidx.room.ColumnInfo(name = "verified_by") val verifiedBy: String,
+)
+
 @Dao
 interface DownloadDao {
 
@@ -123,6 +132,10 @@ interface DownloadDao {
         return true
     }
 
-    @Query("SELECT * FROM installs WHERE source = 'LOOM' ORDER BY installed_at DESC LIMIT :limit")
-    fun observeRecentInstalls(limit: Int = 30): Flow<List<InstallEntity>>
+    @Query(
+        """SELECT i.rom_id, COALESCE(r.title, i.rel_path) AS title, i.rel_path, i.bytes, i.installed_at, i.verified_by
+           FROM installs i LEFT JOIN roms r ON r.id = i.rom_id
+           WHERE i.source = 'LOOM' ORDER BY i.installed_at DESC LIMIT :limit""",
+    )
+    fun observeRecentInstalls(limit: Int = 30): Flow<List<RecentInstall>>
 }
