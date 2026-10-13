@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -33,6 +34,16 @@ import ro.davidmontei.loom.storage.engine.formatBytes
 import javax.inject.Inject
 
 enum class LibraryFilter(val label: String) { ALL("All"), ON_DEVICE("On device"), NOT_ON_DEVICE("Not on device") }
+
+/**
+ * The platform the library shows: the one [picked] with the rail or L1/R1, else the first listed.
+ * That default is pinned into [picked] as soon as there is one: a first sync adds platforms as their
+ * ROMs arrive, not by name, and one sorting earlier would otherwise take over the screen (title,
+ * games and focus) while the user is browsing.
+ */
+internal fun selectedPlatform(platforms: Flow<List<PlatformSummary>>, picked: MutableStateFlow<Int?>): Flow<PlatformSummary?> =
+    combine(platforms, picked) { list, id -> list.firstOrNull { it.platform.id == id } ?: list.firstOrNull() }
+        .onEach { if (it != null && picked.value == null) picked.value = it.platform.id }
 
 data class LibraryHeader(
     val sync: CatalogSyncStatus,
@@ -59,10 +70,9 @@ class LibraryViewModel @Inject constructor(
     val query = MutableStateFlow("")
     val gridMode = MutableStateFlow(true)
 
-    /** The selected platform, defaulting to the first one with games. */
-    val selected: StateFlow<PlatformSummary?> = combine(platforms, selectedId) { list, id ->
-        list.firstOrNull { it.platform.id == id } ?: list.firstOrNull()
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    /** The selected platform, defaulting to the first one with games (see [selectedPlatform]). */
+    val selected: StateFlow<PlatformSummary?> = selectedPlatform(platforms, selectedId)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val games: StateFlow<List<GameItem>> = combine(selected, filter, query.debounce(150)) { p, f, q -> Triple(p, f, q) }
         .flatMapLatest { (platform, f, q) ->
