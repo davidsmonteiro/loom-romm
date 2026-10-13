@@ -25,10 +25,37 @@
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="keyboard|keyboardHidden|navigation"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <!-- Headless commands for scripts (adb / Termux): SYNC_CATALOG, PUSH_SAVES, PULL_SAVES.
+             Explicit broadcasts only; every command just queues work. -->
+        <receiver
+            android:name=".headless.CommandReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver" />
+
+        <!-- Invisible trampoline for launcher shortcuts and `am start`. -->
+        <activity
+            android:name=".headless.CommandActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="ro.davidmontei.loom.action.SYNC_CATALOG" />
+                <action android:name="ro.davidmontei.loom.action.PUSH_SAVES" />
+                <action android:name="ro.davidmontei.loom.action.PULL_SAVES" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 

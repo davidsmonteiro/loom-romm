@@ -11,6 +11,7 @@ import dagger.hilt.components.SingletonComponent
 import ro.davidmontei.loom.data.catalog.AfterCatalogSync
 import ro.davidmontei.loom.data.catalog.CatalogSyncScheduler
 import ro.davidmontei.loom.data.catalog.CatalogSyncer
+import ro.davidmontei.loom.data.catalog.CoverPrefetcher
 import ro.davidmontei.loom.data.db.CatalogDao
 import ro.davidmontei.loom.data.db.LoomDatabase
 import ro.davidmontei.loom.data.download.StorageVolumes
@@ -42,6 +43,9 @@ object DataModule {
     /** After every sync, the catalog's view of what's on the SD card is checked against reality. */
     @Provides @Singleton
     fun afterCatalogSync(installs: InstallManager): AfterCatalogSync = AfterCatalogSync { installs.reconcile() }
+
+    @Provides @Singleton
+    fun coverPrefetcher(@ApplicationContext context: Context, catalog: CatalogDao) = CoverPrefetcher(context, catalog)
 
     @Provides @Singleton
     fun catalogSyncScheduler(workManager: WorkManager) = CatalogSyncScheduler(workManager)

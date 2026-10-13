@@ -61,6 +61,7 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import kotlinx.coroutines.delay
 import okhttp3.HttpUrl
+import ro.davidmontei.loom.data.catalog.coverCacheKey
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.romm.RommUrls
 import ro.davidmontei.loom.storage.engine.formatBytes
@@ -426,7 +427,7 @@ private fun Cover(game: GameItem, coverBase: HttpUrl?, modifier: Modifier) {
         }
         return
     }
-    val key = game.coverPath!!.substringBefore('?') + "#" + game.coverPath.substringAfter("ts=", "")
+    val key = coverCacheKey(game.coverPath!!)
     AsyncImage(
         model = ImageRequest.Builder(LocalContext.current).data(url.toString()).diskCacheKey(key).memoryCacheKey(key).crossfade(true).build(),
         contentDescription = null,

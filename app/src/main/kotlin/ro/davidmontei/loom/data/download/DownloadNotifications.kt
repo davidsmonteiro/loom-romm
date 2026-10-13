@@ -33,7 +33,7 @@ class DownloadNotifications(private val context: Context) {
         val builder = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
             .setSmallIcon(R.drawable.ic_stat_loom)
             .setContentTitle(title)
-            .setContentText(if (queued > 0) "$text · ${context.getString(R.string.download_more_queued, queued)}" else text)
+            .setContentText(if (queued > 0) "$text · ${context.resources.getQuantityString(R.plurals.download_more_queued, queued, queued)}" else text)
             .setProgress(100, percent, total <= 0)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
