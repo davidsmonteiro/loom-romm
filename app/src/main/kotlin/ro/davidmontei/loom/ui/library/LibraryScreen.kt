@@ -1,8 +1,10 @@
 package ro.davidmontei.loom.ui.library
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,16 +29,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Sync
-import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -50,7 +52,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
-import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -71,17 +72,18 @@ import ro.davidmontei.loom.data.catalog.CoverRef
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.ui.components.ButtonHint
-import ro.davidmontei.loom.ui.components.InitialFocus
-import ro.davidmontei.loom.ui.components.gameCount
 import ro.davidmontei.loom.ui.components.FocusRingIndication
+import ro.davidmontei.loom.ui.components.InitialFocus
 import ro.davidmontei.loom.ui.components.LoomButton
 import ro.davidmontei.loom.ui.components.LoomChip
 import ro.davidmontei.loom.ui.components.LoomDialog
 import ro.davidmontei.loom.ui.components.LoomProgressBar
+import ro.davidmontei.loom.ui.components.LoomRow
 import ro.davidmontei.loom.ui.components.LoomTextField
 import ro.davidmontei.loom.ui.components.ScreenScaffold
 import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.StatusBadge
+import ro.davidmontei.loom.ui.components.gameCount
 import ro.davidmontei.loom.ui.input.PadAction
 import ro.davidmontei.loom.ui.input.onPadAction
 import ro.davidmontei.loom.ui.theme.LoomColors
@@ -98,6 +100,7 @@ data class LibraryUiState(
     val header: LibraryHeader,
     val coverBase: HttpUrl?,
     val message: String? = null,
+    val folderQuestion: FolderQuestion? = null,
 )
 
 interface LibraryActions {
@@ -116,6 +119,10 @@ interface LibraryActions {
     fun openSettings()
     /** Pairs Loom with RomM again, after RomM rejected its token. */
     fun repair()
+    /** The answer to [LibraryUiState.folderQuestion]. */
+    fun chooseFolder(folder: String)
+    fun showAllFolders()
+    fun dismissFolderQuestion()
 }
 
 @Composable
@@ -133,6 +140,7 @@ fun LibraryScreen(
     val grid by vm.gridMode.collectAsStateWithLifecycle()
     val header by vm.header.collectAsStateWithLifecycle()
     val coverBase by vm.coverBase.collectAsStateWithLifecycle()
+    val folderQuestion by vm.folderQuestion.collectAsStateWithLifecycle()
     var message by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { vm.messages.collect { message = it; delay(3500); message = null } }
 
@@ -151,9 +159,12 @@ fun LibraryScreen(
             override fun openQueue(focusJobId: Long?) = openQueue(focusJobId)
             override fun openSettings() = openSettings()
             override fun repair() = onRepair()
+            override fun chooseFolder(folder: String) { vm.chooseFolder(folder) }
+            override fun showAllFolders() { vm.showAllFolders() }
+            override fun dismissFolderQuestion() = vm.dismissFolderQuestion()
         }
     }
-    LibraryContent(LibraryUiState(platforms, selected, games, filter, query, grid, header, coverBase, message), actions)
+    LibraryContent(LibraryUiState(platforms, selected, games, filter, query, grid, header, coverBase, message, folderQuestion), actions)
 }
 
 private val libraryHints = listOf(
@@ -277,7 +288,65 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                 },
             )
         }
+        state.folderQuestion?.let { FolderQuestionDialog(it, actions) }
     }
+}
+
+/**
+ * Where a platform's games go, when the card has several folders that could be the one Cocoon reads.
+ * Focus starts on the likeliest, so A takes it; "Another folder…" lists every folder in the ROMs folder.
+ */
+@Composable
+private fun FolderQuestionDialog(q: FolderQuestion, actions: LibraryActions) {
+    LoomDialog(
+        title = "Where does Cocoon look for ${q.platformName} games?",
+        onDismiss = actions::dismissFolderQuestion,
+        body = {
+            Text(
+                if (q.allFolders == null) "Your card has more than one folder these games could go in. Loom remembers your " +
+                    "answer; Settings › Platform folders can change it."
+                else "Every folder in your ROMs folder.",
+                style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted,
+            )
+            val folders = q.allFolders ?: q.options
+            val grid = rememberLazyGridState()
+            val suggested = remember { FocusRequester() }
+            // After the dialog's own first focus: scroll the likeliest into view, then focus it.
+            LaunchedEffect(folders) {
+                val index = folders.indexOfFirst { it.name == q.suggested }.coerceAtLeast(0)
+                grid.scrollToItem(index)
+                delay(50)
+                runCatching { suggested.requestFocus() }
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                state = grid,
+                modifier = Modifier.fillMaxWidth().heightIn(max = 168.dp).testTag("folder-options"),
+                contentPadding = PaddingValues(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(Space.s),
+                verticalArrangement = Arrangement.spacedBy(Space.s),
+            ) {
+                items(folders, key = { it.name }) { folder ->
+                    LoomRow(
+                        title = "${folder.name}/",
+                        subtitle = folder.systemName,
+                        subtitleLines = 1,
+                        dense = true,
+                        trailing = {
+                            Text(if (folder.games == 0) "empty" else gameCount(folder.games),
+                                style = MaterialTheme.typography.labelMedium.tabular(), color = LoomColors.TextMuted)
+                        },
+                        onClick = { actions.chooseFolder(folder.name) },
+                        modifier = (if (folder.name == q.suggested) Modifier.focusRequester(suggested) else Modifier).testTag("folder-${folder.name}"),
+                    )
+                }
+            }
+        },
+        buttons = { first ->
+            if (q.allFolders == null) LoomButton("Another folder…", actions::showAllFolders, Modifier.focusRequester(first))
+            LoomButton("Cancel", actions::dismissFolderQuestion, if (q.allFolders == null) Modifier else Modifier.focusRequester(first))
+        },
+    )
 }
 
 @Composable

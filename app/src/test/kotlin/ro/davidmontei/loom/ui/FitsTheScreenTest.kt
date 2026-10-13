@@ -1,5 +1,8 @@
 package ro.davidmontei.loom.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasText
@@ -9,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import java.io.File
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -16,6 +20,11 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
+import ro.davidmontei.loom.storage.mapping.SystemFolder
+import ro.davidmontei.loom.ui.library.FolderQuestion
+import ro.davidmontei.loom.ui.library.GameItem
+import ro.davidmontei.loom.ui.library.InstallState
+import ro.davidmontei.loom.ui.library.LibraryContent
 import ro.davidmontei.loom.ui.onboarding.OnboardingActions
 import ro.davidmontei.loom.ui.onboarding.OnboardingContent
 import ro.davidmontei.loom.ui.onboarding.OnboardingState
@@ -23,7 +32,6 @@ import ro.davidmontei.loom.ui.onboarding.OnboardingStep
 import ro.davidmontei.loom.ui.onboarding.PairMode
 import ro.davidmontei.loom.ui.settings.SettingsActions
 import ro.davidmontei.loom.ui.settings.SettingsContent
-import java.io.File
 
 /**
  * Screens that must fit the Thor's top screen without scrolling. Native graphics measure text with
@@ -81,5 +89,19 @@ class FitsTheScreenTest {
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
         rule.onNodeWithText("PlayStation").performClick() // with Reset, and the other Cocoon folders under the field
         assertThat(overflow("Files to download")).isEqualTo(0f)
+    }
+
+    /** The question at a platform's first download, with its few options and with every folder of the Thor's ES-DE template. */
+    @Test fun theFolderQuestionFits() {
+        val options = listOf(SystemFolder("mame", 0, "Multiple Arcade Machine Emulator"), SystemFolder("arcade", 2, "Arcade"),
+            SystemFolder("fbneo", 5, "FinalBurn Neo"), SystemFolder("fba", 0, "FinalBurn Alpha"))
+        val game = GameItem(1, "Alley Master", 101_385, null, emptyList(), InstallState.NOT_INSTALLED, null, null, null, false, false, null)
+        val question = FolderQuestion(game, "Arcade", "arcade", "arcade", options, "mame")
+        var state by mutableStateOf(LibraryScreenTest().state.copy(folderQuestion = question))
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        assertThat(overflow("Where does Cocoon look for Arcade games?")).isEqualTo(0f)
+        rule.saveScreenshot("library-folder-question")
+        state = state.copy(folderQuestion = question.copy(allFolders = (1..178).map { SystemFolder("system$it", 0, "Some System $it") }))
+        assertThat(overflow("Where does Cocoon look for Arcade games?")).isEqualTo(0f)
     }
 }

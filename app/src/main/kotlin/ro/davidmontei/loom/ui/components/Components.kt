@@ -185,6 +185,7 @@ fun LoomRow(
     selected: Boolean = false,
     /** Shorter, for lists that must fit the screen (Settings' sections). */
     dense: Boolean = false,
+    subtitleLines: Int = 3,
 ) {
     val shape = RoundedCornerShape(14.dp)
     Row(
@@ -207,7 +208,7 @@ fun LoomRow(
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (subtitle != null) {
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = 3,
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = subtitleLines,
                     overflow = TextOverflow.Ellipsis)
             }
         }

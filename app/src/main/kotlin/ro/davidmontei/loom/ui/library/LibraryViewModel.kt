@@ -3,6 +3,7 @@ package ro.davidmontei.loom.ui.library
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl
 import ro.davidmontei.loom.data.catalog.CatalogSyncScheduler
@@ -28,10 +30,12 @@ import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.download.EnqueueResult
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.install.OffloadResult
+import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.storage.engine.formatBytes
-import javax.inject.Inject
+import ro.davidmontei.loom.storage.mapping.FolderDecision
+import ro.davidmontei.loom.storage.mapping.SystemFolder
 
 enum class LibraryFilter(val label: String) { ALL("All"), ON_DEVICE("On device"), NOT_ON_DEVICE("Not on device") }
 
@@ -51,6 +55,21 @@ data class LibraryHeader(
     val activeDownloads: Int,
 )
 
+/**
+ * Asked at a platform's first download when the card has several folders its games could go in
+ * ([FolderDecision.Ask]). The answer is remembered as the platform's folder.
+ */
+data class FolderQuestion(
+    val game: GameItem,
+    val platformName: String,
+    val slug: String,
+    val fsSlug: String,
+    val options: List<SystemFolder>,
+    val suggested: String,
+    /** Every folder in the ROMs folder, once the user asks for one that isn't among [options]. */
+    val allFolders: List<SystemFolder>? = null,
+)
+
 @OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
@@ -60,6 +79,7 @@ class LibraryViewModel @Inject constructor(
     private val syncScheduler: CatalogSyncScheduler,
     private val server: ActiveServer,
     settings: SettingsStore,
+    private val folders: FolderChooser,
 ) : ViewModel() {
 
     val platforms: StateFlow<List<PlatformSummary>> = catalog.observePlatformSummaries()
@@ -91,6 +111,9 @@ class LibraryViewModel @Inject constructor(
     val coverBase: StateFlow<HttpUrl?> = settings.settings.map { it.server?.url }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    private val _folderQuestion = MutableStateFlow<FolderQuestion?>(null)
+    val folderQuestion: StateFlow<FolderQuestion?> = _folderQuestion
+
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages: Flow<String> = _messages.receiveAsFlow()
 
@@ -113,13 +136,47 @@ class LibraryViewModel @Inject constructor(
     fun toggleGrid() { gridMode.value = !gridMode.value }
     fun sync(full: Boolean = false) = syncScheduler.enqueue(full)
 
+    /**
+     * X on a game. A platform's first download settles its system folder: from what is on the card
+     * when that's clear, else by asking ([folderQuestion]). Either way the choice is remembered.
+     */
     fun download(game: GameItem) = viewModelScope.launch {
-        when (val r = downloads.enqueue(game.id)) {
-            is EnqueueResult.Queued -> _messages.send("${game.title} added to the queue")
-            EnqueueResult.AlreadyQueued -> _messages.send("${game.title} is already in the queue")
-            EnqueueResult.AlreadyInstalled -> _messages.send("${game.title} is already on your device")
-            is EnqueueResult.Failed -> _messages.send(r.message)
+        val platform = selected.value?.platform ?: return@launch enqueue(game)
+        when (val d = folders.decide(platform.slug, platform.fsSlug)) {
+            is FolderDecision.Ask ->
+                _folderQuestion.value = FolderQuestion(game, platform.displayName, platform.slug, platform.fsSlug, d.options, d.suggested)
+            is FolderDecision.Use -> {
+                if (d.why != FolderDecision.Why.CHOSEN) folders.choose(platform.slug, platform.fsSlug, d.folder)
+                // Found on the card rather than the default: say where, the one time it's decided.
+                val found = d.why == FolderDecision.Why.HAS_GAMES || d.why == FolderDecision.Why.ONLY_FOLDER
+                enqueue(game, note = if (found) "${platform.displayName} games go in ${d.folder}/" else null)
+            }
         }
+    }
+
+    /** The answer to [folderQuestion]: remembered for the platform, then the game is queued. */
+    fun chooseFolder(folder: String) = viewModelScope.launch {
+        val q = _folderQuestion.value ?: return@launch
+        _folderQuestion.value = null
+        folders.choose(q.slug, q.fsSlug, folder)
+        enqueue(q.game)
+    }
+
+    fun showAllFolders() = viewModelScope.launch {
+        val all = folders.allFolders()
+        _folderQuestion.update { it?.copy(allFolders = all) }
+    }
+
+    fun dismissFolderQuestion() { _folderQuestion.value = null }
+
+    private suspend fun enqueue(game: GameItem, note: String? = null) {
+        val text = when (val r = downloads.enqueue(game.id)) {
+            is EnqueueResult.Queued -> "${game.title} added to the queue" + note?.let { ". $it" }.orEmpty()
+            EnqueueResult.AlreadyQueued -> "${game.title} is already in the queue"
+            EnqueueResult.AlreadyInstalled -> "${game.title} is already on your device"
+            is EnqueueResult.Failed -> r.message
+        }
+        _messages.send(text)
     }
 
     fun offload(game: GameItem) = viewModelScope.launch {

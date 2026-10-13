@@ -29,6 +29,8 @@ import org.robolectric.annotation.Config
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.PlatformSummary
+import ro.davidmontei.loom.storage.mapping.SystemFolder
+import ro.davidmontei.loom.ui.library.FolderQuestion
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.InstallState
 import ro.davidmontei.loom.ui.library.LibraryActions
@@ -63,6 +65,9 @@ class LibraryScreenTest {
         override fun openQueue(focusJobId: Long?) { calls += if (focusJobId == null) "queue" else "queue:$focusJobId" }
         override fun openSettings() { calls += "settings" }
         override fun repair() { calls += "repair" }
+        override fun chooseFolder(folder: String) { calls += "folder:$folder" }
+        override fun showAllFolders() { calls += "allFolders" }
+        override fun dismissFolderQuestion() { calls += "dismissFolder" }
     }
 
     private fun platform(id: Int, name: String, roms: Int, installed: Int, bytes: Long) =
@@ -430,5 +435,45 @@ class LibraryScreenTest {
         rule.onNodeWithText("Sync now").assertIsFocused()
         press(Key.DirectionCenter)
         assertThat(calls).contains("sync")
+    }
+
+    // --- the folder question, at a platform's first download when the card has several candidates ---
+
+    private val arcadeQuestion = FolderQuestion(
+        game = games[1], platformName = "Arcade", slug = "arcade", fsSlug = "arcade",
+        options = listOf(SystemFolder("mame", 0, "Multiple Arcade Machine Emulator"), SystemFolder("arcade", 0, "Arcade"),
+            SystemFolder("fbneo", 0, "FinalBurn Neo"), SystemFolder("fba", 0, "FinalBurn Alpha")),
+        suggested = "mame",
+    )
+
+    @Test fun theFolderQuestionStartsOnTheLikeliestFolder() {
+        state = state.copy(folderQuestion = arcadeQuestion)
+        show()
+        rule.onNodeWithTag("folder-mame", useUnmergedTree = true).assertIsFocused()
+        press(Key.DirectionRight) // arcade/, the user's
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("folder:arcade")
+    }
+
+    @Test fun anotherFolderListsEveryFolderStillOnTheLikeliest() {
+        state = state.copy(folderQuestion = arcadeQuestion)
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown) // past the options to the buttons
+        rule.onNodeWithText("Another folder…").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("allFolders")
+        val all = ("abcdefghijkl".map { "$it$it" } + "mame" + "naomi" + "neogeo").map { SystemFolder(it, 0, null) }
+        update { it.copy(folderQuestion = arcadeQuestion.copy(allFolders = all)) }
+        rule.onNodeWithTag("folder-mame", useUnmergedTree = true).assertIsFocused() // scrolled to, past the first rows
+    }
+
+    @Test fun bLeavesTheFolderQuestionAndFocusGoesBackToTheGame() {
+        show()
+        press(Key.DirectionRight) // EarthBound
+        update { it.copy(folderQuestion = arcadeQuestion) }
+        back()
+        assertThat(calls).contains("dismissFolder")
+        update { it.copy(folderQuestion = null) }
+        rule.onNodeWithTag("game-2").assertIsFocused()
     }
 }

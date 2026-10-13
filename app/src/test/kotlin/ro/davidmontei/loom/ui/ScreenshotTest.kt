@@ -98,4 +98,7 @@ object NoopLibraryActions : ro.davidmontei.loom.ui.library.LibraryActions {
     override fun openQueue(focusJobId: Long?) = Unit
     override fun openSettings() = Unit
     override fun repair() = Unit
+    override fun chooseFolder(folder: String) = Unit
+    override fun showAllFolders() = Unit
+    override fun dismissFolderQuestion() = Unit
 }
