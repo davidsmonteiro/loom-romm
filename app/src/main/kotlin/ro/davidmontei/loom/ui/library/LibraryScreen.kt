@@ -503,26 +503,28 @@ private fun GameDialog(
             game.progress?.let { LoomProgressBar(it) }
         },
         buttons = { first ->
-            val f = Modifier.focusRequester(first)
-            when (game.state) {
-                InstallState.NOT_INSTALLED -> if (!game.removedOnServer) LoomButton("Download", { onDownload(game) }, f, primary = true)
-                    else LoomButton("Close", onDismiss, f)
-                InstallState.INSTALLED -> {
-                    LoomButton("Close", onDismiss, f)
-                    LoomButton("Remove from device", { onOffload(game) }, destructive = true)
-                }
-                InstallState.FAILED -> {
-                    LoomButton("Retry", { onRetry(game) }, f, primary = true)
-                    LoomButton("Remove from queue", { onCancel(game) })
-                }
-                InstallState.QUEUED, InstallState.DOWNLOADING -> {
-                    LoomButton("Close", onDismiss, f)
-                    LoomButton("Cancel download", { onCancel(game) }, destructive = true)
-                }
+            // Each button is drawn from one place whatever the state, so a download finishing or
+            // failing while the details are open relabels the focused button instead of replacing
+            // it: a new one would leave focus on the game behind the dialog.
+            val main = when (game.state) {
+                InstallState.NOT_INSTALLED -> if (!game.removedOnServer) DialogAction("Download", primary = true) { onDownload(game) }
+                    else DialogAction("Close", onClick = onDismiss)
+                InstallState.FAILED -> DialogAction("Retry", primary = true) { onRetry(game) }
+                InstallState.INSTALLED, InstallState.QUEUED, InstallState.DOWNLOADING -> DialogAction("Close", onClick = onDismiss)
             }
+            val other = when (game.state) {
+                InstallState.NOT_INSTALLED -> null
+                InstallState.INSTALLED -> DialogAction("Remove from device", destructive = true) { onOffload(game) }
+                InstallState.FAILED -> DialogAction("Remove from queue") { onCancel(game) }
+                InstallState.QUEUED, InstallState.DOWNLOADING -> DialogAction("Cancel download", destructive = true) { onCancel(game) }
+            }
+            LoomButton(main.label, main.onClick, Modifier.focusRequester(first), primary = main.primary)
+            other?.let { LoomButton(it.label, it.onClick, destructive = it.destructive) }
         },
     )
 }
+
+private class DialogAction(val label: String, val primary: Boolean = false, val destructive: Boolean = false, val onClick: () -> Unit)
 
 private fun ago(epochMs: Long): String {
     val minutes = (System.currentTimeMillis() - epochMs) / 60_000

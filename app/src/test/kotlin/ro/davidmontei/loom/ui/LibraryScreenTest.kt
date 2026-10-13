@@ -182,6 +182,27 @@ class LibraryScreenTest {
         assertThat(calls.filter { it.startsWith("offload") }).isEmpty()
     }
 
+    private fun changeGame(id: Int, to: GameItem) = update { s -> s.copy(games = s.games.map { if (it.id == id) to else it }) }
+
+    /** Found by audit: a download finishing while its details were open left focus on the game behind. */
+    @Test fun detailsKeepFocusWhenADownloadFinishes() {
+        show()
+        press(listOf(Key.DirectionRight, Key.DirectionRight, Key.DirectionCenter)) // Super Metroid, downloading
+        rule.onNodeWithText("Close").assertIsFocused()
+        changeGame(3, game(3, "Super Metroid", InstallState.INSTALLED))
+        rule.onNodeWithText("Remove from device").assertExists()
+        rule.onNodeWithText("Close").assertIsFocused()
+    }
+
+    @Test fun detailsKeepFocusWhenADownloadFails() {
+        show()
+        press(listOf(Key.DirectionRight, Key.DirectionRight, Key.DirectionCenter)) // Super Metroid, downloading
+        changeGame(3, game(3, "Super Metroid", InstallState.FAILED, detail = "Connection lost"))
+        rule.onNodeWithText("Retry").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("retry:3")
+    }
+
     /** Found on the Thor: Y only put the ring on the search box, and A was needed to type. */
     @Test fun yStartsTypingASearch() {
         show()
