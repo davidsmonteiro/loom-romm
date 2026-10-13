@@ -3,6 +3,7 @@ package ro.davidmontei.loom.ui.settings
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.provider.Settings as AndroidSettings
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.indication
@@ -150,6 +151,9 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
     // A on a section opens it: focus moves to its first control once it is shown.
     var opened by remember { mutableIntStateOf(0) }
     LaunchedEffect(opened) { if (opened > 0) runCatching { contentFirst.requestFocus() } }
+    // B inside a section undoes that A, back to the section in the list (as Left does); from there it leaves Settings.
+    var contentHasFocus by remember { mutableStateOf(false) }
+    BackHandler(enabled = contentHasFocus) { runCatching { sectionFocus.getValue(section).requestFocus() } }
 
     ScreenScaffold(title = "Settings", hints = settingsHints) {
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
@@ -172,6 +176,7 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
             Column(
                 // Only a move (Right) is redirected: focus given back to a control after a dialog closes stays on it.
                 Modifier.weight(1f).fillMaxHeight()
+                    .onFocusChanged { contentHasFocus = it.hasFocus }
                     .focusProperties { onEnter = { if (requestedFocusDirection != FocusDirection.Enter) runCatching { contentFirst.requestFocus() } } }
                     .verticalScroll(rememberScrollState()).padding(8.dp).testTag("settings-content"),
                 verticalArrangement = Arrangement.spacedBy(Space.m),

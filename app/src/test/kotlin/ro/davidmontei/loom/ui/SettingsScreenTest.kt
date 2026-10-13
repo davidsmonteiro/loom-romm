@@ -138,6 +138,17 @@ class SettingsScreenTest {
         rule.onNodeWithTag("section-STORAGE").assertIsFocused()
     }
 
+    /** Found by audit: B inside a section left Settings instead of going back to the section list. */
+    @Test fun bInsideASectionReturnsToTheSectionList() {
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown) // Platform folders
+        press(Key.DirectionCenter) // Export
+        press(Key.DirectionDown); press(Key.DirectionDown) // a platform row
+        back()
+        rule.onNodeWithTag("section-MAPPING").assertIsFocused()
+        assertThat(rule.activity.isFinishing).isFalse()
+    }
+
     /** Found on the Thor: the licence text scrolled by touch only. */
     @Test fun licenceTextScrollsWithThePad() {
         show()
