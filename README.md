@@ -1,5 +1,7 @@
 # Loom
 
+[![CI](https://github.com/davidsmonteiro/loom-romm/actions/workflows/ci.yml/badge.svg)](https://github.com/davidsmonteiro/loom-romm/actions/workflows/ci.yml)
+
 Loom is a small companion app for the [Cocoon](https://github.com/inssekt/CocoonFE) frontend on the AYN Thor. It copies games from your self-hosted [RomM](https://github.com/rommapp/romm) server into the folders Cocoon already scans, and removes them again when you need space. You still browse and play in Cocoon; Loom is the store you visit now and then.
 
 ![Library](docs/screenshots/library-grid.png)
@@ -28,7 +30,23 @@ Loom does not launch games, replace the home screen, or emulate anything. Save s
 | Device | Android 11+ (minSdk 30). Designed for the AYN Thor's top screen, which runs Android 13. |
 | Permissions | **All files access**, to write into the folders Cocoon scans. Loom is sideloaded, so Play policy doesn't apply. Also notifications, and an optional battery-optimisation exemption so downloads restart in the background. |
 
-## Build and install
+## Install
+
+Get `loom-<version>.apk` from [Releases](https://github.com/davidsmonteiro/loom-romm/releases), or let [Obtainium](https://github.com/ImranR98/Obtainium) install it and keep it up to date: **Add app**, paste `https://github.com/davidsmonteiro/loom-romm`, then **Add** and install.
+
+If you built and installed Loom yourself, uninstall that copy first. Android won't update it with a release signed by a different key, and Obtainium may report it as already up to date.
+
+Releases are signed with this certificate:
+
+```
+SHA-256: 01:CD:53:46:8D:2A:18:CE:EF:36:60:89:D8:C0:BF:D6:9D:B6:BD:2B:6B:BE:9D:1E:8E:2C:03:F9:30:81:D2:27
+```
+
+To check an APK: `apksigner verify --print-certs loom-<version>.apk`.
+
+To open Loom from Cocoon, add it from Cocoon's app drawer.
+
+## Build from source
 
 You need JDK 17 and the Android SDK with `platforms;android-37.0` and `build-tools;37.0.0`:
 
@@ -38,9 +56,7 @@ sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Release builds are minified with R8. To sign them, create a `keystore.properties` file in the repo root; it's gitignored. Without it, the release APK is signed with your debug key, so you can install it over a debug build to test the minified app without losing pairing or data.
-
-Android only updates an app signed with the same key. Moving from a debug-signed install to one signed with your own key therefore means uninstalling first. That wipes Loom's data: you pair again (then revoke the old client token in RomM's web UI) and Loom picks up the games already on the card when it syncs.
+Release builds are minified with R8 (`./gradlew assembleRelease`). They're signed with your debug key unless there's a `keystore.properties` file in the repo root (it's gitignored):
 
 ```properties
 storeFile=/path/to/loom.jks
@@ -49,7 +65,9 @@ keyAlias=loom
 keyPassword=…
 ```
 
-Then run `./gradlew assembleRelease`. To open Loom from Cocoon, add it from Cocoon's app drawer.
+With it, release builds are signed with that key. Signed with the key behind this repo's releases, they install over a published release in place, keeping pairing and data. Debug builds always use the debug key: a debuggable build signed with the release key could replace a release and expose its data. Without the file, the release build is signed with the debug key, so it installs over a debug build to test the minified app.
+
+Android only updates an app signed with the same key. Moving between a release from this repo and your own build, or between two keys, therefore means uninstalling first. That wipes Loom's data: you pair again (then revoke the old client token in RomM's web UI) and Loom picks up the games already on the card when it syncs.
 
 ## First run
 
@@ -175,7 +193,7 @@ Long-press Loom's icon for the **Sync library** and **Downloads** shortcuts.
 
 ```sh
 ./gradlew test             # all JVM tests: :core-romm, :core-storage, :app (Robolectric, SDK 33)
-./gradlew lintDebug        # 0 errors, 0 warnings
+./gradlew lintDebug        # any warning fails the build
 ./gradlew :core-romm:liveCheck -Promm.url=https://romm.example.org            # read-only probe of a real server
 LOOM_TOKEN=rmm_… ./gradlew :core-romm:liveCheck -Promm.url=https://romm.example.org   # …plus platforms and a page of ROMs
 ```
@@ -191,6 +209,18 @@ Further reading:
 - [`CONTEXT.md`](CONTEXT.md): the project's vocabulary.
 - [`docs/adr/`](docs/adr/): the decisions behind staging, per-file downloads, archive checks, pairing, the Keystore, Retrofit and the module split.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md): Phases 2 and 3.
+
+### Releases
+
+[CI](.github/workflows/ci.yml) runs the tests, lint and both builds on every push to `main` and every pull request. Pushing a `v*` tag on `main` runs [Release](.github/workflows/release.yml), which tests again, then builds, signs and publishes the APK:
+
+```sh
+git tag -a v0.2.0 -m "Loom 0.2.0" && git push origin v0.2.0
+```
+
+- `versionName` comes from the tag (`0.2.0`); later builds read `0.2.0-3-gabc1234`. `versionCode` is the number of commits, so it only grows as long as `main`'s history is never rewritten.
+- The workflow reads four repository secrets: `LOOM_KEYSTORE_BASE64` (from `base64 -w0 loom.jks`), `LOOM_KEYSTORE_PASSWORD`, `LOOM_KEY_ALIAS` and `LOOM_KEY_PASSWORD`.
+- It won't publish an APK whose certificate differs from the one under [Install](#install), or whose version differs from the tag.
 
 ## License and credits
 
