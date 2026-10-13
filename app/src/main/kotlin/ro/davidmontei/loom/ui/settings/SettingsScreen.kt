@@ -350,7 +350,8 @@ private fun MappingSection(state: SettingsUiState, actions: SettingsActions, mod
     val first = modifier
     var editing by remember { mutableStateOf<MappingRow?>(null) }
     // Each platform's row, so closing the editor puts focus back on the row it was opened from.
-    val rowFocus = remember { mutableMapOf<Int, FocusRequester>() }
+    val ids = state.mapping.map { it.platform.platform.id }
+    val rowFocus = remember(ids) { ids.associateWith { FocusRequester() } }
     var editedId by remember { mutableStateOf<Int?>(null) }
     ReturnFocusOnClose(editing != null) { editedId?.let(rowFocus::get) }
     SectionTop {
@@ -372,7 +373,7 @@ private fun MappingSection(state: SettingsUiState, actions: SettingsActions, mod
             subtitle = "→ ${r.folder}/ · archives: ${if (r.archive == ArchivePolicy.EXTRACT) "unpack" else "keep"} · " +
                 "files: ${r.include.sorted().joinToString()}",
             onClick = { editing = row; editedId = id },
-            modifier = Modifier.focusRequester(rowFocus.getOrPut(id) { FocusRequester() }),
+            modifier = Modifier.focusRequester(rowFocus.getValue(id)),
             trailing = {
                 when (r.source) {
                     MappingSource.USER -> StatusBadge("Changed", color = LoomColors.AccentMuted, onColor = LoomColors.Text)
