@@ -86,6 +86,8 @@ data class QueueItem(
     val canPause get() = phase == JobPhase.QUEUED || phase == JobPhase.WAITING || phase == JobPhase.DOWNLOADING ||
         phase == JobPhase.VERIFYING || phase == JobPhase.EXTRACTING
     val failed get() = phase == JobPhase.FAILED
+    /** Moving into place can't be stopped half way. */
+    val canCancel get() = phase != JobPhase.PROMOTING
 }
 
 data class QueueUiState(val active: List<QueueItem>, val failed: List<QueueItem>, val finished: List<RecentInstall>)
@@ -177,7 +179,7 @@ fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? =
     // lands on the list, which restores the job last focused: the one X was pressed on.
     Box(Modifier.fillMaxSize().focusProperties { onEnter = { runCatching { listFocus.requestFocus() } } }.focusGroup().onPadAction { action ->
         when (action) {
-            PadAction.X -> (state.active + state.failed).firstOrNull { it.jobId == focusedId }?.let { confirmCancel = it } != null
+            PadAction.X -> (state.active + state.failed).firstOrNull { it.jobId == focusedId && it.canCancel }?.let { confirmCancel = it } != null
             else -> false
         }
     }) {

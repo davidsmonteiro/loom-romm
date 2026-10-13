@@ -133,6 +133,14 @@ class QueueScreenTest {
         rule.onNodeWithTag("job-18").assertIsFocused()
     }
 
+    /** Found by audit: X on a job being moved into place asked to cancel it, and then nothing happened. */
+    @Test fun xDoesNotOfferToCancelAJobBeingMovedIntoPlace() {
+        show(sample.copy(active = listOf(item(1, "Final Fantasy VII (USA)", JobPhase.PROMOTING))))
+        rule.onNodeWithTag("job-1").assertIsFocused()
+        press(Key.ButtonX)
+        rule.onNodeWithText("Keep").assertDoesNotExist()
+    }
+
     @Test fun xIgnoresFinishedGames() {
         show()
         repeat(4) { press(Key.DirectionDown) } // past the jobs to the finished Chrono Trigger

@@ -178,10 +178,11 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     val railFocus = remember { FocusRequester() }
 
 
+    // X does what the details offer; where that's nothing to download or retry, the details say why.
     fun toggle(game: GameItem) = when (game.state) {
-        InstallState.NOT_INSTALLED -> actions.download(game)
+        InstallState.NOT_INSTALLED -> if (game.removedOnServer) detailsFor = game else actions.download(game)
         InstallState.INSTALLED -> confirmOffload = game
-        InstallState.FAILED -> actions.retry(game)
+        InstallState.FAILED -> if (game.retryable) actions.retry(game) else detailsFor = game
         InstallState.QUEUED, InstallState.DOWNLOADING -> actions.openQueue(game.jobId)
     }
 
@@ -533,7 +534,10 @@ private fun GameDialog(
                 when (game.state) {
                     InstallState.INSTALLED -> add("On this device at ${game.installPath}" + if (game.adopted) " (already there before Loom)" else "")
                     InstallState.QUEUED, InstallState.DOWNLOADING -> add(game.stateDetail ?: "Downloading")
-                    InstallState.FAILED -> add(game.stateDetail ?: "The last download failed")
+                    InstallState.FAILED -> {
+                        add(game.stateDetail ?: "The last download failed")
+                        if (!game.retryable) add("Retrying won't help until this is fixed.")
+                    }
                     InstallState.NOT_INSTALLED -> add(if (game.removedOnServer) "No longer on the RomM server" else "Not on this device")
                 }
             }
@@ -543,19 +547,10 @@ private fun GameDialog(
         buttons = { first ->
             // Each button is drawn from one place whatever the state, so a download finishing or
             // failing while the details are open relabels the focused button instead of replacing
-            // it: a new one would leave focus on the game behind the dialog.
-            val main = when (game.state) {
-                InstallState.NOT_INSTALLED -> if (!game.removedOnServer) DialogAction("Download", primary = true) { onDownload(game) }
-                    else DialogAction("Close", onClick = onDismiss)
-                InstallState.FAILED -> DialogAction("Retry", primary = true) { onRetry(game) }
-                InstallState.INSTALLED, InstallState.QUEUED, InstallState.DOWNLOADING -> DialogAction("Close", onClick = onDismiss)
-            }
-            val other = when (game.state) {
-                InstallState.NOT_INSTALLED -> null
-                InstallState.INSTALLED -> DialogAction("Remove from device", destructive = true) { onOffload(game) }
-                InstallState.FAILED -> DialogAction("Remove from queue") { onCancel(game) }
-                InstallState.QUEUED, InstallState.DOWNLOADING -> DialogAction("Cancel download", destructive = true) { onCancel(game) }
-            }
+            // it: a new one would leave focus on the game behind the dialog. They are chosen outside
+            // composition, because branches there (each lambda in a composable is remembered) can
+            // still move the buttons to a new place in it.
+            val (main, other) = detailsButtons(game, onDismiss, onDownload, onOffload, onRetry, onCancel)
             LoomButton(main.label, main.onClick, Modifier.focusRequester(first), primary = main.primary)
             other?.let { LoomButton(it.label, it.onClick, destructive = it.destructive) }
         },
@@ -563,6 +558,27 @@ private fun GameDialog(
 }
 
 private class DialogAction(val label: String, val primary: Boolean = false, val destructive: Boolean = false, val onClick: () -> Unit)
+
+/** The details' first button (which has focus) and optional second one, for the game's state. */
+private fun detailsButtons(
+    game: GameItem,
+    close: () -> Unit,
+    download: (GameItem) -> Unit,
+    offload: (GameItem) -> Unit,
+    retry: (GameItem) -> Unit,
+    cancel: (GameItem) -> Unit,
+): Pair<DialogAction, DialogAction?> {
+    val closeButton = DialogAction("Close", onClick = close)
+    val removeFromQueue = DialogAction("Remove from queue") { cancel(game) }
+    return when (game.state) {
+        InstallState.NOT_INSTALLED -> Pair(if (game.removedOnServer) closeButton else DialogAction("Download", primary = true) { download(game) }, null)
+        InstallState.INSTALLED -> Pair(closeButton, DialogAction("Remove from device", destructive = true) { offload(game) })
+        // Retrying a failure that retrying can't fix is refused, so it isn't offered.
+        InstallState.FAILED -> if (game.retryable) Pair(DialogAction("Retry", primary = true) { retry(game) }, removeFromQueue)
+            else Pair(removeFromQueue, null)
+        InstallState.QUEUED, InstallState.DOWNLOADING -> Pair(closeButton, DialogAction("Cancel download", destructive = true) { cancel(game) })
+    }
+}
 
 private fun ago(epochMs: Long): String {
     val minutes = (System.currentTimeMillis() - epochMs) / 60_000

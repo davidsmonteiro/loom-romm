@@ -216,6 +216,30 @@ class LibraryScreenTest {
         assertThat(calls).contains("retry:3")
     }
 
+    /** Found by audit: X on a download that retrying can't fix did nothing, and the details offered Retry. */
+    @Test fun xOnAFailureRetryingCantFixShowsWhy() {
+        state = state.copy(games = games.map {
+            if (it.id == 5) it.copy(stateDetail = "This card can't hold files over 4 GB (FAT32).", retryable = false) else it
+        })
+        show()
+        press(listOf(Key.DirectionDown, Key.ButtonX)) // Final Fantasy VI
+        rule.onNodeWithText("Retrying won't help until this is fixed.").assertExists()
+        rule.onNodeWithText("Retry").assertDoesNotExist()
+        rule.onNodeWithText("Remove from queue").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls.filter { it.startsWith("retry") }).isEmpty()
+        assertThat(calls).contains("cancel:5")
+    }
+
+    /** Found by audit: X on a game RomM no longer has tried to download it, though its details offer only Close. */
+    @Test fun xOnAGameGoneFromRommShowsWhy() {
+        state = state.copy(games = games.map { if (it.id == 2) it.copy(removedOnServer = true) else it })
+        show()
+        press(listOf(Key.DirectionRight, Key.ButtonX)) // EarthBound
+        rule.onNodeWithText("No longer on the RomM server").assertExists()
+        assertThat(calls.filter { it.startsWith("download") }).isEmpty()
+    }
+
     /** Found on the Thor: Y only put the ring on the search box, and A was needed to type. */
     @Test fun yStartsTypingASearch() {
         show()
