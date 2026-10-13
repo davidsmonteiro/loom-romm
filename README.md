@@ -112,6 +112,13 @@ In **Settings → Platform folders** you can change each platform's:
 
 **Export** writes the full mapping to `Download/loom-mapping.json`; **Import** reads it back. Platforms Loom has no default for use the server's folder name and are marked **Check**.
 
+Cocoon can read any folder for a system, so the folder name alone doesn't tell Loom which one Cocoon uses. Each platform therefore lists the other names its folder often has (ES-DE's, among others: `arcade`, `mame`, `fbneo` and `fba` for arcade; `genesis` and `megadrive`). At a platform's first download Loom looks at the card:
+- one of those folders holds games, or only one exists: Loom uses it and says so;
+- none exists: Loom creates the default;
+- several exist and it can't tell (ES-DE's template has them all, empty): Loom asks, with the likeliest folder focused, or **Another folder…** for any folder in the ROMs folder.
+
+Either way the choice is remembered for that platform; change it in Settings → Platform folders. Games already downloaded stay where they are.
+
 ## Controls
 
 | Button | Library | Queue | Everywhere |

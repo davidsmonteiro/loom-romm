@@ -41,8 +41,11 @@ The single directory on the Thor whose subfolders Cocoon scans, e.g. `/storage/9
 _Avoid_: library path, base dir
 
 **System folder**:
-A subfolder of the ROMs root that Cocoon associates with one system by its name, e.g. `snes`, `gc`, `n3ds`.
+The subfolder of the ROMs root holding one system's games, the one Cocoon is set up to read for it, e.g. `snes`, `gc`, `n3ds`.
 _Avoid_: platform folder, rom dir
+
+**Candidate folder**:
+A folder name a platform's system folder often has (Cocoon's, ES-DE's, other frontends'), e.g. `arcade`, `mame`, `fbneo` and `fba` for arcade. Loom picks among the candidates on the card, and asks when it can't tell.
 
 **Platform mapping**:
 The rule that decides, per platform, which system folder its games land in and how they are laid out (archive handling, multi-disc layout, which ROM file categories to include).
