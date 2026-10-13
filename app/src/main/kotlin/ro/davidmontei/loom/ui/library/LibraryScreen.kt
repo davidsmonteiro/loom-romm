@@ -183,7 +183,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                     Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                         LoomTextField(
                             value = state.query, onValueChange = actions::setQuery, label = null,
-                            placeholder = "Search", modifier = Modifier.weight(1f).focusRequester(searchFocus),
+                            placeholder = "Search", modifier = Modifier.weight(1f).focusRequester(searchFocus), tag = "search",
                             onImeAction = { runCatching { firstGame.requestFocus() } },
                         )
                         LibraryFilter.entries.forEach { f ->

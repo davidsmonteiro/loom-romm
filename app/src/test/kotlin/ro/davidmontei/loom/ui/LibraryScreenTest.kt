@@ -140,7 +140,7 @@ class LibraryScreenTest {
     @Test fun yJumpsToSearch() {
         show()
         press(Key.ButtonY)
-        rule.onNode(androidx.compose.ui.test.hasSetTextAction()).assertIsFocused()
+        rule.onNodeWithTag("search").assertIsFocused()
         assertThat(calls).doesNotContain("download:1")
     }
 

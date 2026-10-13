@@ -28,9 +28,13 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicSecureTextField
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.TextFieldDecorator
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,11 +46,23 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -57,8 +73,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -211,41 +225,101 @@ fun LoomTextField(
     singleLine: Boolean = true,
     supporting: String? = null,
     isError: Boolean = false,
+    tag: String? = null,
 ) {
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val keyboardMode = LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val shape = RoundedCornerShape(12.dp)
+
+    // With a pad, the D-pad lands on the frame (ring, no keyboard over the screen); A starts
+    // editing, which focuses the inner field and brings up the keyboard. Touch works as usual.
+    var editing by remember { mutableStateOf(false) }
+    val frame = remember { FocusRequester() }
+    val inner = remember { FocusRequester() }
+    val frameInteraction = remember { MutableInteractionSource() }
+    val innerInteraction = remember { MutableInteractionSource() }
+    val frameFocused by frameInteraction.collectIsFocusedAsState()
+    val innerFocused by innerInteraction.collectIsFocusedAsState()
+    LaunchedEffect(editing) { if (editing) runCatching { inner.requestFocus() } }
+
+    // Mirror the caller's value into the field only while nobody is typing in it, so a value
+    // echoed back from a ViewModel can never overwrite keystrokes still arriving.
+    val state = rememberTextFieldState(value)
+    val latestOnChange by rememberUpdatedState(onValueChange)
+    LaunchedEffect(state) { snapshotFlow { state.text.toString() }.collect { latestOnChange(it) } }
+    LaunchedEffect(value, innerFocused) {
+        if (!innerFocused && state.text.toString() != value) state.setTextAndPlaceCursorAtEnd(value)
+    }
+
+    var submitted by remember { mutableStateOf(false) }
+    val submit = {
+        if (!submitted) {
+            submitted = true
+            editing = false
+            keyboard?.hide()
+            onImeAction()
+            // "Next" with no handler of its own moves on; otherwise the frame keeps focus.
+            if (imeAction == ImeAction.Next) focusManager.moveFocus(FocusDirection.Down) else runCatching { frame.requestFocus() }
+        }
+    }
+    LaunchedEffect(innerFocused) { if (innerFocused) submitted = false else editing = false }
+
+    val textStyle = MaterialTheme.typography.bodyLarge.copy(color = LoomColors.Text)
+    val options = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction, autoCorrectEnabled = false)
+    val decorator = TextFieldDecorator { field ->
+        Box {
+            if (state.text.isEmpty() && placeholder != null) {
+                Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = LoomColors.TextFaint, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+            }
+            field()
+        }
+    }
+    val fieldModifier = Modifier
+        .fillMaxWidth()
+        .focusRequester(inner)
+        .focusProperties { canFocus = editing || !keyboardMode }
+        .onPreviewKeyEvent { event ->
+            // A hardware/pad Enter submits once (on key-down) and its key-up is swallowed, so it
+            // can't also trigger whatever gets focus next.
+            if (singleLine && (event.key == Key.Enter || event.key == Key.NumPadEnter)) {
+                if (event.type == KeyEventType.KeyDown) submit()
+                true
+            } else false
+        }
+
     Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
         if (label != null) Text(label, style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted)
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = singleLine,
-            interactionSource = interaction,
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = LoomColors.Text),
-            cursorBrush = SolidColor(LoomColors.Accent),
-            visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
-            keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction, autoCorrectEnabled = false),
-            keyboardActions = KeyboardActions(onAny = { onImeAction() }),
-            modifier = Modifier
+        Box(
+            Modifier
                 .fillMaxWidth()
+                .focusRequester(frame)
                 .background(LoomColors.Surface, shape)
                 .border(
-                    width = if (focused) 3.dp else 1.dp,
-                    color = when { focused -> LoomColors.Accent; isError -> LoomColors.Error; else -> LoomColors.Outline },
+                    width = if (frameFocused || innerFocused) 3.dp else 1.dp,
+                    color = when { frameFocused || innerFocused -> LoomColors.Accent; isError -> LoomColors.Error; else -> LoomColors.Outline },
                     shape = shape,
                 )
-                .padding(horizontal = Space.l, vertical = 12.dp),
-            decorationBox = { inner ->
-                Box {
-                    if (value.isEmpty() && placeholder != null) {
-                        Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = LoomColors.TextFaint, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis)
-                    }
-                    inner()
-                }
-            },
-        )
+                .clickable(frameInteraction, indication = null, onClickLabel = label ?: placeholder) { editing = true }
+                .padding(horizontal = Space.l, vertical = 12.dp)
+                .then(if (tag != null) Modifier.testTag(tag) else Modifier),
+        ) {
+            if (secret) {
+                BasicSecureTextField(
+                    state = state, modifier = fieldModifier, textStyle = textStyle, keyboardOptions = options,
+                    onKeyboardAction = { submit() }, interactionSource = innerInteraction,
+                    cursorBrush = SolidColor(LoomColors.Accent), decorator = decorator,
+                )
+            } else {
+                BasicTextField(
+                    state = state, modifier = fieldModifier, textStyle = textStyle, keyboardOptions = options,
+                    onKeyboardAction = { submit() },
+                    lineLimits = if (singleLine) TextFieldLineLimits.SingleLine else TextFieldLineLimits.Default,
+                    interactionSource = innerInteraction, cursorBrush = SolidColor(LoomColors.Accent), decorator = decorator,
+                )
+            }
+        }
         if (supporting != null) {
             Text(supporting, style = MaterialTheme.typography.bodySmall, color = if (isError) LoomColors.Error else LoomColors.TextMuted)
         }
