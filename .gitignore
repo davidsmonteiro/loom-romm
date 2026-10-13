@@ -1,0 +1,38 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+*.dex
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+build/
+
+# Gradle
+.gradle/
+local.properties
+
+# Android Studio / IntelliJ
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Signing material never goes in VCS
+*.jks
+*.keystore
+keystore.properties
+
+# OS / editor noise
+.DS_Store
+*.swp
+*~
+*.log
+
+# Kotlin
+.kotlin/

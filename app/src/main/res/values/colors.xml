@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="loom_background">#FF121316</color>
+    <color name="loom_accent">#FFD9A441</color>
+    <color name="loom_text">#FFEDE8E0</color>
+</resources>

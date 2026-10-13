@@ -1,0 +1,3 @@
+# Download each ROM file separately, never the server-built zip
+
+RomM serves a single ROM file through nginx `X-Accel-Redirect` (`GET /api/roms/{file_id}/files/content/{name}`), which supports Range and Content-Length. A multi-file ROM requested as a whole is either streamed as an on-the-fly zip (no Range, no resume) or, when a Range header is sent, built synchronously into a cached zip first — which can outlast Cloudflare's ~100 s origin timeout on the user's public address. Loom downloads every ROM file on its own and builds multi-disc layout and `.m3u` itself, so every download is resumable and progress is per file.
