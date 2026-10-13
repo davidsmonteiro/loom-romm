@@ -217,6 +217,15 @@ class LibraryScreenTest {
         assertThat(calls).contains("retry:3")
     }
 
+    /** Found by review: the focused "Cancel download" going away with a failure retrying can't fix left focus on the game behind. */
+    @Test fun detailsKeepFocusWhenTheirSecondButtonGoes() {
+        show()
+        press(listOf(Key.DirectionRight, Key.DirectionRight, Key.DirectionCenter, Key.DirectionRight)) // Super Metroid: details, Cancel download
+        rule.onNodeWithText("Cancel download").assertIsFocused()
+        changeGame(3, game(3, "Super Metroid", InstallState.FAILED, detail = "This card can't hold files over 4 GB (FAT32).").copy(retryable = false))
+        rule.onNodeWithText("Remove from queue").assertIsFocused()
+    }
+
     /** Found by audit: X on a download that retrying can't fix did nothing, and the details offered Retry. */
     @Test fun xOnAFailureRetryingCantFixShowsWhy() {
         state = state.copy(games = games.map {

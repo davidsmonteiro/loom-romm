@@ -566,6 +566,8 @@ private fun GameDialog(
             val (main, other) = detailsButtons(game, onDismiss, onDownload, onOffload, onRetry, onCancel)
             LoomButton(main.label, main.onClick, Modifier.focusRequester(first), primary = main.primary)
             other?.let { LoomButton(it.label, it.onClick, destructive = it.destructive) }
+            // The second button can go too (a failure retrying can't fix), taking focus with it: back to the first.
+            InitialFocus(first, other == null, delayMs = 0)
         },
     )
 }
