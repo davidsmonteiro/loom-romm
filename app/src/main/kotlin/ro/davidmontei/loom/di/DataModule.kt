@@ -11,13 +11,15 @@ import dagger.hilt.components.SingletonComponent
 import ro.davidmontei.loom.data.catalog.AfterCatalogSync
 import ro.davidmontei.loom.data.catalog.CatalogSyncScheduler
 import ro.davidmontei.loom.data.catalog.CatalogSyncer
-import ro.davidmontei.loom.data.catalog.CoverPrefetcher
+import ro.davidmontei.loom.data.catalog.CoverStore
 import ro.davidmontei.loom.data.db.CatalogDao
 import ro.davidmontei.loom.data.db.LoomDatabase
 import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
+import okhttp3.OkHttpClient
+import java.io.File
 import javax.inject.Singleton
 
 @Module
@@ -45,7 +47,7 @@ object DataModule {
     fun afterCatalogSync(installs: InstallManager): AfterCatalogSync = AfterCatalogSync { installs.reconcile() }
 
     @Provides @Singleton
-    fun coverPrefetcher(@ApplicationContext context: Context, catalog: CatalogDao) = CoverPrefetcher(context, catalog)
+    fun coverStore(@ApplicationContext context: Context, @ApiHttp http: OkHttpClient) = CoverStore(File(context.cacheDir, "cover-thumbs"), http)
 
     @Provides @Singleton
     fun catalogSyncScheduler(workManager: WorkManager) = CatalogSyncScheduler(workManager)

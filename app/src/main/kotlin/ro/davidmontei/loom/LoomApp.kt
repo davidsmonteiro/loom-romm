@@ -9,16 +9,14 @@ import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import ro.davidmontei.loom.data.catalog.CoverFetcher
+import ro.davidmontei.loom.data.catalog.CoverKeyer
+import ro.davidmontei.loom.data.catalog.CoverStore
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.install.InstallManager
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
-import coil3.disk.DiskCache
-import coil3.network.okhttp.OkHttpNetworkFetcherFactory
-import okhttp3.OkHttpClient
-import okio.Path.Companion.toOkioPath
-import ro.davidmontei.loom.di.ApiHttp
 import ro.davidmontei.loom.di.AppScope
 import ro.davidmontei.loom.storage.engine.WaitReason
 import javax.inject.Inject
@@ -30,15 +28,15 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     @Inject lateinit var downloads: DownloadRepository
     @Inject @AppScope lateinit var scope: CoroutineScope
     @Inject lateinit var installs: InstallManager
-    @Inject @ApiHttp lateinit var apiClient: OkHttpClient
+    @Inject lateinit var covers: CoverStore
 
-    /**
-     * Cover art: through the authenticated client (the token only ever goes to the RomM host), with
-     * a large disk cache so the library still has its covers offline.
-     */
+    /** Cover art comes only from the [CoverStore], which keeps its own files on disk. */
     override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
-        .components { add(OkHttpNetworkFetcherFactory(callFactory = { apiClient })) }
-        .diskCache { DiskCache.Builder().directory(cacheDir.resolve("covers").toOkioPath()).maxSizeBytes(512L * 1024 * 1024).build() }
+        .components {
+            add(CoverKeyer)
+            add(CoverFetcher.Factory(covers))
+        }
+        .diskCache { null }
         .build()
 
     // WorkManager's default initializer is removed in the manifest so workers get Hilt injection.

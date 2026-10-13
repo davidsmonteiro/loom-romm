@@ -61,9 +61,8 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import kotlinx.coroutines.delay
 import okhttp3.HttpUrl
-import ro.davidmontei.loom.data.catalog.coverCacheKey
+import ro.davidmontei.loom.data.catalog.CoverRef
 import ro.davidmontei.loom.data.db.PlatformSummary
-import ro.davidmontei.loom.romm.RommUrls
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.ui.components.ButtonHint
 import ro.davidmontei.loom.ui.components.InitialFocus
@@ -421,16 +420,16 @@ private fun GameRowItem(game: GameItem, coverBase: HttpUrl?, modifier: Modifier,
 
 @Composable
 private fun Cover(game: GameItem, coverBase: HttpUrl?, modifier: Modifier) {
-    val url = coverBase?.let { RommUrls.coverUrl(it, game.coverPath) }
-    if (url == null) {
+    val path = game.coverPath
+    if (path == null) {
         Box(modifier, contentAlignment = Alignment.Center) {
             Text(game.title.take(2).uppercase(), style = MaterialTheme.typography.headlineSmall, color = LoomColors.TextFaint)
         }
         return
     }
-    val key = coverCacheKey(game.coverPath!!)
     AsyncImage(
-        model = ImageRequest.Builder(LocalContext.current).data(url.toString()).diskCacheKey(key).memoryCacheKey(key).crossfade(true).build(),
+        // Stored covers show offline too; the address is only for ones not fetched yet.
+        model = ImageRequest.Builder(LocalContext.current).data(CoverRef(path, coverBase)).crossfade(true).build(),
         contentDescription = null,
         contentScale = ContentScale.Crop,
         modifier = modifier,

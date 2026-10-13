@@ -27,7 +27,7 @@ class CatalogSyncWorker @AssistedInject constructor(
     private val server: ActiveServer,
     private val syncer: CatalogSyncer,
     private val afterSync: AfterCatalogSync,
-    private val covers: CoverPrefetcher,
+    private val workManager: WorkManager,
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
@@ -37,8 +37,8 @@ class CatalogSyncWorker @AssistedInject constructor(
                 syncer.sync(api, full) { setProgress(workDataOf(KEY_FETCHED to it.fetched, KEY_TOTAL to (it.total ?: -1))) }
             }
             afterSync.onCatalogSynced()
-            // Best effort: missing covers only cost a placeholder.
-            runCatching { covers.prefetch(server.baseUrl()) }
+            // Separate work, so the sync is done as soon as the catalog is.
+            CoverPrefetchWorker.enqueue(workManager)
             Result.success(workDataOf(KEY_FETCHED to result.romsWritten, KEY_TOTAL to result.serverRomCount))
         } catch (e: NotPairedException) {
             Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Not paired")))
