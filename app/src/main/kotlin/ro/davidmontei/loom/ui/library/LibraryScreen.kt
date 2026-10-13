@@ -109,12 +109,13 @@ interface LibraryActions {
     fun offload(game: GameItem)
     fun retry(game: GameItem)
     fun cancel(game: GameItem)
-    fun openQueue()
+    /** Opens the queue, on [focusJobId]'s row when given. */
+    fun openQueue(focusJobId: Long? = null)
     fun openSettings()
 }
 
 @Composable
-fun LibraryScreen(openQueue: () -> Unit, openSettings: () -> Unit, vm: LibraryViewModel = hiltViewModel()) {
+fun LibraryScreen(openQueue: (focusJobId: Long?) -> Unit, openSettings: () -> Unit, vm: LibraryViewModel = hiltViewModel()) {
     val platforms by vm.platforms.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val games by vm.games.collectAsStateWithLifecycle()
@@ -138,7 +139,7 @@ fun LibraryScreen(openQueue: () -> Unit, openSettings: () -> Unit, vm: LibraryVi
             override fun offload(game: GameItem) { vm.offload(game) }
             override fun retry(game: GameItem) { vm.retry(game) }
             override fun cancel(game: GameItem) { vm.cancel(game) }
-            override fun openQueue() = openQueue()
+            override fun openQueue(focusJobId: Long?) = openQueue(focusJobId)
             override fun openSettings() = openSettings()
         }
     }
@@ -167,7 +168,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
         InstallState.NOT_INSTALLED -> actions.download(game)
         InstallState.INSTALLED -> confirmOffload = game
         InstallState.FAILED -> actions.retry(game)
-        InstallState.QUEUED, InstallState.DOWNLOADING -> actions.openQueue()
+        InstallState.QUEUED, InstallState.DOWNLOADING -> actions.openQueue(game.jobId)
     }
 
     // The library is the root: B never closes Loom (Home does). It clears a search, if there is one.

@@ -55,7 +55,7 @@ class LibraryScreenTest {
         override fun offload(game: GameItem) { calls += "offload:${game.id}" }
         override fun retry(game: GameItem) { calls += "retry:${game.id}" }
         override fun cancel(game: GameItem) { calls += "cancel:${game.id}" }
-        override fun openQueue() { calls += "queue" }
+        override fun openQueue(focusJobId: Long?) { calls += if (focusJobId == null) "queue" else "queue:$focusJobId" }
         override fun openSettings() { calls += "settings" }
     }
 
@@ -161,6 +161,14 @@ class LibraryScreenTest {
         assertThat(calls).contains("queue")
         press(Key.ButtonSelect)
         assertThat(calls).contains("settings")
+    }
+
+    /** Found by audit: X on a queued game opened the queue on the first job, so A paused a different game. */
+    @Test fun xOnAQueuedGameOpensTheQueueOnItsJob() {
+        show()
+        press(listOf(Key.DirectionRight, Key.DirectionRight, Key.DirectionRight)) // Zelda, queued
+        press(Key.ButtonX)
+        assertThat(calls).contains("queue:4")
     }
 
     @Test fun xOnAnInstalledGameAsksBeforeOffloading() {

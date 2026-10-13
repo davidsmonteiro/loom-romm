@@ -5,6 +5,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.toRoute
 import kotlinx.serialization.Serializable
 import ro.davidmontei.loom.ui.library.LibraryScreen
 import ro.davidmontei.loom.ui.onboarding.OnboardingScreen
@@ -13,7 +14,8 @@ import ro.davidmontei.loom.ui.settings.SettingsScreen
 
 @Serializable data object OnboardingRoute
 @Serializable data object LibraryRoute
-@Serializable data object QueueRoute
+/** [focusJobId]: the job to put focus on, when opened from that game in the library. */
+@Serializable data class QueueRoute(val focusJobId: Long? = null)
 @Serializable data object SettingsRoute
 
 /** Three screens plus first-run onboarding. B (back) always pops; Library is the root. */
@@ -27,11 +29,13 @@ fun LoomNavHost(nav: NavHostController, onboarded: Boolean, openQueue: Boolean, 
         }
         composable<LibraryRoute> {
             LibraryScreen(
-                openQueue = { nav.navigate(QueueRoute) { launchSingleTop = true } },
+                openQueue = { jobId -> nav.navigate(QueueRoute(jobId)) { launchSingleTop = true } },
                 openSettings = { nav.navigate(SettingsRoute) { launchSingleTop = true } },
             )
         }
-        composable<QueueRoute> { QueueScreen(onBack = { nav.popBackStack() }) }
+        composable<QueueRoute> { entry ->
+            QueueScreen(focusJobId = entry.toRoute<QueueRoute>().focusJobId, onBack = { nav.popBackStack() })
+        }
         composable<SettingsRoute> {
             SettingsScreen(
                 onBack = { nav.popBackStack() },
@@ -41,7 +45,7 @@ fun LoomNavHost(nav: NavHostController, onboarded: Boolean, openQueue: Boolean, 
     }
     LaunchedEffect(openQueue, onboarded) {
         if (openQueue && onboarded) {
-            nav.navigate(QueueRoute) { launchSingleTop = true }
+            nav.navigate(QueueRoute()) { launchSingleTop = true }
             onQueueOpened()
         }
     }

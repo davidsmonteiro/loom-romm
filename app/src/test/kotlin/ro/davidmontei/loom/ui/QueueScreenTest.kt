@@ -57,9 +57,9 @@ class QueueScreenTest {
 
     private var state by mutableStateOf(sample)
 
-    private fun show(initial: QueueUiState = sample) {
+    private fun show(initial: QueueUiState = sample, focusJobId: Long? = null) {
         state = initial
-        rule.setContent { LoomTestTheme { QueueContent(state, actions) } }
+        rule.setContent { LoomTestTheme { QueueContent(state, actions, focusJobId) } }
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
     }
 
@@ -117,6 +117,20 @@ class QueueScreenTest {
         rule.onNodeWithTag("job-4").assertIsFocused()
         update { it.copy(active = it.active + item(4, "Chrono Cross (USA)", JobPhase.QUEUED), failed = emptyList()) } // retried
         rule.onNodeWithTag("job-4").assertIsFocused()
+    }
+
+    /** Found by audit: opened from a game in the library, the queue focused the first job, not that game's. */
+    @Test fun opensOnTheJobItWasOpenedFor() {
+        show(focusJobId = 3)
+        rule.onNodeWithTag("job-3").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("pause:3")
+    }
+
+    @Test fun theJobItWasOpenedForIsScrolledTo() {
+        val jobs = (1L..20L).map { item(it, "Game $it", JobPhase.QUEUED) }
+        show(QueueUiState(active = jobs, failed = emptyList(), finished = emptyList()), focusJobId = 18)
+        rule.onNodeWithTag("job-18").assertIsFocused()
     }
 
     @Test fun xIgnoresFinishedGames() {

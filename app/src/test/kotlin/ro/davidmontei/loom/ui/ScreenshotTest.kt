@@ -95,6 +95,6 @@ object NoopLibraryActions : ro.davidmontei.loom.ui.library.LibraryActions {
     override fun offload(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
     override fun retry(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
     override fun cancel(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
-    override fun openQueue() = Unit
+    override fun openQueue(focusJobId: Long?) = Unit
     override fun openSettings() = Unit
 }

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -142,22 +143,24 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
 }
 
 @Composable
-fun QueueScreen(onBack: () -> Unit, vm: QueueViewModel = hiltViewModel()) {
+fun QueueScreen(focusJobId: Long?, onBack: () -> Unit, vm: QueueViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
-    QueueContent(state, vm)
+    QueueContent(state, vm, focusJobId)
 }
 
 private val queueHints = listOf(ButtonHint("A", "Pause / resume / retry"), ButtonHint("X", "Cancel"), ButtonHint("B", "Back"))
 
+/** [focusJobId]: the job focus starts on (the game the library opened the queue for), else the first. */
 @Composable
-fun QueueContent(state: QueueUiState, actions: QueueActions) {
+fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? = null) {
     // The job X acts on: only while it has focus, and as it is now.
     var focusedId by remember { mutableStateOf<Long?>(null) }
     var confirmCancel by remember { mutableStateOf<QueueItem?>(null) }
     var listHasFocus by remember { mutableStateOf(false) }
     val first = remember { FocusRequester() }
     val listFocus = remember { FocusRequester() }
-    val firstItem = state.active.firstOrNull() ?: state.failed.firstOrNull()
+    val listState = rememberLazyListState()
+    val startItem = (state.active + state.failed).firstOrNull { it.jobId == focusJobId } ?: state.active.firstOrNull() ?: state.failed.firstOrNull()
 
     fun trackFocus(item: QueueItem, focused: Boolean) {
         if (focused) focusedId = item.jobId else if (focusedId == item.jobId) focusedId = null
@@ -179,22 +182,28 @@ fun QueueContent(state: QueueUiState, actions: QueueActions) {
         }
     }) {
         ScreenScaffold(title = "Downloads", hints = queueHints) {
-            if (firstItem == null && state.finished.isEmpty()) {
+            if (startItem == null && state.finished.isEmpty()) {
                 Text("Nothing downloading. Press X on a game in the library to add it here.", color = LoomColors.TextMuted)
                 return@ScreenScaffold
             }
-            // The first job, or the newest finished game when nothing is queued, so the pad can scroll the list.
+            // The start job, or the newest finished game when nothing is queued, so the pad can scroll the list.
             // Only while the list has no focus: the first job finishing mustn't pull it off the row the user is on.
-            InitialFocus(first, firstItem?.jobId, state.finished.isEmpty(), unless = { listHasFocus })
+            InitialFocus(first, startItem?.jobId, state.finished.isEmpty(), unless = { listHasFocus })
             val jobRows = buildList {
                 if (state.active.isNotEmpty()) add(JobListRow.Header("In progress"))
                 state.active.forEach { add(JobListRow.Job(it)) }
                 if (state.failed.isNotEmpty()) add(JobListRow.Header("Needs attention"))
                 state.failed.forEach { add(JobListRow.Job(it)) }
             }
+            // A job far down a long queue isn't composed until it is scrolled to, and can't take focus before.
+            LaunchedEffect(focusJobId) {
+                val index = jobRows.indexOfFirst { it is JobListRow.Job && it.item.jobId == focusJobId }
+                if (index >= 0) listState.scrollToItem(index)
+            }
             LazyColumn(
                 Modifier.fillMaxSize().onFocusChanged { listHasFocus = it.hasFocus }.focusRequester(listFocus).focusRestorer(first)
                     .testTag("queue-list"),
+                state = listState,
                 contentPadding = PaddingValues(8.dp),
                 verticalArrangement = Arrangement.spacedBy(Space.s),
             ) {
@@ -203,7 +212,7 @@ fun QueueContent(state: QueueUiState, actions: QueueActions) {
                 items(jobRows, key = { it.key }) { row ->
                     when (row) {
                         is JobListRow.Header -> SectionHeader(row.text)
-                        is JobListRow.Job -> JobRow(row.item, if (row.item == firstItem) Modifier.focusRequester(first) else Modifier,
+                        is JobListRow.Job -> JobRow(row.item, if (row.item == startItem) Modifier.focusRequester(first) else Modifier,
                             onFocus = ::trackFocus) { primary(row.item) }
                     }
                 }
@@ -213,7 +222,7 @@ fun QueueContent(state: QueueUiState, actions: QueueActions) {
                     val interaction = remember { MutableInteractionSource() }
                     Column(
                         Modifier.fillMaxWidth()
-                            .then(if (firstItem == null && done == state.finished.first()) Modifier.focusRequester(first) else Modifier)
+                            .then(if (startItem == null && done == state.finished.first()) Modifier.focusRequester(first) else Modifier)
                             .background(LoomColors.Surface, RoundedCornerShape(12.dp))
                             .focusable(interactionSource = interaction)
                             .indication(interaction, FocusRingIndication(cornerRadius = 12.dp))
