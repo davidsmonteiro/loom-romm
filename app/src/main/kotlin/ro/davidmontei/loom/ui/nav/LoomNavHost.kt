@@ -2,6 +2,7 @@ package ro.davidmontei.loom.ui.nav
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -22,16 +23,11 @@ import ro.davidmontei.loom.ui.settings.SettingsScreen
 /** Three screens plus first-run onboarding. B (back) always pops; Library is the root. */
 @Composable
 fun LoomNavHost(nav: NavHostController, onboarded: Boolean, openQueue: Boolean, onQueueOpened: () -> Unit) {
-    // Settings' "Pair again", and the library's when RomM rejects the token. Pairing again keeps the
-    // current token until a new one works; B, or that new token, comes back to the screen it was opened from.
-    val pairAgain = { nav.navigate(OnboardingRoute(pairAgain = true)) { launchSingleTop = true } }
+    val pairAgain = { nav.pairAgain() }
     NavHost(navController = nav, startDestination = if (onboarded) LibraryRoute else OnboardingRoute()) {
         composable<OnboardingRoute> { entry ->
             val route = entry.toRoute<OnboardingRoute>()
-            OnboardingScreen(onFinished = {
-                if (route.pairAgain) nav.popBackStack<OnboardingRoute>(inclusive = true)
-                else nav.navigate(LibraryRoute) { popUpTo<OnboardingRoute> { inclusive = true } }
-            })
+            OnboardingScreen(onFinished = { nav.leaveOnboarding(route) })
         }
         composable<LibraryRoute> {
             LibraryScreen(
@@ -53,4 +49,16 @@ fun LoomNavHost(nav: NavHostController, onboarded: Boolean, openQueue: Boolean, 
             onQueueOpened()
         }
     }
+}
+
+/**
+ * Settings' "Pair again", and the library's when RomM rejects the token: pairing on top of the
+ * current screen. Loom keeps its token until a new one works.
+ */
+fun NavController.pairAgain() = navigate(OnboardingRoute(pairAgain = true)) { launchSingleTop = true }
+
+/** Setup goes on to the library; pairing again goes back to the screen it was opened from (B, or a new token). */
+fun NavController.leaveOnboarding(route: OnboardingRoute) {
+    if (route.pairAgain) popBackStack<OnboardingRoute>(inclusive = true)
+    else navigate(LibraryRoute) { popUpTo<OnboardingRoute> { inclusive = true } }
 }
