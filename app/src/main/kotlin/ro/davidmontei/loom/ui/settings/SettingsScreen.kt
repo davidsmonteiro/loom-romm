@@ -60,6 +60,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ro.davidmontei.loom.data.download.VolumeInfo
+import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.mapping.ArchivePolicy
 import ro.davidmontei.loom.storage.mapping.FolderNames
@@ -82,6 +83,7 @@ import ro.davidmontei.loom.ui.components.ScreenScaffold
 import ro.davidmontei.loom.ui.components.SectionHeader
 import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.StatusBadge
+import ro.davidmontei.loom.ui.components.ago
 import ro.davidmontei.loom.ui.components.gameCount
 import ro.davidmontei.loom.ui.components.padScroll
 import ro.davidmontei.loom.ui.theme.LoomColors
@@ -93,6 +95,8 @@ interface SettingsActions {
     fun repair()
     fun signOut()
     fun fullResync()
+    fun setCatalogRefresh(refresh: CatalogRefresh)
+    fun setRefreshOnWifiOnly(wifiOnly: Boolean)
     fun setRomsRoot(dir: java.io.File)
     fun volumes(): List<VolumeInfo>
     fun saveOverride(entry: PlatformMappingEntry)
@@ -122,6 +126,8 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
             override fun repair() = onRepair()
             override fun signOut() { vm.signOut() }
             override fun fullResync() = vm.fullResync()
+            override fun setCatalogRefresh(refresh: CatalogRefresh) { vm.setCatalogRefresh(refresh) }
+            override fun setRefreshOnWifiOnly(wifiOnly: Boolean) { vm.setRefreshOnWifiOnly(wifiOnly) }
             override fun setRomsRoot(dir: java.io.File) { vm.setRomsRoot(dir) }
             override fun volumes() = vm.mountedVolumes()
             override fun saveOverride(entry: PlatformMappingEntry) { vm.saveOverride(entry) }
@@ -198,6 +204,7 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
                 message?.let { Text(it, color = LoomColors.Accent, style = MaterialTheme.typography.bodyMedium) }
                 when (section) {
                     SettingsSection.SERVER -> ServerSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
+                    SettingsSection.LIBRARY -> LibrarySyncSection(state, actions, first)
                     SettingsSection.STORAGE -> StorageSection(state, actions, first)
                     SettingsSection.MAPPING -> MappingSection(state, actions, first)
                     SettingsSection.DOWNLOADS -> DownloadsSection(state, actions, first)
@@ -296,7 +303,6 @@ private fun ServerSection(
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
         LoomButton("Pair again", onClick = { if (creds != null) confirmPairAgain = true else actions.repair() },
             modifier = Modifier.focusRequester(pairAgainFocus))
-        LoomButton("Full resync", onClick = actions::fullResync)
         if (creds != null) {
             LoomButton("Sign out", onClick = { confirmSignOut = true }, destructive = true, modifier = Modifier.focusRequester(signOutFocus))
         }
@@ -317,6 +323,46 @@ private fun ServerSection(
                 LoomButton("Sign out", { actions.signOut(); signedOut = true; confirmSignOut = false }, primary = true, destructive = true)
             })
     }
+}
+
+@Composable
+private fun LibrarySyncSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
+    val first = modifier
+    val refresh = state.settings?.catalogRefresh ?: CatalogRefresh.DEFAULT
+    SectionTop {
+        SectionHeader("Automatic refresh")
+        Text("Loom checks RomM for new, changed and removed games in the background, while online and the battery isn't low.",
+            color = LoomColors.TextMuted, style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+            CatalogRefresh.entries.forEach { r ->
+                // Focus arrives on the current choice, so a second A changes nothing.
+                LoomChip(r.label, r == refresh, { actions.setCatalogRefresh(r) }, if (r == refresh) first else Modifier)
+            }
+        }
+    }
+    LoomSwitchRow("Only on Wi-Fi", state.settings?.refreshOnWifiOnly == true, actions::setRefreshOnWifiOnly,
+        subtitle = "Not over mobile data or a phone's hotspot.")
+    SectionHeader("Last sync")
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+        val sync = state.sync
+        Column(Modifier.weight(1f)) {
+            Text(
+                if (sync.running) sync.total?.let { "Syncing ${sync.fetched} of $it" } ?: "Syncing…"
+                else state.settings?.lastCatalogSyncEpochMs?.let { "Last synced ${ago(it)}" } ?: "Not synced yet",
+            )
+            if (!sync.running && sync.error != null) {
+                Text("The last sync failed: ${sync.error}", color = LoomColors.Error, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        LoomButton("Full resync", onClick = actions::fullResync)
+    }
+}
+
+private val CatalogRefresh.label get() = when (this) {
+    CatalogRefresh.OFF -> "Off"
+    CatalogRefresh.EVERY_6_HOURS -> "Every 6 h"
+    CatalogRefresh.EVERY_12_HOURS -> "Every 12 h"
+    CatalogRefresh.EVERY_24_HOURS -> "Every 24 h"
 }
 
 @Composable
