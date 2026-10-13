@@ -172,6 +172,16 @@ class LibraryScreenTest {
         assertThat(calls).contains("offload:1")
     }
 
+    /** Found by audit: "Remove from device" in the details opened the question with nothing focused. */
+    @Test fun removingFromTheDetailsAsksWithFocusOnKeepIt() {
+        show()
+        press(listOf(Key.DirectionCenter, Key.DirectionRight, Key.DirectionCenter)) // Chrono Trigger: details, Remove
+        rule.onNodeWithText("Remove Chrono Trigger from this device?").assertExists()
+        rule.onNodeWithText("Keep it").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls.filter { it.startsWith("offload") }).isEmpty()
+    }
+
     /** Found on the Thor: Y only put the ring on the search box, and A was needed to type. */
     @Test fun yStartsTypingASearch() {
         show()
