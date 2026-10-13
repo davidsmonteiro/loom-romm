@@ -148,45 +148,45 @@ private fun Server(state: OnboardingState, vm: OnboardingViewModel, first: Focus
 
 @Composable
 private fun Pair(state: OnboardingState, vm: OnboardingViewModel, first: FocusRequester) {
-    Title("Pair with RomM", "No passwords or long tokens to type on the Thor.")
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-        LoomChip("Scan a code", state.pairMode == PairMode.DEVICE_CODE, { vm.setPairMode(PairMode.DEVICE_CODE) },
-            Modifier.focusRequester(first))
-        LoomChip("Enter a pair code", state.pairMode == PairMode.PAIR_CODE, { vm.setPairMode(PairMode.PAIR_CODE) })
-        LoomChip("Paste a token", state.pairMode == PairMode.PASTE_TOKEN, { vm.setPairMode(PairMode.PASTE_TOKEN) })
-    }
-    when (state.pairMode) {
-        PairMode.DEVICE_CODE -> {
-            val session = state.session
-            if (session == null) {
-                if (state.pairing) Text("Asking RomM for a code…", color = LoomColors.TextMuted)
-                LoomButton("Get a new code", onClick = vm::startDeviceAuth, primary = true)
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(Space.xxl), verticalAlignment = Alignment.CenterVertically) {
-                    QrCode(session.verificationUrlComplete.toString(), size = 220.dp)
-                    Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
-                        Text("Scan with your phone, sign in to RomM if asked, and approve this device.", style = MaterialTheme.typography.bodyLarge)
-                        Text(session.displayCode, style = MaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace, letterSpacing = 4.sp), color = LoomColors.Accent)
-                        Text("Or open ${session.verificationUrl} and enter the code.", style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
-                        Countdown(state.sessionStartedAt, session.expiresInSeconds)
-                    }
+    val session = state.session.takeIf { state.pairMode == PairMode.DEVICE_CODE }
+    // The QR code sits beside the whole step rather than under it: nothing below the chips takes focus, so on a
+    // gamepad anything pushed off the bottom of the screen could never be scrolled to.
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.m)) {
+            Title("Pair with RomM")
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                LoomChip("Scan a code", state.pairMode == PairMode.DEVICE_CODE, { vm.setPairMode(PairMode.DEVICE_CODE) },
+                    Modifier.focusRequester(first))
+                LoomChip("Enter a pair code", state.pairMode == PairMode.PAIR_CODE, { vm.setPairMode(PairMode.PAIR_CODE) })
+                LoomChip("Paste a token", state.pairMode == PairMode.PASTE_TOKEN, { vm.setPairMode(PairMode.PASTE_TOKEN) })
+            }
+            when (state.pairMode) {
+                PairMode.DEVICE_CODE -> if (session == null) {
+                    if (state.pairing) Text("Asking RomM for a code…", color = LoomColors.TextMuted)
+                    LoomButton("Get a new code", onClick = vm::startDeviceAuth, primary = true)
+                } else {
+                    Text("Scan with your phone, sign in to RomM if asked, and approve Loom.", style = MaterialTheme.typography.bodyLarge)
+                    Text(session.displayCode, style = MaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace, letterSpacing = 4.sp), color = LoomColors.Accent)
+                    Text("Or open ${session.verificationUrl} and enter the code.", style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
+                    Countdown(state.sessionStartedAt, session.expiresInSeconds)
+                }
+                PairMode.PAIR_CODE -> {
+                    Text("In RomM's web UI, open your profile → API tokens, create a token for Loom and choose “Pair device”. Type the 8-character code it shows (it lasts 60 seconds).",
+                        style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
+                    LoomTextField(state.pairInput, vm::setPairInput, "Pair code", placeholder = "ABCD-2345", onImeAction = vm::submitPairInput)
+                    LoomButton(if (state.pairing) "Pairing…" else "Pair", onClick = vm::submitPairInput, primary = true, enabled = !state.pairing)
+                }
+                PairMode.PASTE_TOKEN -> {
+                    Text("Paste a RomM client API token (starts with rmm_), e.g. sent over adb or KDE Connect.",
+                        style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
+                    LoomTextField(state.pairInput, vm::setPairInput, "API token", placeholder = "rmm_…", secret = true, onImeAction = vm::submitPairInput)
+                    LoomButton(if (state.pairing) "Checking…" else "Use token", onClick = vm::submitPairInput, primary = true, enabled = !state.pairing)
                 }
             }
+            state.pairError?.let { Text(it, color = LoomColors.Error, style = MaterialTheme.typography.bodyMedium) }
         }
-        PairMode.PAIR_CODE -> {
-            Text("In RomM's web UI, open your profile → API tokens, create a token for Loom and choose “Pair device”. Type the 8-character code it shows (it lasts 60 seconds).",
-                style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
-            LoomTextField(state.pairInput, vm::setPairInput, "Pair code", placeholder = "ABCD-2345", onImeAction = vm::submitPairInput)
-            LoomButton(if (state.pairing) "Pairing…" else "Pair", onClick = vm::submitPairInput, primary = true, enabled = !state.pairing)
-        }
-        PairMode.PASTE_TOKEN -> {
-            Text("Paste a RomM client API token (starts with rmm_), e.g. sent over adb or KDE Connect.",
-                style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
-            LoomTextField(state.pairInput, vm::setPairInput, "API token", placeholder = "rmm_…", secret = true, onImeAction = vm::submitPairInput)
-            LoomButton(if (state.pairing) "Checking…" else "Use token", onClick = vm::submitPairInput, primary = true, enabled = !state.pairing)
-        }
+        if (session != null) QrCode(session.verificationUrlComplete.toString(), size = 232.dp)
     }
-    state.pairError?.let { Text(it, color = LoomColors.Error, style = MaterialTheme.typography.bodyMedium) }
 }
 
 @Composable
