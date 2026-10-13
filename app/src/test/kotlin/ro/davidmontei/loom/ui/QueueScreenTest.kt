@@ -68,6 +68,24 @@ class QueueScreenTest {
         assertThat(calls).containsExactly("pause:1", "resume:2", "retry:4").inOrder()
     }
 
+    /** Found on the Thor: with only finished games, nothing had focus and the list couldn't be scrolled. */
+    @Test fun finishedGamesCanBeScrolledWithThePad() {
+        val done = (1..12).map { RecentInstall(100 + it, "Game $it", "psx/Game $it.chd", 1_000_000L * it, it.toLong(), "SHA1") }
+        show(QueueUiState(active = emptyList(), failed = emptyList(), finished = done))
+        rule.onNodeWithTag("done-101").assertIsFocused()
+        repeat(11) { press(Key.DirectionDown) }
+        rule.onNodeWithTag("done-112").assertIsFocused()
+    }
+
+    @Test fun xIgnoresFinishedGames() {
+        show()
+        repeat(4) { press(Key.DirectionDown) } // past the jobs to the finished Chrono Trigger
+        rule.onNodeWithTag("done-5").assertIsFocused()
+        press(Key.ButtonX)
+        rule.onNodeWithText("Keep").assertDoesNotExist()
+        assertThat(calls).isEmpty()
+    }
+
     @Test fun xCancelsAfterConfirmation() {
         show()
         press(Key.ButtonX)

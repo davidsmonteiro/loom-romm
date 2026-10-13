@@ -2,6 +2,8 @@ package ro.davidmontei.loom.ui.queue
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -137,10 +139,15 @@ private val queueHints = listOf(ButtonHint("A", "Pause / resume / retry"), Butto
 
 @Composable
 fun QueueContent(state: QueueUiState, actions: QueueActions) {
-    var focused by remember { mutableStateOf<QueueItem?>(null) }
+    // The job X acts on: only while it has focus, and as it is now.
+    var focusedId by remember { mutableStateOf<Long?>(null) }
     var confirmCancel by remember { mutableStateOf<QueueItem?>(null) }
     val first = remember { FocusRequester() }
     val firstItem = state.active.firstOrNull() ?: state.failed.firstOrNull()
+
+    fun trackFocus(item: QueueItem, focused: Boolean) {
+        if (focused) focusedId = item.jobId else if (focusedId == item.jobId) focusedId = null
+    }
 
     fun primary(item: QueueItem) = when {
         item.failed -> if (item.retryable) actions.retry(item.jobId) else Unit
@@ -151,7 +158,7 @@ fun QueueContent(state: QueueUiState, actions: QueueActions) {
 
     Box(Modifier.fillMaxSize().onPadAction { action ->
         when (action) {
-            PadAction.X -> focused?.let { confirmCancel = it } != null
+            PadAction.X -> (state.active + state.failed).firstOrNull { it.jobId == focusedId }?.let { confirmCancel = it } != null
             else -> false
         }
     }) {
@@ -160,19 +167,30 @@ fun QueueContent(state: QueueUiState, actions: QueueActions) {
                 Text("Nothing downloading. Press X on a game in the library to add it here.", color = LoomColors.TextMuted)
                 return@ScreenScaffold
             }
-            InitialFocus(first, firstItem?.jobId)
+            // The first job, or the newest finished game when nothing is queued, so the pad can scroll the list.
+            InitialFocus(first, firstItem?.jobId, state.finished.isEmpty())
             LazyColumn(Modifier.fillMaxSize().testTag("queue-list"), contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(Space.s)) {
                 if (state.active.isNotEmpty()) item { SectionHeader("In progress") }
                 items(state.active, key = { it.jobId }) { item ->
-                    JobRow(item, if (item == firstItem) Modifier.focusRequester(first) else Modifier, onFocus = { focused = it }) { primary(item) }
+                    JobRow(item, if (item == firstItem) Modifier.focusRequester(first) else Modifier, onFocus = ::trackFocus) { primary(item) }
                 }
                 if (state.failed.isNotEmpty()) item { SectionHeader("Needs attention") }
                 items(state.failed, key = { it.jobId }) { item ->
-                    JobRow(item, if (item == firstItem) Modifier.focusRequester(first) else Modifier, onFocus = { focused = it }) { primary(item) }
+                    JobRow(item, if (item == firstItem) Modifier.focusRequester(first) else Modifier, onFocus = ::trackFocus) { primary(item) }
                 }
                 if (state.finished.isNotEmpty()) item { SectionHeader("Finished") }
                 items(state.finished, key = { "done-${it.romId}-${it.installedAt}" }) { done ->
-                    Column(Modifier.fillMaxWidth().background(LoomColors.Surface, RoundedCornerShape(12.dp)).padding(Space.m)) {
+                    // Focusable only so the pad can scroll through them; there is nothing to press.
+                    val interaction = remember { MutableInteractionSource() }
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .then(if (firstItem == null && done == state.finished.first()) Modifier.focusRequester(first) else Modifier)
+                            .background(LoomColors.Surface, RoundedCornerShape(12.dp))
+                            .focusable(interactionSource = interaction)
+                            .indication(interaction, FocusRingIndication(cornerRadius = 12.dp))
+                            .padding(Space.m)
+                            .testTag("done-${done.romId}"),
+                    ) {
                         Text(done.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text("${done.relPath} · ${formatBytes(done.bytes)} · checked by ${done.verifiedBy.lowercase().replace('_', ' ')}",
                             style = MaterialTheme.typography.labelMedium.tabular(), color = LoomColors.TextMuted, maxLines = 1,
@@ -197,10 +215,10 @@ fun QueueContent(state: QueueUiState, actions: QueueActions) {
 }
 
 @Composable
-private fun JobRow(item: QueueItem, modifier: Modifier, onFocus: (QueueItem) -> Unit, onPrimary: () -> Unit) {
+private fun JobRow(item: QueueItem, modifier: Modifier, onFocus: (QueueItem, Boolean) -> Unit, onPrimary: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val isFocused by interaction.collectIsFocusedAsState()
-    LaunchedEffect(isFocused) { if (isFocused) onFocus(item) }
+    LaunchedEffect(isFocused) { onFocus(item, isFocused) }
     val shape = RoundedCornerShape(12.dp)
     Column(
         modifier.fillMaxWidth()
