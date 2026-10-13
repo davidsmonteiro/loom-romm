@@ -176,35 +176,43 @@ private fun Welcome(first: FocusRequester, next: () -> Unit) {
 
 @Composable
 private fun Server(state: OnboardingState, actions: OnboardingActions, first: FocusRequester) {
-    Title(
-        "Where is your RomM server?",
-        "Use whichever address reaches it from the Thor: a local one (192.168.1.10:8080), Tailscale " +
-            "(100.x.y.z:8080 or a MagicDNS name) or your domain (romm.example.org). You can change it later in Settings.",
-    )
-    // Back on this step with the address already checked, A carries on: focus starts on Continue.
-    val checked = state.serverSummary != null
-    LoomTextField(
-        value = state.addressInput, onValueChange = actions::setAddress, label = "Server address",
-        placeholder = "romm.example.org or 100.x.y.z:8080", keyboardType = KeyboardType.Uri, onImeAction = actions::connect,
-        modifier = if (checked) Modifier else Modifier.focusRequester(first), isError = state.serverError != null,
-    )
-    state.serverError?.let { Text(it, color = LoomColors.Error, style = MaterialTheme.typography.bodyMedium) }
-    state.serverSummary?.let { Text(it, color = LoomColors.Installed, style = MaterialTheme.typography.bodyMedium) }
-    state.insecureWarning?.let { Text(it, color = LoomColors.Accent, style = MaterialTheme.typography.bodyMedium) }
-    val continueFocus = remember { FocusRequester() }
-    val checkFocus = remember { FocusRequester() }
-    // After a check, focus goes where the next press should: Continue on success, Check on failure.
-    LaunchedEffect(state.serverSummary, state.serverError) {
-        if (state.serverSummary != null) runCatching { continueFocus.requestFocus() }
-        else if (state.serverError != null) runCatching { checkFocus.requestFocus() }
-    }
-    // Busy buttons stay enabled (a second press does nothing): disabling the focused one would drop focus to the
-    // top of the step.
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-        LoomButton(if (state.probing) "Checking…" else "Check address", onClick = actions::connect,
-            modifier = Modifier.focusRequester(checkFocus))
-        LoomButton("Continue", onClick = { actions.go(OnboardingStep.PAIR) }, primary = true, enabled = checked,
-            modifier = Modifier.focusRequester(continueFocus).then(if (checked) Modifier.focusRequester(first) else Modifier))
+    // The explanation beside the form, as on the Pair and ROMs steps: stacked, a check's result and the
+    // plain-HTTP warning pushed the step past the screen, and focus on Continue scrolled the title away.
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.l)) {
+            Title(
+                "Where is your RomM server?",
+                "Use whichever address reaches it from the Thor: a local one (192.168.1.10:8080), Tailscale " +
+                    "(100.x.y.z:8080 or a MagicDNS name) or your domain (romm.example.org). You can change it later in Settings.",
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.l)) {
+            // Back on this step with the address already checked, A carries on: focus starts on Continue.
+            val checked = state.serverSummary != null
+            LoomTextField(
+                value = state.addressInput, onValueChange = actions::setAddress, label = "Server address",
+                placeholder = "romm.example.org or 100.x.y.z:8080", keyboardType = KeyboardType.Uri, onImeAction = actions::connect,
+                modifier = if (checked) Modifier else Modifier.focusRequester(first), isError = state.serverError != null,
+            )
+            state.serverError?.let { Text(it, color = LoomColors.Error, style = MaterialTheme.typography.bodyMedium) }
+            state.serverSummary?.let { Text(it, color = LoomColors.Installed, style = MaterialTheme.typography.bodyMedium) }
+            state.insecureWarning?.let { Text(it, color = LoomColors.Accent, style = MaterialTheme.typography.bodyMedium) }
+            val continueFocus = remember { FocusRequester() }
+            val checkFocus = remember { FocusRequester() }
+            // After a check, focus goes where the next press should: Continue on success, Check on failure.
+            LaunchedEffect(state.serverSummary, state.serverError) {
+                if (state.serverSummary != null) runCatching { continueFocus.requestFocus() }
+                else if (state.serverError != null) runCatching { checkFocus.requestFocus() }
+            }
+            // Busy buttons stay enabled (a second press does nothing): disabling the focused one would drop focus to the
+            // top of the step.
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                LoomButton(if (state.probing) "Checking…" else "Check address", onClick = actions::connect,
+                    modifier = Modifier.focusRequester(checkFocus))
+                LoomButton("Continue", onClick = { actions.go(OnboardingStep.PAIR) }, primary = true, enabled = checked,
+                    modifier = Modifier.focusRequester(continueFocus).then(if (checked) Modifier.focusRequester(first) else Modifier))
+            }
+        }
     }
 }
 
