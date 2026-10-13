@@ -13,19 +13,23 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -39,6 +43,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -46,8 +51,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import ro.davidmontei.loom.R
 import ro.davidmontei.loom.ui.components.ButtonHint
-import ro.davidmontei.loom.ui.components.InitialFocus
 import ro.davidmontei.loom.ui.components.FolderPicker
+import ro.davidmontei.loom.ui.components.InitialFocus
 import ro.davidmontei.loom.ui.components.LoomButton
 import ro.davidmontei.loom.ui.components.LoomChip
 import ro.davidmontei.loom.ui.components.LoomProgressBar
@@ -80,9 +85,14 @@ fun OnboardingScreen(onFinished: () -> Unit, vm: OnboardingViewModel = hiltViewM
     }) {
         val first = remember { FocusRequester() }
         InitialFocus(first, state.step, state.pairMode, state.pairedAs)
+        // Each step is laid out to fit the Thor's screen. The scroll is only a fallback (large font
+        // sizes), except on the ROMs step, whose folder list scrolls inside its own pane.
+        val ownScroll = state.step == OnboardingStep.ROMS_ROOT
         Column(
             // Padding keeps focus rings inside the scroll container's clip.
-            Modifier.fillMaxWidth().widthIn(max = 900.dp).verticalScroll(rememberScrollState()).padding(8.dp),
+            Modifier.fillMaxWidth().widthIn(max = 900.dp)
+                .then(if (ownScroll) Modifier.fillMaxHeight() else Modifier.verticalScroll(rememberScrollState()))
+                .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(Space.l),
         ) {
             when (state.step) {
@@ -232,53 +242,79 @@ private fun Storage(state: OnboardingState, vm: OnboardingViewModel, first: Focu
 
 @Composable
 private fun RomsRoot(state: OnboardingState, vm: OnboardingViewModel, first: FocusRequester) {
-    Title("Which folder does Cocoon scan?", "Pick the folder that holds your system folders (snes, psx, gba…). Loom adds games inside it.")
     val suggested = state.suggestedRoot
-    if (suggested != null) {
-        Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
-            if (suggested.isDirectory) {
-                LoomButton("Use ${suggested.path}", onClick = { vm.pickRoot(suggested) }, primary = true, modifier = Modifier.focusRequester(first))
-            } else {
-                LoomButton("Create ${suggested.path}", onClick = vm::createSuggestedRoot, primary = true, modifier = Modifier.focusRequester(first))
+    Row(Modifier.fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.l)) {
+            Title("Which folder does Cocoon scan?", "Pick the folder that holds your system folders (snes, psx, gba…). Loom adds games inside it.")
+            if (suggested != null) {
+                if (suggested.isDirectory) {
+                    LoomButton("Use ${suggested.path}", onClick = { vm.pickRoot(suggested) }, primary = true, modifier = Modifier.focusRequester(first))
+                } else {
+                    LoomButton("Create ${suggested.path}", onClick = vm::createSuggestedRoot, primary = true, modifier = Modifier.focusRequester(first))
+                }
             }
         }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+            Text("Or browse", style = MaterialTheme.typography.titleSmall, color = LoomColors.TextMuted)
+            FolderPicker(
+                volumes = state.volumes,
+                initial = suggested?.parentFile,
+                knownSystemFolders = vm.knownSystemFolders,
+                onPick = vm::pickRoot,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                focusOnOpen = suggested == null,
+            )
+        }
     }
-    Text("Or browse:", style = MaterialTheme.typography.titleSmall, color = LoomColors.TextMuted)
-    FolderPicker(
-        volumes = state.volumes,
-        initial = suggested?.parentFile,
-        knownSystemFolders = vm.knownSystemFolders,
-        onPick = vm::pickRoot,
-        modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
-        focusOnOpen = suggested == null,
-    )
 }
 
 @SuppressLint("BatteryLife")
 @Composable
 private fun Background(vm: OnboardingViewModel, first: FocusRequester) {
     val context = LocalContext.current
-    val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val power = context.getSystemService(PowerManager::class.java)
+    fun notificationsOn() = NotificationManagerCompat.from(context).areNotificationsEnabled()
+    fun unrestricted() = power.isIgnoringBatteryOptimizations(context.packageName)
+    var notifications by remember { mutableStateOf(notificationsOn()) }
+    var background by remember { mutableStateOf(unrestricted()) }
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { notifications = notificationsOn() }
+    LifecycleResumeEffect(Unit) {
+        notifications = notificationsOn()
+        background = unrestricted()
+        onPauseOrDispose { }
+    }
+    // A keeps moving forward: focus waits on the first thing still to allow, then on Continue.
+    InitialFocus(first, notifications, background)
     Title(
         "Downloads in the background",
         "Downloads keep going with the screen off. Android shows a notification while they run, and may stop " +
             "them if Loom is battery-optimised. Allowing both makes big downloads reliable.",
     )
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-        LoomButton("Allow notifications", modifier = Modifier.focusRequester(first), onClick = {
-            // Before Android 13 notifications need no runtime permission.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-        })
-        if (!power.isIgnoringBatteryOptimizations(context.packageName)) {
-            LoomButton("Allow background downloads", onClick = {
-                runCatching {
-                    context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri()))
-                }
-            })
+    Allowance(notifications, "Notifications are on.", "Allow notifications", if (!notifications) Modifier.focusRequester(first) else Modifier) {
+        // Before Android 13 notifications need no runtime permission.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+    Allowance(background, "Background downloads are allowed.", "Allow background downloads",
+        if (notifications && !background) Modifier.focusRequester(first) else Modifier) {
+        runCatching {
+            context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri()))
         }
     }
-    LoomButton("Continue", onClick = { vm.go(OnboardingStep.SYNC) }, primary = true)
+    LoomButton("Continue", onClick = { vm.go(OnboardingStep.SYNC) }, primary = true,
+        modifier = if (notifications && background) Modifier.focusRequester(first) else Modifier)
+}
+
+/** One thing to allow: a button until it's allowed, then a line saying so. */
+@Composable
+private fun Allowance(done: Boolean, doneText: String, action: String, modifier: Modifier, onClick: () -> Unit) {
+    if (done) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = LoomColors.Installed)
+            Text(doneText, color = LoomColors.Installed, style = MaterialTheme.typography.bodyLarge)
+        }
+    } else {
+        LoomButton(action, onClick = onClick, modifier = modifier)
+    }
 }
 
 @Composable
