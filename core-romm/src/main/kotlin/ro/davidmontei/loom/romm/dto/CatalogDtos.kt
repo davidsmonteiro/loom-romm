@@ -60,6 +60,8 @@ data class RomDto(
     @SerialName("fs_name_no_tags") val fsNameNoTags: String,
     @SerialName("fs_name_no_ext") val fsNameNoExt: String,
     @SerialName("fs_extension") val fsExtension: String,
+    /** `fs_path/fs_name` relative to RomM's library root; folder ROMs' files live under it. */
+    @SerialName("full_path") val fullPath: String,
     @SerialName("fs_size_bytes") val fsSizeBytes: Long,
     @SerialName("path_cover_small") val pathCoverSmall: String?,
     @SerialName("path_cover_large") val pathCoverLarge: String?,

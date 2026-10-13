@@ -73,6 +73,7 @@ class CatalogSyncerTest {
         put("id", id); put("platform_id", platformId); put("platform_slug", "snes"); put("platform_fs_slug", "snes")
         put("name", "Café Game $id"); put("name_sort_key", null as String?); put("fs_name", "Game $id.sfc")
         put("fs_name_no_tags", "Game $id"); put("fs_name_no_ext", "Game $id"); put("fs_extension", "sfc")
+        put("full_path", "roms/snes/Game $id.sfc")
         put("fs_size_bytes", 2048); put("path_cover_small", ""); put("path_cover_large", "/assets/x.png")
         put("url_cover", null as String?); put("regions", buildJsonArray { add(JsonPrimitive("USA")) })
         put("languages", JsonArray(emptyList())); put("tags", JsonArray(emptyList())); put("revision", null as String?)

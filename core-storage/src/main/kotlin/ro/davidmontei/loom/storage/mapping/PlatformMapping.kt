@@ -22,8 +22,8 @@ enum class MultiDiscLayout {
     /** `Name.m3u/` folder holding the discs and `Name.m3u`; Cocoon and ES-DE show one game. */
     @SerialName("m3u_dir") M3U_DIR,
 
-    /** Each disc file directly in the system folder, no playlist (for emulators without m3u support). */
-    @SerialName("separate") SEPARATE,
+    /** `Name/` folder holding the discs and `Name.m3u`; needs the frontend to scan subfolders. */
+    @SerialName("folder") FOLDER,
 }
 
 /** Which RomM platform an entry applies to. `fsSlug` (the server's folder name) wins over `slug`. */
