@@ -18,8 +18,60 @@ data class PlatformSummary(
     @ColumnInfo(name = "installed_bytes") val installedBytes: Long,
 )
 
+/** One game row for the library: catalog data plus its install and any download job. */
+data class GameRow(
+    val id: Int,
+    @ColumnInfo(name = "platform_id") val platformId: Int,
+    val title: String,
+    @ColumnInfo(name = "size_bytes") val sizeBytes: Long,
+    @ColumnInfo(name = "cover_small") val coverSmall: String?,
+    @ColumnInfo(name = "cover_large") val coverLarge: String?,
+    val regions: String,
+    @ColumnInfo(name = "removed_on_server") val removedOnServer: Boolean,
+    @ColumnInfo(name = "install_path") val installPath: String?,
+    @ColumnInfo(name = "install_source") val installSource: String?,
+    @ColumnInfo(name = "install_bytes") val installBytes: Long?,
+    @ColumnInfo(name = "job_id") val jobId: Long?,
+    @ColumnInfo(name = "job_phase") val jobPhase: String?,
+    @ColumnInfo(name = "wait_reason") val waitReason: String?,
+    @ColumnInfo(name = "failure_detail") val failureDetail: String?,
+    @ColumnInfo(name = "bytes_done") val bytesDone: Long?,
+    @ColumnInfo(name = "bytes_total") val bytesTotal: Long?,
+)
+
 @Dao
 interface CatalogDao {
+
+    /**
+     * Games of one platform for the library grid. [filter]: 0 all, 1 on device, 2 not on device.
+     * [query] is matched against the folded title + file name.
+     */
+    @Query(
+        """SELECT r.id, r.platform_id, r.title, r.size_bytes, r.cover_small, r.cover_large, r.regions, r.removed_on_server,
+             i.rel_path AS install_path, i.source AS install_source, i.bytes AS install_bytes,
+             j.id AS job_id, j.phase AS job_phase, j.wait_reason, j.failure_detail, j.bytes_done, j.bytes_total
+           FROM roms r
+           LEFT JOIN installs i ON i.rom_id = r.id
+           LEFT JOIN download_jobs j ON j.rom_id = r.id
+           WHERE r.platform_id = :platformId
+             AND (:query = '' OR r.search_key LIKE '%' || :query || '%')
+             AND (:filter = 0 OR (:filter = 1 AND i.rom_id IS NOT NULL) OR (:filter = 2 AND i.rom_id IS NULL))
+           ORDER BY r.sort_key, r.id""",
+    )
+    fun observeGames(platformId: Int, filter: Int, query: String): Flow<List<GameRow>>
+
+    @Query(
+        """SELECT r.id, r.platform_id, r.title, r.size_bytes, r.cover_small, r.cover_large, r.regions, r.removed_on_server,
+             i.rel_path AS install_path, i.source AS install_source, i.bytes AS install_bytes,
+             j.id AS job_id, j.phase AS job_phase, j.wait_reason, j.failure_detail, j.bytes_done, j.bytes_total
+           FROM roms r LEFT JOIN installs i ON i.rom_id = r.id LEFT JOIN download_jobs j ON j.rom_id = r.id
+           WHERE r.id = :romId""",
+    )
+    fun observeGame(romId: Int): Flow<GameRow?>
+
+    @Query("SELECT cover_small FROM roms WHERE cover_small IS NOT NULL")
+    suspend fun smallCovers(): List<String>
+
 
     // --- platforms ---
 

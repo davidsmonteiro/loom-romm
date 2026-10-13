@@ -1,10 +1,12 @@
 package ro.davidmontei.loom.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.unit.dp
 
 private val LoomColorScheme = darkColorScheme(
@@ -48,6 +50,8 @@ fun LoomTheme(content: @Composable () -> Unit) {
         colorScheme = LoomColorScheme,
         typography = LoomTypography,
         shapes = LoomShapes,
-        content = content,
-    )
+    ) {
+        // Material text defaults to black outside a Surface; Loom draws on its own backgrounds.
+        CompositionLocalProvider(LocalContentColor provides LoomColors.Text, content = content)
+    }
 }

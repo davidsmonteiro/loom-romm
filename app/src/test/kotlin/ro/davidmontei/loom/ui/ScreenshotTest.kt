@@ -1,0 +1,72 @@
+package ro.davidmontei.loom.ui
+
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import ro.davidmontei.loom.ui.library.LibraryContent
+
+/**
+ * Renders each screen at the Thor's top-screen size to app/build/screenshots/ for review.
+ * Not assertions about pixels: a quick way to see layout, type and colour without a device.
+ */
+@RunWith(AndroidJUnit4::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(qualifiers = THOR_TOP_SCREEN)
+class ScreenshotTest {
+    @get:Rule val rule = createComposeRule()
+    private val library = LibraryScreenTest()
+
+    private fun settle() { rule.mainClock.advanceTimeBy(300); rule.waitForIdle() }
+
+    @Test fun libraryGrid() {
+        rule.setContent { LoomTestTheme { LibraryContent(library.state, NoopLibraryActions) } }
+        settle()
+        rule.saveScreenshot("library-grid")
+    }
+
+    @Test fun libraryList() {
+        rule.setContent { LoomTestTheme { LibraryContent(library.state.copy(gridMode = false), NoopLibraryActions) } }
+        settle()
+        rule.saveScreenshot("library-list")
+    }
+
+    @Test fun libraryDetailsDialog() {
+        rule.setContent { LoomTestTheme { LibraryContent(library.state, NoopLibraryActions) } }
+        settle()
+        rule.onNodeWithTag("game-5").performClick()
+        settle()
+        rule.saveScreenshot("library-details-failed")
+    }
+
+    @Test fun libraryOffloadConfirm() {
+        rule.setContent { LoomTestTheme { LibraryContent(library.state, NoopLibraryActions) } }
+        settle()
+        rule.onNodeWithTag("game-1").performClick()
+        settle()
+        rule.onNodeWithText("Remove from device").performClick()
+        settle()
+        rule.saveScreenshot("library-offload-confirm")
+    }
+}
+
+object NoopLibraryActions : ro.davidmontei.loom.ui.library.LibraryActions {
+    override fun selectPlatform(id: Int) = Unit
+    override fun cyclePlatform(step: Int) = Unit
+    override fun setFilter(filter: ro.davidmontei.loom.ui.library.LibraryFilter) = Unit
+    override fun setQuery(query: String) = Unit
+    override fun toggleGrid() = Unit
+    override fun sync() = Unit
+    override fun download(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
+    override fun offload(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
+    override fun retry(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
+    override fun cancel(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
+    override fun openQueue() = Unit
+    override fun openSettings() = Unit
+}

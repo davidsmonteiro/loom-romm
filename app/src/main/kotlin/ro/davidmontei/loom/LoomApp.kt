@@ -11,17 +11,35 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.install.InstallManager
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import okhttp3.OkHttpClient
+import okio.Path.Companion.toOkioPath
+import ro.davidmontei.loom.di.ApiHttp
 import ro.davidmontei.loom.di.AppScope
 import ro.davidmontei.loom.storage.engine.WaitReason
 import javax.inject.Inject
 
 @HiltAndroidApp
-class LoomApp : Application(), Configuration.Provider {
+class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Factory {
 
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var downloads: DownloadRepository
     @Inject @AppScope lateinit var scope: CoroutineScope
     @Inject lateinit var installs: InstallManager
+    @Inject @ApiHttp lateinit var apiClient: OkHttpClient
+
+    /**
+     * Cover art: through the authenticated client (the token only ever goes to the RomM host), with
+     * a large disk cache so the library still has its covers offline.
+     */
+    override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
+        .components { add(OkHttpNetworkFetcherFactory(callFactory = { apiClient })) }
+        .diskCache { DiskCache.Builder().directory(cacheDir.resolve("covers").toOkioPath()).maxSizeBytes(512L * 1024 * 1024).build() }
+        .build()
 
     // WorkManager's default initializer is removed in the manifest so workers get Hilt injection.
     override val workManagerConfiguration: Configuration

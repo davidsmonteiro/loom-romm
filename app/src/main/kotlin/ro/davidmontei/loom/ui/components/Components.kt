@@ -193,7 +193,7 @@ fun LoomSwitchRow(title: String, checked: Boolean, onCheckedChange: (Boolean) ->
 fun LoomTextField(
     value: String,
     onValueChange: (String) -> Unit,
-    label: String,
+    label: String?,
     modifier: Modifier = Modifier,
     placeholder: String? = null,
     keyboardType: KeyboardType = KeyboardType.Text,
@@ -208,7 +208,7 @@ fun LoomTextField(
     val focused by interaction.collectIsFocusedAsState()
     val shape = RoundedCornerShape(12.dp)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted)
+        if (label != null) Text(label, style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted)
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
@@ -227,11 +227,12 @@ fun LoomTextField(
                     color = when { focused -> LoomColors.Accent; isError -> LoomColors.Error; else -> LoomColors.Outline },
                     shape = shape,
                 )
-                .padding(horizontal = Space.l, vertical = 14.dp),
+                .padding(horizontal = Space.l, vertical = 12.dp),
             decorationBox = { inner ->
                 Box {
                     if (value.isEmpty() && placeholder != null) {
-                        Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = LoomColors.TextFaint)
+                        Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = LoomColors.TextFaint, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis)
                     }
                     inner()
                 }
@@ -295,11 +296,12 @@ fun ScreenScaffold(
             .fillMaxSize()
             .background(LoomColors.Background)
             .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(horizontal = Space.xl, vertical = Space.l),
-        verticalArrangement = Arrangement.spacedBy(Space.l),
+            .padding(horizontal = Space.xl, vertical = Space.m),
+        verticalArrangement = Arrangement.spacedBy(Space.m),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+            Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f), maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
             actions()
         }
         Column(Modifier.weight(1f).fillMaxWidth()) { content() }
