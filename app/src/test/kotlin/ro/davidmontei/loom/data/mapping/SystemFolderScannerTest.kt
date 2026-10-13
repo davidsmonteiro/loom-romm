@@ -27,6 +27,13 @@ class SystemFolderScannerTest {
         ).inOrder()
     }
 
+    /** On the Thor, Azahar keeps its user directory in ROMs/n3ds: its folders are not games. */
+    @Test fun azaharsFoldersAreNotGames() {
+        val n3ds = system("n3ds", null, "Pokemon X.3ds")
+        listOf("sdmc", "nand", "config", "states", "sysdata", "log", "cheats", "shaders", "gpu_drivers").forEach { File(n3ds, it).mkdirs() }
+        assertThat(SystemFolderScanner.scan(tmp.root).single()).isEqualTo(SystemFolder("n3ds", 1, null))
+    }
+
     @Test fun canLookAtJustSomeFoldersWhateverTheirCase() {
         system("MAME", "Multiple Arcade Machine Emulator")
         system("snes", "Nintendo SNES (Super Nintendo)")

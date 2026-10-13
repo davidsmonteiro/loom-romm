@@ -5,6 +5,7 @@ import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl
+import ro.davidmontei.loom.storage.mapping.EmulatorData
 import ro.davidmontei.loom.storage.plan.EntryKind
 import ro.davidmontei.loom.storage.plan.LayoutDecider
 import ro.davidmontei.loom.storage.plan.NameSanitizer
@@ -296,10 +297,13 @@ class JobRunner(
         return manifest
     }
 
-    /** Another RomM ROM already installed under this name gets a stable "(romm-<id>)" suffix. */
+    /**
+     * Another RomM ROM already installed under this name gets a stable "(romm-<id>)" suffix, and so
+     * does a name an emulator uses for its own data in the system folder (Azahar's `sdmc`, `nand`…).
+     */
     private suspend fun resolveCollision(job: JobRecord, name: String, kind: EntryKind): String {
         val key = NameSanitizer.key("${job.plan.systemFolder}/$name")
-        return if (store.isPathClaimed(job.volumeId, key, job.romId)) {
+        return if (EmulatorData.isEmulatorData(name) || store.isPathClaimed(job.volumeId, key, job.romId)) {
             NameSanitizer.withSuffix(name, job.romId, kind == EntryKind.DIRECTORY)
         } else name
     }

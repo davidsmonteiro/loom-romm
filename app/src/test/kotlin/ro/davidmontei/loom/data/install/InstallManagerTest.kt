@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -59,6 +60,7 @@ class InstallManagerTest {
             PlatformEntity(1, "snes", "snes", "SNES", "SNES", 2, "t"),
             PlatformEntity(2, "psx", "psx", "PlayStation", "PlayStation", 1, "t"),
             PlatformEntity(3, "nds", "nds", "DS", "Nintendo DS", 1, "t"),
+            PlatformEntity(4, "3ds", "3ds", "3DS", "Nintendo 3DS", 1, "t"),
         ))
         dao.writePage(
             listOf(rom(10, 1, "Chrono Trigger (USA).sfc", 4096), rom(11, 1, "Earthbound (USA).sfc", 3000),
@@ -141,6 +143,35 @@ class InstallManagerTest {
             "x", 1, InstallKind.FILE, 7, VerifiedBy.SIZE, InstallSource.ADOPTED, null, 1))
         assertThat(manager.offload(11)).isInstanceOf(OffloadResult.Failed::class.java)
         assertThat(outside.readText()).isEqualTo("keep me")
+    }
+
+    /** Azahar's user directory is ROMs/n3ds: a ROM that happens to share a name with one of its folders isn't adopted as it. */
+    @Test fun azaharsFoldersAreNeverAdopted() = runBlocking<Unit> {
+        val dao = db.catalogDao()
+        dao.writePage(listOf(rom(40, 4, "sdmc", 0, folder = true)), listOf(
+            RomFileEntity(400, 40, "a.3ds", "roms/3ds/sdmc", 10, true, null, null, null, null, null),
+            RomFileEntity(401, 40, "b.3ds", "roms/3ds/sdmc", 10, true, null, null, null, null, null),
+        ))
+        put("n3ds/sdmc/Nintendo 3DS/${"0".repeat(32)}/${"0".repeat(32)}/title/00040000/0011c400/data/00000001/main", 64)
+
+        assertThat(manager.reconcile().adopted).isEqualTo(0)
+        assertThat(dao.install(40)).isNull()
+    }
+
+    @Test fun offloadNeverDeletesAzaharsFoldersOrASystemFolder() = runBlocking<Unit> {
+        val save = put("n3ds/sdmc/Nintendo 3DS/${"0".repeat(32)}/${"0".repeat(32)}/title/00040000/0011c400/data/00000001/main", 64)
+        val userDir = put("n3ds/Imported/nand/data/sys.bin", 8).parentFile!!.parentFile!!.parentFile!!
+        val dao = db.catalogDao()
+        val game = put("snes/Chrono Trigger (USA).sfc", 4096)
+        val bad = listOf("n3ds/sdmc", "n3ds/SDMC", "n3ds", userDir.relativeTo(romsRoot).path, "snes")
+        for ((i, rel) in bad.withIndex()) {
+            dao.upsertInstall(InstallEntity(10, "9C33-6BBD", romsRoot.path, rel, "k$i", 4, InstallKind.DIRECTORY, 1,
+                VerifiedBy.SIZE, InstallSource.ADOPTED, null, 1))
+            assertWithMessage(rel).that(manager.offload(10)).isInstanceOf(OffloadResult.Failed::class.java)
+        }
+        assertThat(save.length()).isEqualTo(64)
+        assertThat(File(userDir, "nand/data/sys.bin").exists()).isTrue()
+        assertThat(game.exists()).isTrue()
     }
 
     @Test fun offloadWhileUnmountedFails() = runBlocking<Unit> {

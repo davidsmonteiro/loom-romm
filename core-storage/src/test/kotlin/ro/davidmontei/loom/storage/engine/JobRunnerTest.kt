@@ -349,6 +349,15 @@ class JobRunnerTest {
         assertThat(Files.readAllBytes(mine)).isEqualTo(byteArrayOf(1, 2, 3))
     }
 
+    /** Azahar's user directory is ROMs/n3ds: a game never lands on (or is recorded as) one of its folders. */
+    @Test fun aGameNamedLikeAnEmulatorFolderGetsItsOwnName() = runBlocking {
+        val save = romsRoot.resolve("n3ds/sdmc/Nintendo 3DS/main")
+        Files.createDirectories(save.parent); Files.write(save, byteArrayOf(7))
+        val install = installed(runOnce(enqueue(singleFile(180, "3ds", "3ds", "sdmc", file(1800, "sdmc", random(100, 27), "roms/3ds")))))
+        assertThat(install.relPath).isEqualTo("n3ds/sdmc (romm-180)")
+        assertThat(Files.readAllBytes(save)).isEqualTo(byteArrayOf(7))
+    }
+
     @Test fun twoRomsWithTheSameNameBothInstall() = runBlocking {
         installed(runOnce(enqueue(singleFile(170, "snes", "snes", "Game.sfc", file(1700, "Game.sfc", random(100, 25), "roms/snes")))))
         val second = installed(runOnce(enqueue(singleFile(171, "snes", "snes", "Game.sfc", file(1710, "Game.sfc", random(200, 26), "roms/snes/hacks")))))

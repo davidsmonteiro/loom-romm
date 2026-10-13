@@ -15,6 +15,7 @@ import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.romm.RommJson
 import ro.davidmontei.loom.storage.STAGING_DIR_NAME
+import ro.davidmontei.loom.storage.mapping.EmulatorData
 import ro.davidmontei.loom.storage.plan.DownloadPlanner
 import ro.davidmontei.loom.storage.plan.NameSanitizer
 import java.io.File
@@ -51,6 +52,12 @@ class InstallManager(
         if (!entry.path.startsWith(root.path + File.separator)) {
             return@withContext OffloadResult.Failed("Refusing to delete ${entry.path}: it's outside the ROMs folder")
         }
+        // An install is one entry inside a system folder. Never a system folder itself, and never
+        // an emulator's data that lives among the games (Azahar's user directory is ROMs/n3ds).
+        val inSystemFolder = install.relPath.split('/').drop(1)
+        if (entry.parentFile == root || inSystemFolder.any(EmulatorData::isEmulatorData) || EmulatorData.holdsEmulatorData(entry.toPath())) {
+            return@withContext OffloadResult.Failed("Refusing to delete ${install.relPath}: it holds an emulator's data, not a game")
+        }
         if (!volumes.isMounted(install.volumeUuid)) {
             return@withContext OffloadResult.Failed("The storage holding this game isn't mounted")
         }
@@ -77,6 +84,7 @@ class InstallManager(
      * Forgets installs whose files are gone and adopts catalog ROMs already present at the path
      * Loom would install them to. Only volumes that are mounted are looked at, so pulling the SD
      * card never "uninstalls" anything. Each system folder is listed once (not one stat per ROM).
+     * An emulator's folders among the games (Azahar's `sdmc`, `nand`… in `n3ds`) are never adopted.
      */
     suspend fun reconcile(): ReconcileResult = withContext(Dispatchers.IO) {
         var forgotten = 0
@@ -100,7 +108,7 @@ class InstallManager(
         for (platform in catalog.platforms()) {
             val folder = mapper.resolve(platform.slug, platform.fsSlug).folder
             val listing = listings.getOrPut(folder) {
-                File(root, folder).listFiles().orEmpty().associateBy { NameSanitizer.key(it.name) }
+                File(root, folder).listFiles().orEmpty().filterNot { EmulatorData.isEmulatorData(it.name) }.associateBy { NameSanitizer.key(it.name) }
             }
             if (listing.isEmpty()) continue
             for (rom in catalog.romsOf(platform.id)) {

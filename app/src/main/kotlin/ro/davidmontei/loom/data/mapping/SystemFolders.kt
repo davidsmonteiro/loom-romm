@@ -3,6 +3,7 @@ package ro.davidmontei.loom.data.mapping
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import ro.davidmontei.loom.data.settings.SettingsStore
+import ro.davidmontei.loom.storage.mapping.EmulatorData
 import ro.davidmontei.loom.storage.mapping.FolderDecision
 import ro.davidmontei.loom.storage.mapping.FolderDetector
 import ro.davidmontei.loom.storage.mapping.FolderNames
@@ -16,14 +17,19 @@ object SystemFolderScanner {
     /** ES-DE's description of a system folder; not a game. */
     private const val ES_DE_INFO = "systeminfo.txt"
 
-    /** The folders in [root], or only those whose names are in [only] (compared as the card does, ignoring case). */
+    /**
+     * The folders in [root], or only those whose names are in [only] (compared as the card does, ignoring case).
+     * An emulator's own folders inside a system folder (Azahar's `sdmc`, `nand`… in `n3ds`) aren't games.
+     */
     fun scan(root: File, only: Collection<String>? = null): List<SystemFolder> {
         val wanted = only?.map(FolderNames::key)?.toSet()
         val dirs = root.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }.orEmpty()
             .filter { wanted == null || FolderNames.key(it.name) in wanted }
             .sortedBy { it.name.lowercase() }
         return dirs.map { dir ->
-            val games = dir.list().orEmpty().count { !it.startsWith(".") && !it.equals(ES_DE_INFO, ignoreCase = true) }
+            val games = dir.list().orEmpty().count {
+                !it.startsWith(".") && !it.equals(ES_DE_INFO, ignoreCase = true) && !EmulatorData.isEmulatorData(it)
+            }
             SystemFolder(dir.name, games, systemName(File(dir, ES_DE_INFO)))
         }
     }
