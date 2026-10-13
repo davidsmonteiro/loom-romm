@@ -100,6 +100,25 @@ class QueueScreenTest {
         assertThat(calls).containsExactly("pause:3")
     }
 
+    /** Found by audit: closing the cancel question put focus on the first job, so a second X targeted it. */
+    @Test fun keepGivesFocusBackToItsJob() {
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown) // Mario Kart DS
+        press(Key.ButtonX)
+        rule.onNodeWithText("Keep").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithTag("job-3").assertIsFocused()
+    }
+
+    /** Found by audit: a job moving between "In progress" and "Needs attention" lost focus to the first job. */
+    @Test fun aJobChangingSectionKeepsFocus() {
+        show()
+        repeat(3) { press(Key.DirectionDown) } // Chrono Cross, failed
+        rule.onNodeWithTag("job-4").assertIsFocused()
+        update { it.copy(active = it.active + item(4, "Chrono Cross (USA)", JobPhase.QUEUED), failed = emptyList()) } // retried
+        rule.onNodeWithTag("job-4").assertIsFocused()
+    }
+
     @Test fun xIgnoresFinishedGames() {
         show()
         repeat(4) { press(Key.DirectionDown) } // past the jobs to the finished Chrono Trigger
