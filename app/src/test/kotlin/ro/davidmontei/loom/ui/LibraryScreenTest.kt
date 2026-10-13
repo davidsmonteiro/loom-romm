@@ -46,8 +46,9 @@ import ro.davidmontei.loom.ui.library.LibraryUiState
 @OptIn(ExperimentalTestApi::class)
 /**
  * Drives the library with a controller only: D-pad, A (DPAD_CENTER after the activity's remap),
- * X, Y, L1/R1, Start, Select. (Robolectric's native-graphics mode never grants window focus, so
- * screenshots live in [ScreenshotTest].)
+ * X, Y, L1/R1, Start, Select. (Robolectric starts native-graphics windows in touch mode, where
+ * nothing takes focus, so screenshots live in [ScreenshotTest]; SettingsScreenTest's folder editor
+ * tests show how to give such a window the pad's keyboard mode.)
  */
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = THOR_TOP_SCREEN)

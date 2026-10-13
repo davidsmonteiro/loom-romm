@@ -13,8 +13,10 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -33,6 +35,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.data.auth.Credentials
 import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.PlatformSummary
@@ -43,6 +46,7 @@ import ro.davidmontei.loom.storage.mapping.MappingJson
 import ro.davidmontei.loom.storage.mapping.PlatformMapper
 import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
+import ro.davidmontei.loom.storage.mapping.ROM_FILE_CATEGORIES
 import ro.davidmontei.loom.ui.settings.MappingRow
 import ro.davidmontei.loom.ui.settings.SettingsActions
 import ro.davidmontei.loom.ui.settings.SettingsContent
@@ -334,6 +338,78 @@ class SettingsScreenTest {
         rule.onNodeWithText("Cancel").assertIsFocused()
         val editor = rule.onNode(hasText("Files to download")).fetchSemanticsNode()
         assertThat(editor.config[SemanticsProperties.VerticalScrollAxisRange].maxValue()).isEqualTo(0f)
+    }
+
+    /**
+     * Opens PlayStation's folder editor laid out as on the Thor: run with native graphics, text is measured
+     * with the real font, so the chips wrap and line up as on the device. Robolectric starts such a window in
+     * touch mode, where nothing takes focus, so the pad's keyboard mode is provided around the dialogs too.
+     */
+    private fun openFolderEditorAsOnTheThor() {
+        val pad = object : InputModeManager {
+            override val inputMode get() = InputMode.Keyboard
+            override fun requestInputMode(inputMode: InputMode) = inputMode == InputMode.Keyboard
+        }
+        rule.setContent { CompositionLocalProvider(LocalInputModeManager provides pad) { LoomTestTheme { SettingsContent(state, actions) } } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionCenter) // Platform folders: Export
+        press(Key.DirectionDown); press(Key.DirectionCenter) // PlayStation's editor
+        rule.onNodeWithText("Cancel").assertIsFocused()
+    }
+
+    private fun chip(text: String) = rule.onNode(hasText(text) and hasClickAction())
+
+    /** The label of the focused chip or button; null for a control without one (the folder field). */
+    private fun focusedText(): String? =
+        rule.onNode(isFocused()).fetchSemanticsNode().config.getOrElseNullable(SemanticsProperties.Text) { null }?.joinToString()
+
+    private fun assertFolderFieldFocused() = rule.onNodeWithTag("folder-field", useUnmergedTree = true).assertIsFocused()
+
+    /**
+     * Found on the Thor: Left from "Game.m3u folder" went down to the "walkthrough" chip, not to the folder
+     * field. Down from the field went across to "Game.m3u folder" too, past the files below it.
+     */
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test fun leftFromTheFolderEditorsChoicesGoesToTheFolderField() {
+        openFolderEditorAsOnTheThor()
+        repeat(4) { if (focusedText() != "Game.m3u folder" && focusedText() != "Plain folder") press(Key.DirectionUp) }
+        if (focusedText() == "Plain folder") press(Key.DirectionLeft)
+        chip("Game.m3u folder").assertIsFocused()
+        press(Key.DirectionLeft)
+        assertFolderFieldFocused()
+        press(Key.DirectionRight) // the archive choice beside the field
+        chip("Keep as is").assertIsFocused()
+        press(Key.DirectionLeft)
+        assertFolderFieldFocused()
+        press(Key.DirectionDown) // the files below
+        chip("game").assertIsFocused()
+    }
+
+    /**
+     * Found on the Thor: Up from the first row of file chips reached the folder field only from "game"; from
+     * the others under the field ("walkthrough"…) it went to the right column. Chips under the right column
+     * still go to the choice above them.
+     */
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test fun upFromTheFirstRowOfFilesReachesTheFolderField() {
+        openFolderEditorAsOnTheThor()
+        val bounds = ROM_FILE_CATEGORIES.associateWith { chip(it).getBoundsInRoot() }
+        val firstRow = ROM_FILE_CATEGORIES.filter { bounds.getValue(it).top == bounds.getValue("game").top }
+        val rightColumn = chip("Keep as is").getBoundsInRoot().left
+        val underField = firstRow.filter { bounds.getValue(it).let { b -> (b.left + b.right) / 2 } < rightColumn }
+        assertThat(underField.size).isGreaterThan(1) // as on the Thor: more than "game"…
+        assertThat(firstRow - underField).isNotEmpty() // …and some under the right column
+        repeat(4) { if (focusedText() !in firstRow) press(Key.DirectionUp) } // from Cancel, up over the files
+        for (c in firstRow) {
+            repeat(firstRow.size) {
+                val at = firstRow.indexOf(focusedText())
+                if (at != firstRow.indexOf(c)) press(if (at < firstRow.indexOf(c)) Key.DirectionRight else Key.DirectionLeft)
+            }
+            chip(c).assertIsFocused()
+            press(Key.DirectionUp)
+            if (c in underField) assertFolderFieldFocused() else assertThat(focusedText()).isAnyOf("Game.m3u folder", "Plain folder")
+            press(Key.DirectionDown) // back to the first row
+        }
     }
 
     /**

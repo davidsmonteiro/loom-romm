@@ -35,7 +35,8 @@ import ro.davidmontei.loom.ui.settings.SettingsContent
 
 /**
  * Screens that must fit the Thor's top screen without scrolling. Native graphics measure text with
- * the real font, so line wrapping (and so height) is as on the device; focus can't be tested here.
+ * the real font, so line wrapping (and so height) is as on the device. Focus isn't tested here: these
+ * windows start in touch mode (SettingsScreenTest's folder editor tests switch them to the pad's).
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)

@@ -47,6 +47,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -420,6 +425,12 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
     var multiDisc by remember { mutableStateOf(r.multiDisc) }
     var include by remember { mutableStateOf(r.include) }
     val folderProblem = FolderNames.validate(folder)
+    // The choices on the right reach lower than the folder field, so the pad's nearest-control rule
+    // skipped the field: Left from "Game.m3u folder" went down to the file chips, Up from those under
+    // the field went to the right column, and Down from the field went there too. All are pointed.
+    val folderFocus = remember { FocusRequester() }
+    val firstFile = remember { FocusRequester() }
+    val layout = remember { EditorLayout() }
     // As wide as the screen, with the choices beside the folder field and RomM's names beside the
     // buttons: stacked, the form was taller than the screen and its top scrolled out of the pad's reach.
     LoomDialog(
@@ -432,19 +443,21 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
                     LoomTextField(folder, { folder = it.trim() }, "Folder in your ROMs folder", isError = folderProblem != null,
                         supporting = folderProblem ?: actions.cocoonFolders.filter { it.startsWith(folder.take(1)) && it != folder }.take(8)
                             .takeIf { it.isNotEmpty() && folder.isNotEmpty() }?.joinToString(prefix = "Other Cocoon folders: "),
-                        modifier = Modifier.weight(1f))
-                    Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                        modifier = Modifier.weight(1f).focusRequester(folderFocus).focusProperties { down = firstFile }, tag = "folder-field")
+                    Column(Modifier.onPlaced { layout.rightColumn = it }, verticalArrangement = Arrangement.spacedBy(Space.s)) {
                         Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
                             Text("Archives (.zip, .7z)", style = MaterialTheme.typography.labelLarge)
                             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                                LoomChip("Keep as is", archive == ArchivePolicy.KEEP, { archive = ArchivePolicy.KEEP })
+                                LoomChip("Keep as is", archive == ArchivePolicy.KEEP, { archive = ArchivePolicy.KEEP },
+                                    Modifier.focusProperties { left = folderFocus })
                                 LoomChip("Unpack", archive == ArchivePolicy.EXTRACT, { archive = ArchivePolicy.EXTRACT })
                             }
                         }
                         Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
                             Text("Multi-disc games", style = MaterialTheme.typography.labelLarge)
                             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                                LoomChip("Game.m3u folder", multiDisc == MultiDiscLayout.M3U_DIR, { multiDisc = MultiDiscLayout.M3U_DIR })
+                                LoomChip("Game.m3u folder", multiDisc == MultiDiscLayout.M3U_DIR, { multiDisc = MultiDiscLayout.M3U_DIR },
+                                    Modifier.focusProperties { left = folderFocus })
                                 LoomChip("Plain folder", multiDisc == MultiDiscLayout.FOLDER, { multiDisc = MultiDiscLayout.FOLDER })
                             }
                         }
@@ -454,7 +467,9 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
                     Text("Files to download", style = MaterialTheme.typography.labelLarge)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalArrangement = Arrangement.spacedBy(Space.s)) {
                         ROM_FILE_CATEGORIES.forEach { c ->
-                            LoomChip(c, c in include, { include = if (c in include) include - c else include + c })
+                            LoomChip(c, c in include, { include = if (c in include) include - c else include + c },
+                                Modifier.onPlaced { layout.chips[c] = it }.focusProperties { if (layout.underField(c)) up = folderFocus }
+                                    .then(if (c == ROM_FILE_CATEGORIES.first()) Modifier.focusRequester(firstFile) else Modifier))
                         }
                     }
                 }
@@ -475,6 +490,19 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
             })
         },
     )
+}
+
+/** Where the folder editor's right column and file chips were placed; read when the pad moves, not while drawing. */
+private class EditorLayout {
+    var rightColumn: LayoutCoordinates? = null
+    val chips = mutableMapOf<String, LayoutCoordinates>()
+
+    /** True for a file chip in the first row that sits under the folder field rather than under the right column. */
+    fun underField(category: String): Boolean {
+        val column = rightColumn?.takeIf { it.isAttached } ?: return false
+        val chip = chips[category]?.takeIf { it.isAttached } ?: return false
+        return chip.positionInParent().y == 0f && chip.boundsInRoot().center.x < column.positionInRoot().x
+    }
 }
 
 @Composable
