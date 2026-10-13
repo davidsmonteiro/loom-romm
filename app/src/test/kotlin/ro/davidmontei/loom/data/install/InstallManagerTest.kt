@@ -86,6 +86,15 @@ class InstallManagerTest {
 
     private fun put(rel: String, size: Int): File = File(romsRoot, rel).apply { parentFile!!.mkdirs(); writeBytes(ByteArray(size)) }
 
+    /** A ROM that is one archive, with the members RomM lists for it (null when it lists none). */
+    private suspend fun archiveRom(id: Int, platformId: Int, fileName: String, members: String?) = db.catalogDao().writePage(
+        listOf(rom(id, platformId, fileName, 900)),
+        listOf(RomFileEntity(id * 10, id, fileName, "roms/x", 900, true, null, null, null, null, members)),
+    )
+
+    private fun members(vararg named: Pair<String, Int>) =
+        named.joinToString(",", "[", "]") { (name, size) -> """{"name":"$name","size":$size,"crc_hash":"0","md5_hash":"0","sha1_hash":"0"}""" }
+
     @Test fun adoptsGamesAlreadyOnTheCard() = runBlocking<Unit> {
         put("snes/Chrono Trigger (USA).sfc", 4096)
         put("snes/Earthbound (USA).sfc", 1234) // same name, different dump: not adopted
@@ -102,6 +111,25 @@ class InstallManagerTest {
         assertThat(dao.install(20)!!.relPath).isEqualTo("psx/Final Fantasy VII (USA).m3u")
         assertThat(dao.install(20)!!.kind).isEqualTo(InstallKind.DIRECTORY)
         assertThat(dao.install(30)!!.relPath).isEqualTo("nds/Mario Kart DS (USA).nds")
+    }
+
+    /**
+     * Found on the Thor: after Loom's data was lost, a game it had unpacked wasn't recognised. A lone
+     * file out of an archive is named after the game, not after the file inside.
+     */
+    @Test fun adoptsAGameLoomUnpackedUnderTheNameLoomGaveIt() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(4, "ps2", "ps2", "PS2", "PlayStation 2", 2, "t")))
+        archiveRom(40, 4, "Super Bust-A-Move (USA).7z", members("SLUS-20115 (1.00).bin" to 4096))
+        archiveRom(41, 4, "Ico (USA).7z", members("SCUS-97113.iso" to 8192))
+        put("ps2/Super Bust-A-Move (USA).bin", 4096)
+        put("ps2/Ico (USA).iso", 1000) // the right name, but not the size RomM gives: another dump
+
+        assertThat(manager.reconcile().adopted).isEqualTo(1)
+        val install = db.catalogDao().install(40)!!
+        assertThat(install.relPath).isEqualTo("ps2/Super Bust-A-Move (USA).bin")
+        assertThat(install.bytes).isEqualTo(4096)
+        assertThat(install.verifiedBy).isEqualTo(VerifiedBy.SIZE)
+        assertThat(db.catalogDao().install(41)).isNull()
     }
 
     @Test fun forgetsInstallsDeletedInAFileManagerButNotWhenTheCardIsOut() = runBlocking<Unit> {

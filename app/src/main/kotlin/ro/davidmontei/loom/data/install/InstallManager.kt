@@ -14,9 +14,15 @@ import ro.davidmontei.loom.data.download.Volumes
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.romm.RommJson
+import ro.davidmontei.loom.romm.dto.ArchiveMemberDto
 import ro.davidmontei.loom.storage.STAGING_DIR_NAME
+import ro.davidmontei.loom.storage.mapping.ResolvedPlatform
+import ro.davidmontei.loom.storage.plan.Discs
 import ro.davidmontei.loom.storage.plan.DownloadPlanner
+import ro.davidmontei.loom.storage.plan.EntryKind
+import ro.davidmontei.loom.storage.plan.LayoutDecider
 import ro.davidmontei.loom.storage.plan.NameSanitizer
+import ro.davidmontei.loom.storage.plan.PayloadFile
 import java.io.File
 import java.util.UUID
 
@@ -98,14 +104,15 @@ class InstallManager(
         val listings = mutableMapOf<String, Map<String, File>>()
         var adopted = 0
         for (platform in catalog.platforms()) {
-            val folder = mapper.resolve(platform.slug, platform.fsSlug).folder
+            val resolved = mapper.resolve(platform.slug, platform.fsSlug)
+            val folder = resolved.folder
             val listing = listings.getOrPut(folder) {
                 File(root, folder).listFiles().orEmpty().associateBy { NameSanitizer.key(it.name) }
             }
             if (listing.isEmpty()) continue
             for (rom in catalog.romsOf(platform.id)) {
                 if (rom.id in installed) continue
-                val match = expectedEntries(rom, catalog.filesOf(rom.id)).firstNotNullOfOrNull { (name, size) ->
+                val match = expectedEntries(rom, catalog.filesOf(rom.id), resolved).firstNotNullOfOrNull { (name, size) ->
                     listing[NameSanitizer.key(name)]?.takeIf { f -> size == null || (f.isFile && f.length() == size) }
                 } ?: continue
                 val relPath = "$folder/${match.name}"
@@ -128,26 +135,45 @@ class InstallManager(
 
     /**
      * Names (and sizes, for files) a ROM could be found under in its system folder: the file
-     * itself, the single file inside an archive, or the `Name.m3u` / `Name` folder of a set.
+     * itself, the single file inside an archive, what Loom made of an archive it unpacked, or the
+     * `Name.m3u` / `Name` folder of a set.
      */
-    private fun expectedEntries(rom: RomEntity, files: List<RomFileEntity>): List<Pair<String, Long?>> {
+    private fun expectedEntries(rom: RomEntity, files: List<RomFileEntity>, platform: ResolvedPlatform): List<Pair<String, Long?>> {
         val out = mutableListOf<Pair<String, Long?>>()
         val games = files.filter { (it.category ?: "game") == "game" }
+        val stem = DownloadPlanner.entryStem(rom.id, rom.fsName, rom.fsNameNoExt, rom.hasMultipleFiles || rom.hasNestedSingleFile)
         if (games.size == 1) {
             val f = games.single()
             out += NameSanitizer.sanitize(f.fileName) to f.sizeBytes
-            val ext = f.fileName.substringAfterLast('.', "").lowercase()
-            if (ext in DownloadPlanner.EXTRACTABLE) {
-                val members = f.archiveMembersJson?.let { runCatching { RommJson.decodeFromString(ARCHIVE_MEMBERS, it) }.getOrNull() }
-                members?.singleOrNull()?.let { m -> out += NameSanitizer.sanitize(m.name.substringAfterLast('/')) to m.size }
+            if (Discs.ext(f.fileName) in DownloadPlanner.EXTRACTABLE) {
+                val members = archiveMembers(f)
+                // Unzipped by hand, the file keeps the name it has inside the archive.
+                members.singleOrNull()?.let { m -> out += NameSanitizer.sanitize(m.name.substringAfterLast('/')) to m.size }
+                unpacked(stem, members, platform)?.let { out += it }
                 out += NameSanitizer.sanitize(f.fileName.substringBeforeLast('.')) + ".m3u" to null
             }
         }
         if (rom.hasMultipleFiles || rom.hasNestedSingleFile || games.size > 1) {
-            val stem = NameSanitizer.sanitize(rom.fsName)
             out += "$stem.m3u" to null
             out += stem to null
         }
         return out.filterNot { (name, _) -> name.startsWith(STAGING_DIR_NAME) }
     }
+
+    /**
+     * The entry Loom's engine makes of an archive holding [members] when it unpacks it, laid out by
+     * the engine itself: a lone file goes by the game's name ("Super Bust-A-Move (USA).bin", not
+     * "SLUS-20115 (1.00).bin"). With the file's size when the entry is one file.
+     */
+    private fun unpacked(stem: String, members: List<ArchiveMemberDto>, platform: ResolvedPlatform): Pair<String, Long?>? {
+        val payload = members.filterNot { it.name.endsWith('/') }.map { PayloadFile(it.name, it.size, unpacked = true) }
+        if (payload.isEmpty()) return null
+        val layout = runCatching { LayoutDecider.decide(stem, payload, platform.multiDisc, platform.folder) }.getOrNull() ?: return null
+        if (layout.kind == EntryKind.DIRECTORY) return layout.entryName to null
+        val file = payload.firstOrNull { it.relPath == layout.placements.singleOrNull()?.from } ?: return null
+        return layout.entryName to file.size
+    }
+
+    private fun archiveMembers(file: RomFileEntity): List<ArchiveMemberDto> =
+        file.archiveMembersJson?.let { runCatching { RommJson.decodeFromString(ARCHIVE_MEMBERS, it) }.getOrNull() }.orEmpty()
 }
