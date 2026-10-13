@@ -2,6 +2,7 @@ package ro.davidmontei.loom.ui
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -323,6 +324,57 @@ class LibraryScreenTest {
     @Test fun backToTheGridReturnsToTheGameLeft() = backFromAnotherScreenReturnsToTheGameLeft(grid = true)
 
     @Test fun backToTheListReturnsToTheGameLeft() = backFromAnotherScreenReturnsToTheGameLeft(grid = false)
+
+    /** The id of the focused game. */
+    private fun focusedGame() = rule.onNode(isFocused()).fetchSemanticsNode().config[SemanticsProperties.TestTag].removePrefix("game-").toInt()
+
+    /**
+     * Found by review: when the game left had gone from the list by the time B came back (its
+     * download finished under "Not on device"), nothing had focus. The library leaves composition
+     * while another screen is on top and keeps only its saved state, as in NavHost.
+     */
+    private fun backAfterTheGameLeftHasGoneFocusesTheOneInItsPlace(grid: Boolean) {
+        state = state.copy(games = (1..60).map { game(it, "Game $it", InstallState.NOT_INSTALLED) }, gridMode = grid)
+        var away by mutableStateOf(false)
+        rule.setContent {
+            LoomTestTheme {
+                val saved = rememberSaveableStateHolder()
+                if (!away) saved.SaveableStateProvider("library") { LibraryContent(state, actions) }
+            }
+        }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        repeat(8) { press(Key.DirectionDown) }
+        val left = focusedGame()
+        away = true
+        rule.waitForIdle()
+        state = state.copy(games = state.games.filter { it.id != left })
+        away = false
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("game-${left + 1}").assertIsFocused()
+    }
+
+    @Test fun backToTheGridAfterTheGameLeftHasGone() = backAfterTheGameLeftHasGoneFocusesTheOneInItsPlace(grid = true)
+
+    @Test fun backToTheListAfterTheGameLeftHasGone() = backAfterTheGameLeftHasGoneFocusesTheOneInItsPlace(grid = false)
+
+    /**
+     * Found by review: a focused game leaving the list (its download finishing under "Not on
+     * device") put focus on the top-left card on screen. That is also the usual way back from the
+     * queue: the list shown first is the one from before leaving, and the game goes from it once
+     * focus is back on it.
+     */
+    private fun aFocusedGameLeavingTheListPassesFocusToTheOneInItsPlace(grid: Boolean) {
+        state = state.copy(games = (1..60).map { game(it, "Game $it", InstallState.NOT_INSTALLED) }, gridMode = grid)
+        show()
+        repeat(8) { press(Key.DirectionDown) }
+        val left = focusedGame()
+        update { s -> s.copy(games = s.games.filter { it.id != left }) }
+        rule.onNodeWithTag("game-${left + 1}").assertIsFocused()
+    }
+
+    @Test fun aFocusedGameLeavingTheGrid() = aFocusedGameLeavingTheListPassesFocusToTheOneInItsPlace(grid = true)
+
+    @Test fun aFocusedGameLeavingTheList() = aFocusedGameLeavingTheListPassesFocusToTheOneInItsPlace(grid = false)
 
     @Test fun listModeRenders() {
         state = state.copy(gridMode = false)

@@ -169,10 +169,14 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     var confirmOffload by remember { mutableStateOf<GameItem?>(null) }
     var searchEdits by remember { mutableIntStateOf(0) }
     var searchFocused by remember { mutableStateOf(false) }
-    // The game last focused, kept while the queue or settings is on top so B comes back to it. A new
-    // platform, filter, layout or search starts from the first game again.
-    var lastGameId by rememberSaveable(state.selected?.platform?.id, state.filter, state.gridMode, state.query) { mutableStateOf<Int?>(null) }
-    // Where focus enters the games: the one last focused, else the first.
+    // The game last focused and its place, kept while the queue or settings is on top so B comes
+    // back to it. If it has left the list meanwhile (its download finished under "Not on device"),
+    // the game now in its place is on screen to take over. A new platform, filter, layout or search
+    // starts from the first game again.
+    val listing = arrayOf<Any?>(state.selected?.platform?.id, state.filter, state.gridMode, state.query)
+    var lastGameId by rememberSaveable(*listing) { mutableStateOf<Int?>(null) }
+    var lastGameIndex by rememberSaveable(*listing) { mutableIntStateOf(0) }
+    // Where focus enters the games: the one last focused or the one now in its place, else the first.
     val entryGame = remember { FocusRequester() }
     val gamesFocus = remember { FocusRequester() }
     val railFocus = remember { FocusRequester() }
@@ -193,6 +197,10 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     // but never while a search is being typed: results that vanish and come back as the query
     // changes must not pull focus out of the field.
     InitialFocus(entryGame, state.selected?.platform?.id, state.filter, state.gridMode, state.games.isNotEmpty(), unless = { searchFocused })
+    // A focused game that leaves the list takes focus with it before the game now in its place can
+    // take over (Compose then picks the top-left card on screen), so that one asks once it can.
+    val focusedLeft = focusedId != null && state.games.none { it.id == focusedId }
+    LaunchedEffect(focusedLeft) { if (focusedLeft) runCatching { entryGame.requestFocus() } }
 
     // Focus coming into the screen from outside (a dialog's button that just went away) lands on
     // the games, and the grid restores the one last focused: the game the dialog was opened from.
@@ -227,8 +235,12 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                     }
                     state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = LoomColors.Accent) }
                     SyncError(state.header.sync, actions)
-                    Games(state, entryGame, lastGameId, gamesFocus, onFocus = { game, focused ->
-                        if (focused) { focusedId = game.id; lastGameId = game.id } else if (focusedId == game.id) focusedId = null
+                    Games(state, entryGame, lastGameId, lastGameIndex, gamesFocus, onFocus = { game, focused ->
+                        if (focused) {
+                            focusedId = game.id
+                            lastGameId = game.id
+                            lastGameIndex = state.games.indexOfFirst { it.id == game.id }.coerceAtLeast(0)
+                        } else if (focusedId == game.id) focusedId = null
                     }, onOpen = { detailsFor = it }, actions = actions)
                 }
             }
@@ -361,6 +373,7 @@ private fun Games(
     state: LibraryUiState,
     entryGame: FocusRequester,
     lastGameId: Int?,
+    lastGameIndex: Int,
     gamesFocus: FocusRequester,
     onFocus: (GameItem, Boolean) -> Unit,
     onOpen: (GameItem) -> Unit,
@@ -386,7 +399,7 @@ private fun Games(
         )
         return
     }
-    val entryId = state.games.firstOrNull { it.id == lastGameId }?.id ?: state.games.first().id
+    val entryId = (state.games.firstOrNull { it.id == lastGameId } ?: state.games[lastGameIndex.coerceAtMost(state.games.lastIndex)]).id
     if (state.gridMode) {
         val gridState = rememberLazyGridState()
         // Back to the top for a new platform, but not when coming back from another screen: the
