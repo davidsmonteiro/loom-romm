@@ -240,4 +240,21 @@ class SettingsScreenTest {
         assertThat(calls).contains("root:/storage/9C33-6BBD")
         rule.onNodeWithText("Change folder").assertIsFocused()
     }
+
+    /** Found by audit: B in the folder browser left Settings instead of going up a folder or closing it. */
+    @Test fun bGoesUpAFolderThenClosesTheBrowser() {
+        show()
+        press(Key.DirectionDown) // Storage
+        press(Key.DirectionCenter) // Change folder
+        press(Key.DirectionCenter) // the browser lists volumes
+        press(Key.DirectionCenter) // into the SD card
+        rule.onNodeWithText("Use this folder").assertIsFocused()
+        back()
+        rule.onNodeWithText("SD card").assertIsFocused()
+        back()
+        rule.onNodeWithText("Change folder").assertIsFocused()
+        back()
+        rule.onNodeWithTag("section-STORAGE").assertIsFocused()
+        assertThat(calls.filter { it.startsWith("root:") }).isEmpty()
+    }
 }

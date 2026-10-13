@@ -269,6 +269,10 @@ private fun StorageSection(state: SettingsUiState, actions: SettingsActions, mod
     var picking by remember { mutableStateOf(false) }
     val changeFolder = remember { FocusRequester() }
     ReturnFocusOnClose(picking) { changeFolder }
+    // B on the browser (once it has no folder left to go back up from) or its toggle closes it.
+    var toggleFocused by remember { mutableStateOf(false) }
+    var pickerFocused by remember { mutableStateOf(false) }
+    BackHandler(enabled = picking && (toggleFocused || pickerFocused)) { picking = false }
     val s = state.storage
     SectionHeader("ROMs folder")
     Text(s.romsRoot ?: "Not set", style = MaterialTheme.typography.titleSmall)
@@ -278,12 +282,13 @@ private fun StorageSection(state: SettingsUiState, actions: SettingsActions, mod
     }
     if (!state.allFilesAccess) Text("All files access is off: Loom can't write games. Turn it on in Android settings.", color = LoomColors.Error)
     LoomButton(if (picking) "Close folder browser" else "Change folder", onClick = { picking = !picking },
-        modifier = first.focusRequester(changeFolder))
+        modifier = first.focusRequester(changeFolder).onFocusChanged { toggleFocused = it.isFocused })
     if (picking) {
         Text("Games already installed stay where they are; Loom looks for games it knows in the new folder.", color = LoomColors.TextMuted,
             style = MaterialTheme.typography.bodySmall)
         FolderPicker(actions.volumes(), s.romsRoot?.let { java.io.File(it) }?.parentFile, actions.cocoonFolders.toSet(),
-            onPick = { actions.setRomsRoot(it); picking = false }, modifier = Modifier.heightIn(max = 360.dp))
+            onPick = { actions.setRomsRoot(it); picking = false },
+            modifier = Modifier.heightIn(max = 360.dp).onFocusChanged { pickerFocused = it.hasFocus })
     }
     SectionHeader("Used by Loom, per platform")
     val used = state.mapping.filter { it.platform.installedCount > 0 }

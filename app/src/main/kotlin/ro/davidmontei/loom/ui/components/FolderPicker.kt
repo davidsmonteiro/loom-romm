@@ -1,12 +1,14 @@
 package ro.davidmontei.loom.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.SdCard
@@ -17,12 +19,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import ro.davidmontei.loom.data.download.VolumeInfo
 import ro.davidmontei.loom.ui.theme.LoomColors
@@ -35,6 +39,10 @@ import java.io.File
  *
  * With [focusOnOpen] false the screen around it keeps focus (onboarding puts it on its suggested
  * folder) until the user moves within the picker.
+ *
+ * B, while the picker has focus, goes back up through the folders opened with A, then leaves it to
+ * the screen. Going up puts focus on the folder just left, so A goes back into it rather than
+ * picking its parent.
  */
 @Composable
 fun FolderPicker(
@@ -46,16 +54,34 @@ fun FolderPicker(
     focusOnOpen: Boolean = true,
 ) {
     var current by remember { mutableStateOf(initial?.takeIf { it.isDirectory }) }
+    // The folder (or volume) just left by going up.
+    var left by remember { mutableStateOf<File?>(null) }
+    // How many folders below the starting one were opened: B goes back up through these.
+    var depth by remember { mutableIntStateOf(0) }
     var focusable by remember { mutableStateOf(focusOnOpen) }
-    fun open(dir: File?) { current = dir; focusable = true }
+    var hasFocus by remember { mutableStateOf(false) }
+    fun open(dir: File) { current = dir; left = null; depth++; focusable = true }
+    fun up() {
+        val dir = current ?: return
+        val parent = dir.parentFile
+        current = if (parent == null || volumes.any { it.root == dir }) null else parent
+        left = dir
+        depth = (depth - 1).coerceAtLeast(0)
+        focusable = true
+    }
+    BackHandler(enabled = hasFocus && depth > 0) { up() }
     val firstFocus = remember { FocusRequester() }
     val children = remember(current) {
         current?.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }.orEmpty().sortedBy { it.name.lowercase() }
     }
     val systems = children.count { it.name.lowercase() in knownSystemFolders }
+    // Focus lands on the row of the folder just left, if it is listed; otherwise on "Use this folder" (or the first volume).
+    val focusIndex = left?.let { l -> if (current == null) volumes.indexOfFirst { it.root == l } else children.indexOf(l) }?.takeIf { it >= 0 }
+    val list = rememberLazyListState()
+    LaunchedEffect(current) { list.scrollToItem(focusIndex ?: 0) } // so that row is composed, and a folder opens at its top
     if (focusable) InitialFocus(firstFocus, current)
 
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.m)) {
+    Column(modifier.onFocusChanged { hasFocus = it.hasFocus }, verticalArrangement = Arrangement.spacedBy(Space.m)) {
         Text(current?.path ?: "Choose a storage", style = MaterialTheme.typography.titleSmall, color = LoomColors.TextMuted)
         if (current != null) {
             Text(
@@ -65,31 +91,30 @@ fun FolderPicker(
                 color = if (systems > 0) LoomColors.Installed else LoomColors.TextMuted,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-                LoomButton("Use this folder", onClick = { onPick(current!!) }, primary = true, modifier = Modifier.focusRequester(firstFocus))
-                LoomButton("Up", onClick = {
-                    val parent = current!!.parentFile
-                    open(if (parent == null || volumes.any { it.root == current }) null else parent)
-                })
+                LoomButton("Use this folder", onClick = { onPick(current!!) }, primary = true,
+                    modifier = if (focusIndex == null) Modifier.focusRequester(firstFocus) else Modifier)
+                LoomButton("Up", onClick = { up() })
             }
         }
         // Padding keeps the outset focus ring inside the list's clip.
-        LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+        LazyColumn(Modifier.fillMaxWidth(), state = list, contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(Space.s)) {
             if (current == null) {
-                items(volumes, key = { it.id }) { v ->
+                itemsIndexed(volumes, key = { _, v -> v.id }) { i, v ->
                     LoomRow(
                         title = v.label,
                         subtitle = v.root.path,
                         onClick = { open(v.root) },
                         leading = { Icon(if (v.removable) Icons.Outlined.SdCard else Icons.Outlined.PhoneAndroid, null, tint = LoomColors.TextMuted) },
-                        modifier = if (v == volumes.first()) Modifier.focusRequester(firstFocus) else Modifier,
+                        modifier = if (i == (focusIndex ?: 0)) Modifier.focusRequester(firstFocus) else Modifier,
                     )
                 }
             } else {
-                items(children, key = { it.path }) { dir ->
+                itemsIndexed(children, key = { _, dir -> dir.path }) { i, dir ->
                     LoomRow(
                         title = dir.name,
                         onClick = { open(dir) },
                         leading = { Icon(Icons.Outlined.Folder, null, tint = if (dir.name.lowercase() in knownSystemFolders) LoomColors.Installed else LoomColors.TextMuted) },
+                        modifier = if (i == focusIndex) Modifier.focusRequester(firstFocus) else Modifier,
                     )
                 }
             }
