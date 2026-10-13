@@ -34,6 +34,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
+import org.robolectric.shadows.ShadowEnvironment
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.TokenCipher
 import ro.davidmontei.loom.data.catalog.CatalogSyncScheduler
@@ -69,10 +70,13 @@ class OnboardingViewModelTest {
 
     @Volatile private var meRequests = 0
 
+    private val heartbeat = """{"SYSTEM":{"VERSION":"5.3.1","SHOW_SETUP_WIZARD":false}}"""
+
     /** RomM accepts only [goodToken]; it has no device pairing to offer, so the QR step fails quietly. */
-    private fun serve(goodToken: String, meDelayMs: Long = 0) {
+    private fun serve(goodToken: String = "rmm_new", meDelayMs: Long = 0, heartbeatDelayMs: Long = 0) {
         romm.server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when (request.url.encodedPath) {
+                "/api/heartbeat" -> { Thread.sleep(heartbeatDelayMs); json(heartbeat) }
                 "/api/users/me" -> {
                     meRequests++
                     Thread.sleep(meDelayMs)
@@ -88,6 +92,7 @@ class OnboardingViewModelTest {
 
     @Before fun setUp() = runBlocking {
         Dispatchers.setMain(UnconfinedTestDispatcher())
+        ShadowEnvironment.addExternalDir(tmp.newFolder("sdcard").path) // Android's all-files check needs a volume
         WorkManagerTestInitHelper.initializeTestWorkManager(context)
         fun prefs(name: String) = PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "$name.preferences_pb") }
         settings = SettingsStore(prefs("settings"))
@@ -153,5 +158,32 @@ class OnboardingViewModelTest {
         vm.submitPairInput()
         vm.await { it.pairedAs == "david" }
         assertThat(meRequests).isEqualTo(1)
+    }
+
+    /** Found by audit: a slow check of the old address finished after the user had typed a new one, and took over. */
+    @Test fun aLateCheckOfAnEarlierAddressIsDropped() {
+        serve(heartbeatDelayMs = 1_000)
+        val vm = viewModel(pairAgain = false)
+        vm.await { it.addressInput.isNotEmpty() }
+        vm.go(OnboardingStep.SERVER)
+        vm.connect()
+        assertThat(vm.state.value.probing).isTrue()
+        vm.setAddress("romm.example.org") // retyping while it hangs
+        assertThat(vm.state.value.probing).isFalse() // so the new address can be checked straight away
+        Thread.sleep(1_500)
+        assertThat(vm.state.value.serverSummary).isNull()
+        assertThat(vm.state.value.serverError).isNull()
+    }
+
+    /** Found by audit: B back to the Server step forgot the checked address, so Continue was disabled again. */
+    @Test fun theSameAddressStaysChecked() {
+        serve()
+        val vm = viewModel(pairAgain = false)
+        vm.await { it.addressInput.isNotEmpty() }
+        vm.go(OnboardingStep.SERVER)
+        vm.connect()
+        vm.await { it.serverSummary != null }
+        vm.setAddress(vm.state.value.addressInput) // the field reports its text again when the step reappears
+        assertThat(vm.state.value.serverSummary).isNotNull()
     }
 }

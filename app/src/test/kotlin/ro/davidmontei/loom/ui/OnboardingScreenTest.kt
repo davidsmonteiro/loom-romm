@@ -143,4 +143,12 @@ class OnboardingScreenTest {
         update { it.copy(probing = false, serverError = "Couldn't reach RomM: timeout") }
         rule.onNodeWithText("Check address").assertIsFocused()
     }
+
+    /** Found by audit: back on the Server step with the address checked, focus went to the field instead of Continue. */
+    @Test fun aCheckedAddressStartsOnContinue() {
+        show(OnboardingState(step = OnboardingStep.SERVER, addressInput = "romm.example.org", serverSummary = "RomM 5.3.1 at https://romm.example.org/"))
+        rule.onNodeWithText("Continue").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("go:PAIR")
+    }
 }

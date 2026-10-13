@@ -89,6 +89,7 @@ class OnboardingViewModel @Inject constructor(
     private val _state = MutableStateFlow(OnboardingState(step = if (pairAgain) OnboardingStep.PAIR else OnboardingStep.WELCOME, pairAgain = pairAgain))
     val state: StateFlow<OnboardingState> = _state.asStateFlow()
     private var pollJob: Job? = null
+    private var probeJob: Job? = null
 
     /** Folder names Cocoon uses, to recognise a ROMs root in the folder picker. */
     val knownSystemFolders: Set<String> by lazy {
@@ -119,14 +120,23 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
-    fun setAddress(text: String) = _state.update { it.copy(addressInput = text, serverError = null, serverSummary = null) }
+    /**
+     * A check belongs to the address it checked. The same text keeps it (the field reports its text again when
+     * the step reappears); a changed one drops it, and stops a check still running so its late result can't
+     * land on the new text, or hold up checking it.
+     */
+    fun setAddress(text: String) {
+        if (text == _state.value.addressInput) return
+        probeJob?.cancel()
+        _state.update { it.copy(addressInput = text, probing = false, serverError = null, serverSummary = null, insecureWarning = null) }
+    }
 
     /** Finds RomM at the typed address (and the optional second one), then moves on to pairing. */
     fun connect() {
         val s = _state.value
         if (s.probing) return
         _state.update { it.copy(probing = true, serverError = null, serverSummary = null, insecureWarning = null) }
-        viewModelScope.launch {
+        probeJob = viewModelScope.launch {
             try {
                 val probe = connector.probe(s.addressInput)
                 settings.setServer(ServerConfig(probe.baseUrl), probe.version)

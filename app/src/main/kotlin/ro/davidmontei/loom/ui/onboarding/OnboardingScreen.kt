@@ -181,10 +181,12 @@ private fun Server(state: OnboardingState, actions: OnboardingActions, first: Fo
         "Use whichever address reaches it from the Thor: a local one (192.168.1.10:8080), Tailscale " +
             "(100.x.y.z:8080 or a MagicDNS name) or your domain (romm.example.org). You can change it later in Settings.",
     )
+    // Back on this step with the address already checked, A carries on: focus starts on Continue.
+    val checked = state.serverSummary != null
     LoomTextField(
         value = state.addressInput, onValueChange = actions::setAddress, label = "Server address",
         placeholder = "romm.example.org or 100.x.y.z:8080", keyboardType = KeyboardType.Uri, onImeAction = actions::connect,
-        modifier = Modifier.focusRequester(first), isError = state.serverError != null,
+        modifier = if (checked) Modifier else Modifier.focusRequester(first), isError = state.serverError != null,
     )
     state.serverError?.let { Text(it, color = LoomColors.Error, style = MaterialTheme.typography.bodyMedium) }
     state.serverSummary?.let { Text(it, color = LoomColors.Installed, style = MaterialTheme.typography.bodyMedium) }
@@ -201,8 +203,8 @@ private fun Server(state: OnboardingState, actions: OnboardingActions, first: Fo
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
         LoomButton(if (state.probing) "Checking…" else "Check address", onClick = actions::connect,
             modifier = Modifier.focusRequester(checkFocus))
-        LoomButton("Continue", onClick = { actions.go(OnboardingStep.PAIR) }, primary = true, enabled = state.serverSummary != null,
-            modifier = Modifier.focusRequester(continueFocus))
+        LoomButton("Continue", onClick = { actions.go(OnboardingStep.PAIR) }, primary = true, enabled = checked,
+            modifier = Modifier.focusRequester(continueFocus).then(if (checked) Modifier.focusRequester(first) else Modifier))
     }
 }
 
