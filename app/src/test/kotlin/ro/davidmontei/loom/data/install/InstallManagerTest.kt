@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
@@ -29,6 +30,7 @@ import ro.davidmontei.loom.data.download.VolumeInfo
 import ro.davidmontei.loom.data.download.Volumes
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
+import ro.davidmontei.loom.ui.library.toItem
 import java.io.File
 
 @RunWith(AndroidJUnit4::class)
@@ -110,6 +112,7 @@ class InstallManagerTest {
         assertThat(dao.install(11)).isNull()
         assertThat(dao.install(20)!!.relPath).isEqualTo("psx/Final Fantasy VII (USA).m3u")
         assertThat(dao.install(20)!!.kind).isEqualTo(InstallKind.DIRECTORY)
+        assertThat(dao.install(20)!!.verifiedBy).isEqualTo(VerifiedBy.NAME) // a folder: no size to compare
         assertThat(dao.install(30)!!.relPath).isEqualTo("nds/Mario Kart DS (USA).nds")
     }
 
@@ -130,6 +133,46 @@ class InstallManagerTest {
         assertThat(install.bytes).isEqualTo(4096)
         assertThat(install.verifiedBy).isEqualTo(VerifiedBy.SIZE)
         assertThat(db.catalogDao().install(41)).isNull()
+    }
+
+    /**
+     * Found on the Thor: RomM listed nothing inside "Pokemon X….zip", so after Loom's data was lost
+     * neither the name nor the size of the .3ds it had unpacked could be predicted. Only on platforms
+     * set to unpack, where Loom would have made it.
+     */
+    @Test fun adoptsByNameAGameUnpackedFromAnArchiveRommListsNothingIn() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(5, "3ds", "3ds", "3DS", "Nintendo 3DS", 1, "t")))
+        archiveRom(50, 5, "Pokemon X (Europe) (En,Ja,Fr,De,Es,It,Ko).zip", null)
+        archiveRom(51, 2, "Gran Turismo (USA).zip", "[]")
+        archiveRom(52, 1, "Super Mario World (USA).zip", null) // SNES keeps archives: Loom never made this .sfc
+        put("n3ds/Pokemon X (Europe) (En,Ja,Fr,De,Es,It,Ko).3ds", 2048)
+        put("psx/Gran Turismo (USA)/Gran Turismo (USA).cue", 10)
+        put("snes/Super Mario World (USA).sfc", 512)
+
+        assertThat(manager.reconcile().adopted).isEqualTo(2)
+        val dao = db.catalogDao()
+        val pokemon = dao.install(50)!!
+        assertThat(pokemon.relPath).isEqualTo("n3ds/Pokemon X (Europe) (En,Ja,Fr,De,Es,It,Ko).3ds")
+        assertThat(pokemon.bytes).isEqualTo(2048)
+        assertThat(pokemon.verifiedBy).isEqualTo(VerifiedBy.NAME)
+        assertThat(dao.observeGame(50).first()!!.toItem().matchedByName).isTrue()
+        assertThat(dao.install(51)!!.relPath).isEqualTo("psx/Gran Turismo (USA)")
+        assertThat(dao.install(51)!!.kind).isEqualTo(InstallKind.DIRECTORY)
+        assertThat(dao.install(52)).isNull()
+    }
+
+    @Test fun byNameNothingIsAdoptedWhenTwoEntriesFit() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(5, "3ds", "3ds", "3DS", "Nintendo 3DS", 2, "t")))
+        archiveRom(50, 5, "Pokemon X (Europe).zip", null)
+        archiveRom(53, 5, "Pokemon Y (Europe).zip", null)
+        put("n3ds/Pokemon X (Europe).3ds", 2048)
+        put("n3ds/Pokemon X (Europe).cia", 1024) // which one did Loom make?
+        put("n3ds/Pokemon Y (Europe).zip", 5) // the archive itself (another copy) isn't what it was unpacked to
+        put("n3ds/Pokemon Y (Europe).3ds", 2048)
+
+        assertThat(manager.reconcile().adopted).isEqualTo(1)
+        assertThat(db.catalogDao().install(50)).isNull()
+        assertThat(db.catalogDao().install(53)!!.relPath).isEqualTo("n3ds/Pokemon Y (Europe).3ds")
     }
 
     @Test fun forgetsInstallsDeletedInAFileManagerButNotWhenTheCardIsOut() = runBlocking<Unit> {

@@ -208,6 +208,20 @@ class LibraryScreenTest {
 
     private fun changeGame(id: Int, to: GameItem) = update { s -> s.copy(games = s.games.map { if (it.id == id) to else it }) }
 
+    /**
+     * Found on the Thor: after Loom's data was lost, games it had installed were found on the card again
+     * and said "already there before Loom". One matched by its name alone says so.
+     */
+    @Test fun detailsSayHowAGameFoundOnTheCardWasMatched() {
+        state = state.copy(games = state.games.map { if (it.id == 1) it.copy(adopted = true, matchedByName = true) else it })
+        show()
+        press(Key.DirectionCenter) // Chrono Trigger
+        rule.onNodeWithText("On this device at snes/Chrono Trigger.sfc (Loom found it there, by its name only)", useUnmergedTree = true)
+            .assertExists()
+        press(Key.DirectionRight); press(Key.DirectionCenter) // Remove from device
+        rule.onNodeWithText("matched it to this game by its name only", substring = true, useUnmergedTree = true).assertExists()
+    }
+
     /** Found by audit: a download finishing while its details were open left focus on the game behind. */
     @Test fun detailsKeepFocusWhenADownloadFinishes() {
         show()

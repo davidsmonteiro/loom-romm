@@ -16,6 +16,7 @@ import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.romm.RommJson
 import ro.davidmontei.loom.romm.dto.ArchiveMemberDto
 import ro.davidmontei.loom.storage.STAGING_DIR_NAME
+import ro.davidmontei.loom.storage.mapping.ArchivePolicy
 import ro.davidmontei.loom.storage.mapping.ResolvedPlatform
 import ro.davidmontei.loom.storage.plan.Discs
 import ro.davidmontei.loom.storage.plan.DownloadPlanner
@@ -83,6 +84,10 @@ class InstallManager(
      * Forgets installs whose files are gone and adopts catalog ROMs already present at the path
      * Loom would install them to. Only volumes that are mounted are looked at, so pulling the SD
      * card never "uninstalls" anything. Each system folder is listed once (not one stat per ROM).
+     *
+     * An archive Loom unpacks but RomM lists nothing inside can't be predicted by name and size:
+     * it's looked for by name alone, after every other ROM of the platform, and adopted only when
+     * one entry alone fits.
      */
     suspend fun reconcile(): ReconcileResult = withContext(Dispatchers.IO) {
         var forgotten = 0
@@ -110,27 +115,76 @@ class InstallManager(
                 File(root, folder).listFiles().orEmpty().associateBy { NameSanitizer.key(it.name) }
             }
             if (listing.isEmpty()) continue
+            val byNameOnly = mutableListOf<Pair<RomEntity, RomFileEntity>>()
             for (rom in catalog.romsOf(platform.id)) {
                 if (rom.id in installed) continue
-                val match = expectedEntries(rom, catalog.filesOf(rom.id), resolved).firstNotNullOfOrNull { (name, size) ->
-                    listing[NameSanitizer.key(name)]?.takeIf { f -> size == null || (f.isFile && f.length() == size) }
-                } ?: continue
-                val relPath = "$folder/${match.name}"
-                if (catalog.installAtPath(volume.id, NameSanitizer.key(relPath)) != null) continue
-                catalog.upsertInstall(
-                    InstallEntity(
-                        romId = rom.id, volumeUuid = volume.id, romsRoot = romsRoot, relPath = relPath,
-                        pathKey = NameSanitizer.key(relPath), platformId = rom.platformId,
-                        kind = if (match.isDirectory) InstallKind.DIRECTORY else InstallKind.FILE,
-                        bytes = if (match.isDirectory) match.walkBottomUp().filter { it.isFile }.sumOf { it.length() } else match.length(),
-                        verifiedBy = VerifiedBy.SIZE, source = InstallSource.ADOPTED, romFingerprint = null,
-                        installedAtEpochMs = nowMs(),
-                    ),
-                )
-                adopted++
+                val files = catalog.filesOf(rom.id)
+                val match = expectedEntries(rom, files, resolved).firstNotNullOfOrNull { (name, size) ->
+                    listing[NameSanitizer.key(name)]?.takeIf { f -> size == null || (f.isFile && f.length() == size) }?.let { it to size }
+                }
+                if (match != null) {
+                    val (entry, size) = match
+                    if (adopt(rom, entry, folder, volume.id, romsRoot, if (size == null) VerifiedBy.NAME else VerifiedBy.SIZE)) adopted++
+                } else {
+                    archiveWithoutMembers(files, resolved)?.let { byNameOnly += rom to it }
+                }
+            }
+            if (byNameOnly.isEmpty()) continue
+            val byStem = byStem(listing.values)
+            for ((rom, archive) in byNameOnly) {
+                val stem = entryStem(rom)
+                val archiveKey = NameSanitizer.key(NameSanitizer.sanitize(archive.fileName))
+                // Two or more ("Game.3ds" and "Game.cia") and Loom can't tell which it made: neither.
+                val entry = byStem[NameSanitizer.key(stem)].orEmpty().filter { NameSanitizer.key(it.name) != archiveKey }.singleOrNull()
+                if (entry != null && adopt(rom, entry, folder, volume.id, romsRoot, VerifiedBy.NAME)) adopted++
             }
         }
         ReconcileResult(forgotten, adopted)
+    }
+
+    /** Records [entry] as [rom]'s install, unless another install already claims it. */
+    private suspend fun adopt(rom: RomEntity, entry: File, folder: String, volumeId: String, romsRoot: String, verifiedBy: VerifiedBy): Boolean {
+        val relPath = "$folder/${entry.name}"
+        if (catalog.installAtPath(volumeId, NameSanitizer.key(relPath)) != null) return false
+        catalog.upsertInstall(
+            InstallEntity(
+                romId = rom.id, volumeUuid = volumeId, romsRoot = romsRoot, relPath = relPath,
+                pathKey = NameSanitizer.key(relPath), platformId = rom.platformId,
+                kind = if (entry.isDirectory) InstallKind.DIRECTORY else InstallKind.FILE,
+                bytes = if (entry.isDirectory) entry.walkBottomUp().filter { it.isFile }.sumOf { it.length() } else entry.length(),
+                verifiedBy = verifiedBy, source = InstallSource.ADOPTED, romFingerprint = null,
+                installedAtEpochMs = nowMs(),
+            ),
+        )
+        return true
+    }
+
+    /**
+     * The ROM's archive when Loom would unpack it but RomM lists nothing inside it ("Pokemon X.zip"
+     * on a platform set to unpack), so neither the name nor the size of what it became is known.
+     */
+    private fun archiveWithoutMembers(files: List<RomFileEntity>, platform: ResolvedPlatform): RomFileEntity? {
+        if (platform.archive != ArchivePolicy.EXTRACT) return null
+        val archive = gameFiles(files).singleOrNull() ?: return null
+        return archive.takeIf { Discs.ext(it.fileName) in DownloadPlanner.EXTRACTABLE && archiveMembers(it).isEmpty() }
+    }
+
+    /**
+     * A system folder's entries by name without the extension (what an unpacked file is named
+     * after), and folders also by their own name: a set unpacks to `Name.m3u/` or `Name/`.
+     */
+    private fun byStem(entries: Collection<File>): Map<String, List<File>> {
+        val out = mutableMapOf<String, MutableSet<File>>()
+        for (entry in entries) {
+            if (entry.name.startsWith('.')) continue
+            val stems = when {
+                entry.isDirectory -> setOf(entry.name, if (entry.name.endsWith(".m3u", ignoreCase = true)) entry.name.dropLast(4) else entry.name)
+                entry.isFile -> setOf(entry.name.substringBeforeLast('.'))
+                else -> emptySet()
+            }
+            stems.forEach { out.getOrPut(NameSanitizer.key(it)) { mutableSetOf() } += entry }
+        }
+        return out.mapValues { it.value.toList() }
     }
 
     /**
@@ -140,8 +194,8 @@ class InstallManager(
      */
     private fun expectedEntries(rom: RomEntity, files: List<RomFileEntity>, platform: ResolvedPlatform): List<Pair<String, Long?>> {
         val out = mutableListOf<Pair<String, Long?>>()
-        val games = files.filter { (it.category ?: "game") == "game" }
-        val stem = DownloadPlanner.entryStem(rom.id, rom.fsName, rom.fsNameNoExt, rom.hasMultipleFiles || rom.hasNestedSingleFile)
+        val games = gameFiles(files)
+        val stem = entryStem(rom)
         if (games.size == 1) {
             val f = games.single()
             out += NameSanitizer.sanitize(f.fileName) to f.sizeBytes
@@ -173,6 +227,12 @@ class InstallManager(
         val file = payload.firstOrNull { it.relPath == layout.placements.singleOrNull()?.from } ?: return null
         return layout.entryName to file.size
     }
+
+    /** The name Loom gives the install when its layout needs one, as the download planner does. */
+    private fun entryStem(rom: RomEntity): String =
+        DownloadPlanner.entryStem(rom.id, rom.fsName, rom.fsNameNoExt, rom.hasMultipleFiles || rom.hasNestedSingleFile)
+
+    private fun gameFiles(files: List<RomFileEntity>) = files.filter { (it.category ?: "game") == "game" }
 
     private fun archiveMembers(file: RomFileEntity): List<ArchiveMemberDto> =
         file.archiveMembersJson?.let { runCatching { RommJson.decodeFromString(ARCHIVE_MEMBERS, it) }.getOrNull() }.orEmpty()

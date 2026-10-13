@@ -280,7 +280,11 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                     Text(
                         buildString {
                             append("Frees ${formatBytes(game.sizeBytes)}. It stays in your library and can be downloaded again with one press.")
-                            if (game.adopted) append("\n\nLoom didn't download this copy; it was already on the SD card at ${game.installPath}.")
+                            // Not "Loom didn't download it": after Loom's data is lost, games it installed are found again.
+                            if (game.adopted) {
+                                append("\n\nLoom found this copy already on the SD card, at ${game.installPath}")
+                                append(if (game.matchedByName) ", and matched it to this game by its name only." else ".")
+                            }
                             append("\nSaves stored by your emulator aren't touched.")
                         },
                         style = MaterialTheme.typography.bodyLarge, color = LoomColors.TextMuted,
@@ -631,7 +635,11 @@ private fun GameDialog(
                 platform?.let { add(it.platform.displayName) }
                 add(formatBytes(game.sizeBytes) + (game.regions.takeIf { it.isNotEmpty() }?.let { " · ${it.joinToString()}" } ?: ""))
                 when (game.state) {
-                    InstallState.INSTALLED -> add("On this device at ${game.installPath}" + if (game.adopted) " (already there before Loom)" else "")
+                    InstallState.INSTALLED -> add("On this device at ${game.installPath}" + when {
+                        game.matchedByName -> " (Loom found it there, by its name only)"
+                        game.adopted -> " (Loom found it there)"
+                        else -> ""
+                    })
                     InstallState.QUEUED, InstallState.DOWNLOADING -> add(game.stateDetail ?: "Downloading")
                     InstallState.FAILED -> {
                         add(game.stateDetail ?: "The last download failed")

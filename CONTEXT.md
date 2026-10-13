@@ -56,7 +56,7 @@ A ROM that is present in its system folder as a single complete entry Cocoon can
 _Avoid_: download (the process, not the result), local copy
 
 **Adopted install**:
-An install Loom found already present at the expected path rather than downloading itself.
+An install Loom found already present at the expected path rather than downloading itself. Matched by name and size, or by name alone when nothing says what size it should be (a folder, or an archive RomM lists no contents for).
 
 **Offload**:
 Removing an install's files from the device while keeping its catalog entry, so it can be downloaded again with one press.

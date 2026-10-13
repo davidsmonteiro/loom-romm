@@ -24,6 +24,8 @@ data class GameItem(
     /** False for a failed download that retrying can't fix (a card that can't hold the file). */
     val retryable: Boolean = true,
     val platformId: Int = 0,
+    /** Adopted by its name alone: nothing said what size the game should be, so it may be another copy. */
+    val matchedByName: Boolean = false,
 )
 
 /**
@@ -71,5 +73,6 @@ fun GameRow.toItem(liveBytes: Long? = null): GameItem {
         installPath = installPath,
         platformId = platformId,
         retryable = failureRetryable ?: true,
+        matchedByName = installSource == "ADOPTED" && installVerifiedBy == "NAME",
     )
 }

@@ -110,7 +110,10 @@ Behind the scenes:
 - **Name clashes.**
   - A file that's already on the card under the same name is never overwritten: the download stops with an explanation.
   - Two RomM games that would get the same name are told apart with a ` (romm-<id>)` suffix.
-- **Games you already had.** Games already on your card in the expected place, with a matching size, are picked up as "On device" without downloading.
+- **Games already on the card.** Games already in the place Loom would put them are picked up as "On device" without downloading: games you copied yourself, and Loom's own after a reinstall.
+  - A file must have RomM's size. A game Loom unpacked is looked for under the name Loom gave it (`Super Bust-A-Move (USA).bin`), with the size RomM lists for the file inside the archive.
+  - A folder (`Name.m3u/` or `Name/`) is matched by its name.
+  - RomM sometimes lists nothing inside an archive. On platforms set to unpack, Loom then matches the game by name alone: `Pokemon X (Europe).3ds` for `Pokemon X (Europe).zip`. That only happens when exactly one file or folder in the system folder has that name, and the game's details say it was matched by name only.
 
 ## Preparing your RomM library
 
