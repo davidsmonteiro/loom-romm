@@ -55,7 +55,16 @@ data class PlatformMappingEntry(
     /** Phase 2: the emulator's save directory for this platform. */
     val saveDir: String? = null,
     val note: String? = null,
-)
+    /**
+     * True when [folder] is one Loom found on the card at the platform's first download, rather
+     * than the user's choice: settled (Loom doesn't look again), but not a change the user made.
+     */
+    val detected: Boolean? = null,
+) {
+    /** Just a folder Loom found on the card: nothing the user set. */
+    val isDetectedFolderOnly: Boolean
+        get() = detected == true && aliases == null && archive == null && multiDisc == null && include == null && saveDir == null
+}
 
 @Serializable
 data class MappingDefaults(
@@ -130,11 +139,12 @@ class PlatformMapper(
         )
         val folderEntry = chain.firstOrNull { it.folder != null }
         val folder = folderEntry?.folder ?: FolderNames.fromServer(fsSlug)
-        val userTouched = chain.any { it in overrides }
+        // A folder Loom found on the card settles it, but isn't the user's change ("Changed" in Settings).
+        val userTouched = chain.any { it in overrides && !it.isDetectedFolderOnly }
         val source = when {
             userTouched -> MappingSource.USER
-            folderEntry != null -> MappingSource.DEFAULT
-            else -> MappingSource.SERVER_FOLDER
+            chain.any { it !in overrides && it.folder != null } -> MappingSource.DEFAULT
+            else -> MappingSource.SERVER_FOLDER // a folder Loom found doesn't make it a known one: still "Check"
         }
         val d = defaults.defaults
         return ResolvedPlatform(
@@ -145,20 +155,12 @@ class PlatformMapper(
             saveDir = chain.firstNotNullOfOrNull { it.saveDir },
             source = source,
             folderChosen = folderEntry != null && folderEntry in overrides,
-            candidates = (listOf(folder) + chain.firstNotNullOfOrNull { it.aliases }.orEmpty())
+            // Aliases belong to the row that names the folder (or rows above it): the MAME, NAOMI and
+            // FBNeo server folders mustn't inherit the generic arcade row's arcade/fbneo/fba.
+            candidates = (listOf(folder) + chain.take(chain.indexOf(folderEntry) + 1).firstNotNullOfOrNull { it.aliases }.orEmpty())
                 .distinctBy { FolderNames.key(it) },
         )
     }
-
-    /**
-     * The key a user override for this platform is stored under: the one already in use, else the
-     * shipped row's (its server folder first), else the RomM slug. [resolve] then finds it first.
-     */
-    fun matchFor(slug: String, fsSlug: String): PlatformMatch =
-        (overrides.find { it.match.fsSlug == fsSlug } ?: overrides.find { it.match.slug == slug && it.match.fsSlug == null }
-            ?: defaults.platforms.find { it.match.fsSlug == fsSlug }
-            ?: defaults.platforms.find { it.match.slug == slug && it.match.fsSlug == null })?.match
-            ?: PlatformMatch(slug = slug)
 
     /** The file a user would export: defaults with their overrides folded in. */
     fun export(): PlatformMappingFile {
@@ -176,6 +178,7 @@ class PlatformMapper(
         include = o.include ?: base.include,
         saveDir = o.saveDir ?: base.saveDir,
         note = o.note ?: base.note,
+        detected = o.detected ?: base.detected,
     )
 }
 
@@ -197,16 +200,22 @@ object MappingJson {
         if (file.schemaVersion > PlatformMappingFile.SCHEMA_VERSION) {
             throw InvalidMappingException("Mapping file version ${file.schemaVersion} is newer than this Loom understands")
         }
-        file.platforms.forEach { entry ->
-            (listOfNotNull(entry.folder) + entry.aliases.orEmpty()).forEach { name ->
-                FolderNames.validate(name)?.let { problem -> throw InvalidMappingException("${entry.match}: $problem") }
-            }
-            entry.include?.forEach { c ->
-                if (c !in ROM_FILE_CATEGORIES) throw InvalidMappingException("${entry.match}: unknown file category '$c'")
-            }
-        }
+        file.platforms.forEach { entry -> problem(entry)?.let { throw InvalidMappingException("${entry.match}: $it") } }
         return file
     }
+
+    /** Why [entry] can't be used, or null when it's fine. */
+    fun problem(entry: PlatformMappingEntry): String? =
+        (listOfNotNull(entry.folder) + entry.aliases.orEmpty()).firstNotNullOfOrNull { FolderNames.validate(it) }
+            ?: entry.include?.firstOrNull { it !in ROM_FILE_CATEGORIES }?.let { "unknown file category '$it'" }
+
+    /**
+     * The user's stored overrides: unlike [parse], an entry that can't be used is dropped on its own,
+     * so one bad entry never loses the rest.
+     */
+    fun parseOverrides(text: String): List<PlatformMappingEntry> =
+        runCatching { json.decodeFromString(PlatformMappingFile.serializer(), text).platforms }.getOrDefault(emptyList())
+            .filter { problem(it) == null }
 
     fun encode(file: PlatformMappingFile): String = json.encodeToString(PlatformMappingFile.serializer(), file)
 

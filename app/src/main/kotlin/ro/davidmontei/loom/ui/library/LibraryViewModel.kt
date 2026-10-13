@@ -141,12 +141,13 @@ class LibraryViewModel @Inject constructor(
      * when that's clear, else by asking ([folderQuestion]). Either way the choice is remembered.
      */
     fun download(game: GameItem) = viewModelScope.launch {
-        val platform = selected.value?.platform ?: return@launch enqueue(game)
+        val platform = platforms.value.firstOrNull { it.platform.id == game.platformId }?.platform ?: return@launch enqueue(game)
         when (val d = folders.decide(platform.slug, platform.fsSlug)) {
+            null -> enqueue(game) // the card can't be read: nothing to decide from, and queueing says why
             is FolderDecision.Ask ->
                 _folderQuestion.value = FolderQuestion(game, platform.displayName, platform.slug, platform.fsSlug, d.options, d.suggested)
             is FolderDecision.Use -> {
-                if (d.why != FolderDecision.Why.CHOSEN) folders.choose(platform.slug, platform.fsSlug, d.folder)
+                if (d.why != FolderDecision.Why.CHOSEN) folders.choose(platform.fsSlug, d.folder, detected = true)
                 // Found on the card rather than the default: say where, the one time it's decided.
                 val found = d.why == FolderDecision.Why.HAS_GAMES || d.why == FolderDecision.Why.ONLY_FOLDER
                 enqueue(game, note = if (found) "${platform.displayName} games go in ${d.folder}/" else null)
@@ -158,7 +159,7 @@ class LibraryViewModel @Inject constructor(
     fun chooseFolder(folder: String) = viewModelScope.launch {
         val q = _folderQuestion.value ?: return@launch
         _folderQuestion.value = null
-        folders.choose(q.slug, q.fsSlug, folder)
+        folders.choose(q.fsSlug, folder)
         enqueue(q.game)
     }
 
@@ -166,6 +167,9 @@ class LibraryViewModel @Inject constructor(
         val all = folders.allFolders()
         _folderQuestion.update { it?.copy(allFolders = all) }
     }
+
+    /** B in the list of every folder: back to the likely ones. */
+    fun showSuggestedFolders() = _folderQuestion.update { it?.copy(allFolders = null) }
 
     fun dismissFolderQuestion() { _folderQuestion.value = null }
 

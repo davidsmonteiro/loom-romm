@@ -1,18 +1,22 @@
 package ro.davidmontei.loom.ui
 
+import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.StateRestorationTester
-import androidx.compose.ui.test.hasSetTextAction
-import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -67,6 +71,7 @@ class LibraryScreenTest {
         override fun repair() { calls += "repair" }
         override fun chooseFolder(folder: String) { calls += "folder:$folder" }
         override fun showAllFolders() { calls += "allFolders" }
+        override fun showSuggestedFolders() { calls += "suggestedFolders" }
         override fun dismissFolderQuestion() { calls += "dismissFolder" }
     }
 
@@ -475,5 +480,43 @@ class LibraryScreenTest {
         assertThat(calls).contains("dismissFolder")
         update { it.copy(folderQuestion = null) }
         rule.onNodeWithTag("game-2").assertIsFocused()
+    }
+
+    /** Found by review: B in the list of every folder dropped the question and the download. */
+    @Test fun bInEveryFolderGoesBackToTheLikelyOnes() {
+        state = state.copy(folderQuestion = arcadeQuestion.copy(allFolders = arcadeQuestion.options))
+        show()
+        calls.clear()
+        back()
+        assertThat(calls).containsExactly("suggestedFolders")
+    }
+
+    /** Found by review: a question arriving while the details were open left them stuck behind it. */
+    @Test fun theQuestionTakesOverAnOpenDialog() {
+        show()
+        press(Key.DirectionRight); press(Key.DirectionCenter) // EarthBound's details
+        rule.onNodeWithText("Download").assertExists()
+        update { it.copy(folderQuestion = arcadeQuestion) }
+        update { it.copy(folderQuestion = null) } // answered
+        rule.onNodeWithText("Download").assertDoesNotExist()
+        rule.onNodeWithTag("game-2").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Download").assertExists() // the details open again
+    }
+
+    /** Found by review: after a tap, the pad's first press landed on "Another folder…", not the likeliest folder. */
+    @Test fun afterATapTheQuestionStillStartsOnTheLikeliestFolder() {
+        var mode by mutableStateOf(InputMode.Keyboard)
+        val inputModes = object : InputModeManager {
+            override val inputMode get() = mode
+            override fun requestInputMode(inputMode: InputMode): Boolean { mode = inputMode; return true }
+        }
+        rule.setContent { CompositionLocalProvider(LocalInputModeManager provides inputModes) { LoomTestTheme { LibraryContent(state, actions) } } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        mode = InputMode.Touch // a tap on Download
+        update { it.copy(folderQuestion = arcadeQuestion) }
+        mode = InputMode.Keyboard // the pad press leaves touch mode
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithTag("folder-mame", useUnmergedTree = true).assertIsFocused()
     }
 }

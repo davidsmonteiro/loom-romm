@@ -16,6 +16,7 @@ import org.junit.rules.TemporaryFolder
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.storage.mapping.ArchivePolicy
 import ro.davidmontei.loom.storage.mapping.InvalidMappingException
+import ro.davidmontei.loom.storage.mapping.MappingJson
 import ro.davidmontei.loom.storage.mapping.MappingSource
 import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
@@ -50,7 +51,7 @@ class MappingRepositoryTest {
 
     @Test fun choosingAFolderKeepsTheOtherSettings() = runBlocking<Unit> {
         repo.setOverride(PlatformMappingEntry(PlatformMatch(slug = "arcade"), archive = ArchivePolicy.EXTRACT))
-        repo.chooseFolder("arcade", "arcade", "arcade")
+        repo.chooseFolder("arcade", "arcade")
         val arcade = repo.currentMapper().resolve("arcade", "arcade")
         assertThat(arcade.folder).isEqualTo("arcade")
         assertThat(arcade.folderChosen).isTrue()
@@ -58,9 +59,31 @@ class MappingRepositoryTest {
     }
 
     @Test fun aFolderIsChosenForThePlatformAsTheMappingSplitsIt() = runBlocking<Unit> {
-        repo.chooseFolder("arcade", "fbneo", "fba") // RomM's arcade platform served from the fbneo folder
+        repo.chooseFolder("fbneo", "fba") // RomM's arcade platform served from the fbneo folder
         assertThat(repo.currentMapper().resolve("arcade", "fbneo").folder).isEqualTo("fba")
         assertThat(repo.currentMapper().resolve("arcade", "arcade").folderChosen).isFalse() // other arcade folders untouched
+    }
+
+    /** Found by review: a choice for the generic arcade folder was stored under the slug, moving MAME, NAOMI and FBNeo too. */
+    @Test fun aChoiceForTheGenericArcadeFolderLeavesTheOthersAlone() = runBlocking<Unit> {
+        repo.chooseFolder("arcade", "arcade")
+        assertThat(repo.currentMapper().resolve("arcade", "arcade").folder).isEqualTo("arcade")
+        listOf("mame", "naomi", "fbneo", "atomiswave").forEach { fsSlug ->
+            assertThat(repo.currentMapper().resolve("arcade", fsSlug).folderChosen).isFalse()
+        }
+    }
+
+    /** Found by review: an export from before aliases existed pinned every aliased platform's default folder on import. */
+    @Test fun importingAnOlderExportPinsNoFolder() = runBlocking<Unit> {
+        val old = MappingJson.shippedDefaults().let { it.copy(platforms = it.platforms.map { p -> p.copy(aliases = null) }) }
+        repo.importJson(MappingJson.encode(old))
+        assertThat(repo.overrides.first()).isEmpty()
+        assertThat(repo.currentMapper().resolve("genesis", "genesis").folderChosen).isFalse()
+    }
+
+    @Test fun aFolderNameNoCardAllowsIsRefused() = runBlocking<Unit> {
+        assertThrows(InvalidMappingException::class.java) { runBlocking { repo.chooseFolder("snes", "x".repeat(70)) } }
+        assertThat(repo.overrides.first()).isEmpty()
     }
 
     @Test fun badImportLeavesOverridesAlone() = runBlocking<Unit> {

@@ -7,6 +7,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import ro.davidmontei.loom.storage.mapping.FolderNames
+import ro.davidmontei.loom.storage.mapping.InvalidMappingException
 import ro.davidmontei.loom.storage.mapping.MappingJson
 import ro.davidmontei.loom.storage.mapping.PlatformMapper
 import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
@@ -21,7 +23,7 @@ class MappingRepository(private val dataStore: DataStore<Preferences>) {
     private val shipped: PlatformMappingFile by lazy { MappingJson.shippedDefaults() }
 
     val overrides: Flow<List<PlatformMappingEntry>> = dataStore.data.map { prefs ->
-        prefs[OVERRIDES]?.let { runCatching { MappingJson.parse(it).platforms }.getOrNull() }.orEmpty()
+        prefs[OVERRIDES]?.let(MappingJson::parseOverrides).orEmpty()
     }
 
     val mapper: Flow<PlatformMapper> = overrides.map { PlatformMapper(shipped, it) }
@@ -36,12 +38,20 @@ class MappingRepository(private val dataStore: DataStore<Preferences>) {
         if (empty) rest else rest + entry
     }
 
-    /** Makes [folder] the platform's system folder, keeping whatever else the user set for it. */
-    suspend fun chooseFolder(slug: String, fsSlug: String, folder: String) {
-        val match = currentMapper().matchFor(slug, fsSlug)
+    /**
+     * Makes [folder] the system folder of the platform served from [fsSlug], keeping whatever else
+     * the user set for it. Stored per server folder: RomM gives one slug ("arcade") to several of
+     * them (MAME, FBNeo, NAOMI…), and a choice for one mustn't move the others. [detected]: Loom
+     * found it on the card rather than the user picking it.
+     */
+    suspend fun chooseFolder(fsSlug: String, folder: String, detected: Boolean = false) {
+        FolderNames.validate(folder)?.let { throw InvalidMappingException(it) }
+        val match = PlatformMatch(fsSlug = fsSlug)
         edit { list ->
             val existing = list.find { it.match == match }
-            list.filterNot { it.match == match } + (existing?.copy(folder = folder) ?: PlatformMappingEntry(match, folder = folder))
+            val chosen = existing?.copy(folder = folder, detected = detected.takeIf { it })
+                ?: PlatformMappingEntry(match, folder = folder, detected = detected.takeIf { it })
+            list.filterNot { it.match == match } + chosen
         }
     }
 
@@ -58,15 +68,27 @@ class MappingRepository(private val dataStore: DataStore<Preferences>) {
      */
     suspend fun importJson(text: String) {
         val imported = MappingJson.parse(text)
-        val diffs = imported.platforms.filterNot { entry ->
-            shipped.platforms.any { it.match == entry.match && it.copy(note = null) == entry.copy(note = null) }
+        val diffs = imported.platforms.mapNotNull { entry ->
+            val base = shipped.platforms.find { it.match == entry.match } ?: return@mapNotNull entry
+            // Field by field: a value equal to the shipped one is left to the shipped row, so an older
+            // export (without aliases) doesn't pin every folder as the user's choice.
+            entry.copy(
+                folder = entry.folder.takeIf { it != base.folder },
+                aliases = entry.aliases.takeIf { it != null && it != base.aliases },
+                archive = entry.archive.takeIf { it != base.archive },
+                multiDisc = entry.multiDisc.takeIf { it != base.multiDisc },
+                include = entry.include.takeIf { it != base.include },
+                saveDir = entry.saveDir.takeIf { it != base.saveDir },
+                note = null,
+                detected = entry.detected.takeIf { entry.folder != base.folder },
+            ).takeUnless { it.folder == null && it.aliases == null && it.archive == null && it.multiDisc == null && it.include == null && it.saveDir == null }
         }
         dataStore.edit { it[OVERRIDES] = MappingJson.encode(PlatformMappingFile(platforms = diffs)) }
     }
 
     private suspend fun edit(transform: (List<PlatformMappingEntry>) -> List<PlatformMappingEntry>) {
         dataStore.edit { prefs ->
-            val current = prefs[OVERRIDES]?.let { runCatching { MappingJson.parse(it).platforms }.getOrNull() }.orEmpty()
+            val current = prefs[OVERRIDES]?.let(MappingJson::parseOverrides).orEmpty()
             prefs[OVERRIDES] = MappingJson.encode(PlatformMappingFile(platforms = transform(current)))
         }
     }

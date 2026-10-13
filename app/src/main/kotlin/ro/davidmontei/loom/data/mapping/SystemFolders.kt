@@ -44,18 +44,23 @@ class FolderChooser @Inject constructor(
     private val settings: SettingsStore,
     private val mapping: MappingRepository,
 ) {
-    /** Where [slug]'s games go, or the folders to ask about. Without a ROMs folder there is nothing to look at. */
-    suspend fun decide(slug: String, fsSlug: String): FolderDecision = withContext(Dispatchers.IO) {
+    /**
+     * Where the platform's games go, or the folders to ask about. Null when Loom can't look: no ROMs
+     * folder yet, the card unmounted, or no all-files access. Nothing is decided (or remembered) then;
+     * queueing reports the reason.
+     */
+    suspend fun decide(slug: String, fsSlug: String): FolderDecision? = withContext(Dispatchers.IO) {
         val platform = mapping.currentMapper().resolve(slug, fsSlug)
-        val root = settings.snapshot().romsRoot?.let(::File)
-        val onCard = if (root == null || platform.folderChosen) emptyList() else SystemFolderScanner.scan(root, platform.candidates)
-        FolderDetector.decide(platform, onCard)
+        if (platform.folderChosen) return@withContext FolderDetector.decide(platform, emptyList())
+        val root = settings.snapshot().romsRoot?.let(::File)?.takeIf { it.list() != null } ?: return@withContext null
+        FolderDetector.decide(platform, SystemFolderScanner.scan(root, platform.candidates))
     }
 
-    /** Every folder in the ROMs root, for choosing one that isn't among a platform's usual names. */
+    /** Every folder in the ROMs root that can be a system folder, for one that isn't among a platform's usual names. */
     suspend fun allFolders(): List<SystemFolder> = withContext(Dispatchers.IO) {
-        settings.snapshot().romsRoot?.let { SystemFolderScanner.scan(File(it)) }.orEmpty()
+        settings.snapshot().romsRoot?.let { SystemFolderScanner.scan(File(it)) }.orEmpty().filter { FolderNames.validate(it.name) == null }
     }
 
-    suspend fun choose(slug: String, fsSlug: String, folder: String) = mapping.chooseFolder(slug, fsSlug, folder)
+    /** Remembers [folder] for the platform: the user's answer, or with [detected] one Loom found on the card. */
+    suspend fun choose(fsSlug: String, folder: String, detected: Boolean = false) = mapping.chooseFolder(fsSlug, folder, detected)
 }

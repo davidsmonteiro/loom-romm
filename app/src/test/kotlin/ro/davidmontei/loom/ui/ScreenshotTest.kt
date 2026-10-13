@@ -100,5 +100,6 @@ object NoopLibraryActions : ro.davidmontei.loom.ui.library.LibraryActions {
     override fun repair() = Unit
     override fun chooseFolder(folder: String) = Unit
     override fun showAllFolders() = Unit
+    override fun showSuggestedFolders() = Unit
     override fun dismissFolderQuestion() = Unit
 }

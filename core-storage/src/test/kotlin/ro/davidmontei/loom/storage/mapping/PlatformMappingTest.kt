@@ -66,6 +66,34 @@ class PlatformMappingTest {
         assertThat(arcade.folderChosen).isFalse()
     }
 
+    /** Found by review: MAME, NAOMI and FBNeo inherited the generic arcade row's aliases, so their games could land in arcade/. */
+    @Test fun arcadeServerFoldersKeepTheirOwnCandidates() {
+        val mapper = PlatformMapper(shipped)
+        assertThat(mapper.resolve("arcade", "naomi").candidates).containsExactly("naomi")
+        assertThat(mapper.resolve("arcade", "mame").candidates).containsExactly("mame")
+        assertThat(mapper.resolve("arcade", "fba").candidates).containsExactly("fbneo", "fba").inOrder()
+        assertThat(mapper.resolve("arcade", "arcade").candidates).containsExactly("mame", "arcade", "fbneo", "fba").inOrder()
+    }
+
+    @Test fun aFolderLoomFoundIsSettledButNotTheUsersChange() {
+        val found = PlatformMappingEntry(PlatformMatch(fsSlug = "genesis"), folder = "megadrive", detected = true)
+        val genesis = PlatformMapper(shipped, listOf(found)).resolve("genesis", "genesis")
+        assertThat(genesis.folder).isEqualTo("megadrive")
+        assertThat(genesis.folderChosen).isTrue() // Loom doesn't look again
+        assertThat(genesis.source).isEqualTo(MappingSource.DEFAULT) // Settings doesn't call it "Changed"
+        val unmapped = PlatformMapper(shipped, listOf(PlatformMappingEntry(PlatformMatch(fsSlug = "hyperscan"), folder = "hyperscan", detected = true)))
+        assertThat(unmapped.resolve("hyperscan", "hyperscan").source).isEqualTo(MappingSource.SERVER_FOLDER) // still "Check"
+    }
+
+    /** Found by review: one stored entry with a folder name over 64 characters made every override unreadable. */
+    @Test fun aBadStoredOverrideIsDroppedAlone() {
+        val good = PlatformMappingEntry(PlatformMatch(fsSlug = "snes"), folder = "sfc")
+        val bad = PlatformMappingEntry(PlatformMatch(fsSlug = "nes"), folder = "x".repeat(70))
+        val stored = MappingJson.encode(PlatformMappingFile(platforms = listOf(good, bad)))
+        assertThat(MappingJson.parseOverrides(stored)).containsExactly(good)
+        assertThat(MappingJson.parseOverrides("{nope")).isEmpty()
+    }
+
     @Test fun onlyAFolderTheUserSetCountsAsChosen() {
         val policyOnly = PlatformMappingEntry(PlatformMatch(slug = "arcade"), archive = ArchivePolicy.EXTRACT)
         assertThat(PlatformMapper(shipped, listOf(policyOnly)).resolve("arcade", "arcade").folderChosen).isFalse()

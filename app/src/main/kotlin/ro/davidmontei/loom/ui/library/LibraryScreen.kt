@@ -54,8 +54,10 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
@@ -122,6 +124,7 @@ interface LibraryActions {
     /** The answer to [LibraryUiState.folderQuestion]. */
     fun chooseFolder(folder: String)
     fun showAllFolders()
+    fun showSuggestedFolders()
     fun dismissFolderQuestion()
 }
 
@@ -161,6 +164,7 @@ fun LibraryScreen(
             override fun repair() = onRepair()
             override fun chooseFolder(folder: String) { vm.chooseFolder(folder) }
             override fun showAllFolders() { vm.showAllFolders() }
+            override fun showSuggestedFolders() = vm.showSuggestedFolders()
             override fun dismissFolderQuestion() = vm.dismissFolderQuestion()
         }
     }
@@ -288,6 +292,10 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                 },
             )
         }
+        // The question can arrive after another dialog opened (the card scan takes a moment): it takes over.
+        LaunchedEffect(state.folderQuestion != null) {
+            if (state.folderQuestion != null) { detailsFor = null; confirmOffload = null }
+        }
         state.folderQuestion?.let { FolderQuestionDialog(it, actions) }
     }
 }
@@ -300,7 +308,8 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
 private fun FolderQuestionDialog(q: FolderQuestion, actions: LibraryActions) {
     LoomDialog(
         title = "Where does Cocoon look for ${q.platformName} games?",
-        onDismiss = actions::dismissFolderQuestion,
+        // B from every folder goes back to the likely ones; from those it drops the download.
+        onDismiss = if (q.allFolders != null) actions::showSuggestedFolders else actions::dismissFolderQuestion,
         body = {
             Text(
                 if (q.allFolders == null) "Your card has more than one folder these games could go in. Loom remembers your " +
@@ -311,8 +320,10 @@ private fun FolderQuestionDialog(q: FolderQuestion, actions: LibraryActions) {
             val folders = q.allFolders ?: q.options
             val grid = rememberLazyGridState()
             val suggested = remember { FocusRequester() }
-            // After the dialog's own first focus: scroll the likeliest into view, then focus it.
-            LaunchedEffect(folders) {
+            // After the dialog's own first focus: scroll the likeliest into view, then focus it. Again when
+            // the pad is pressed after a tap (touch mode focuses nothing), before that press is replayed.
+            val keyboard = LocalInputModeManager.current.inputMode == InputMode.Keyboard
+            LaunchedEffect(folders, keyboard) {
                 val index = folders.indexOfFirst { it.name == q.suggested }.coerceAtLeast(0)
                 grid.scrollToItem(index)
                 delay(50)

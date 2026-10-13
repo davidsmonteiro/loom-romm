@@ -43,6 +43,7 @@ import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
+import ro.davidmontei.loom.storage.mapping.MappingSource
 import ro.davidmontei.loom.ui.library.LibraryViewModel
 import ro.davidmontei.loom.ui.library.toItem
 import java.io.File
@@ -140,5 +141,24 @@ class LibraryViewModelTest {
         val genesis = mapping.currentMapper().resolve("genesis", "genesis")
         assertThat(genesis.folder).isEqualTo("megadrive")
         assertThat(genesis.folderChosen).isTrue()
+        assertThat(genesis.source).isEqualTo(MappingSource.DEFAULT) // found by Loom, not "Changed" by the user
+    }
+
+    /** Found by review: with the card unmounted (or no access) Loom remembered a folder it never saw. */
+    @Test fun nothingIsRememberedWhenTheCardCantBeRead() = runBlocking<Unit> {
+        settings.setRomsRoot(File(tmp.root, "unmounted/ROMs").path)
+        vm.download(gameOn(2)).join()
+        assertThat(vm.folderQuestion.value).isNull()
+        assertThat(mapping.currentMapper().resolve("genesis", "genesis").folderChosen).isFalse()
+    }
+
+    /** Found by review: the folder was decided for the platform on screen, not the game's. */
+    @Test fun theGamesOwnPlatformIsTheOneDecided() = runBlocking<Unit> {
+        folders("arcade", "mame", "megadrive")
+        val arcadeGame = gameOn(1)
+        gameOn(2) // the screen has moved on to Genesis…
+        vm.download(arcadeGame).join() // …as X lands on the arcade game still focused
+        assertThat(withTimeout(5_000) { vm.folderQuestion.filterNotNull().first() }.platformName).isEqualTo("Arcade")
+        assertThat(mapping.currentMapper().resolve("genesis", "genesis").folderChosen).isFalse()
     }
 }
