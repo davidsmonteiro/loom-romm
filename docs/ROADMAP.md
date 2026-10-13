@@ -8,6 +8,7 @@ Phase 1 (the MVP: pairing, catalog sync, offline browsing, platform mapping, dow
 - `CatalogRefreshWorker` is periodic work every 6, 12 (the default) or 24 h. It needs a network (an unmetered one with "Only on Wi-Fi") and a battery that isn't low.
 - It queues the manual sync's incremental `CatalogSyncWorker` (`updated_after` watermark plus the `/api/roms/identifiers` diff for deletions) as the same unique work, so a refresh never runs alongside a manual or headless sync.
 - It does nothing until setup is finished, or while Loom is signed out.
+- It first checks that RomM answers (the heartbeat). When RomM can't be reached it queues no sync: it retries three times over a few minutes, then waits for the next interval, so a refresh that finds RomM out of reach doesn't leave "Sync failed" in the library. Any other answer, a rejected token for one, queues the sync, which reports it.
 - From app start the schedule follows the settings (Settings → Library sync: Off / 6 / 12 / 24 h, Only on Wi-Fi). It is updated in place, so restarting the app never puts the next refresh off.
 
 Not built, as it needs RomM 5.4 and Loom's server runs 5.3.1: the install queue ("send to device" from the web UI), via `POST /api/devices/{id}/installs/claim` and the Socket.IO `/devices` namespace. Loom's token is already device-bound, which that feature requires.

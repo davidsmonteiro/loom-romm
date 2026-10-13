@@ -18,6 +18,9 @@ import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.data.settings.Settings
 import ro.davidmontei.loom.data.settings.SettingsStore
+import ro.davidmontei.loom.net.ActiveServer
+import ro.davidmontei.loom.romm.RommException
+import ro.davidmontei.loom.romm.rommCall
 import java.util.concurrent.TimeUnit
 
 /**
@@ -30,16 +33,32 @@ class CatalogRefreshWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val settings: SettingsStore,
     private val credentials: CredentialStore,
+    private val server: ActiveServer,
     private val sync: CatalogSyncScheduler,
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
         credentials.awaitLoaded()
-        // Signed out, or setup not finished: nothing to refresh until the user is back. The sync itself
-        // only needs a network: it starts at once on the one this ran on, and a manual sync kept in its
-        // place mustn't wait for Wi-Fi.
-        if (settings.snapshot().refreshSchedule() != null && credentials.current.value != null) sync.enqueue(full = false)
+        // Signed out, or setup not finished: nothing to refresh until the user is back.
+        if (settings.snapshot().refreshSchedule() == null || credentials.current.value == null) return Result.success()
+        // RomM out of reach (away from home, Tailscale off): the sync would fail and leave "Sync failed" in the
+        // library until another one worked, for a sync nobody asked for. A VPN can come up a little after the
+        // network, so try again over the next few minutes, then quietly wait for the next refresh.
+        if (!rommAnswers()) return if (runAttemptCount < 3) Result.retry() else Result.success()
+        // The sync itself only needs a network: it starts at once on the one this ran on, and a manual sync
+        // kept in its place mustn't wait for Wi-Fi.
+        sync.enqueue(full = false)
         return Result.success()
+    }
+
+    /** False only when RomM can't be reached: any other answer (a rejected token, say) is the sync's to report. */
+    private suspend fun rommAnswers(): Boolean = try {
+        server.call { api -> rommCall { api.heartbeat() } }
+        true
+    } catch (e: RommException.Unreachable) {
+        false
+    } catch (e: RommException) {
+        true
     }
 
     companion object {

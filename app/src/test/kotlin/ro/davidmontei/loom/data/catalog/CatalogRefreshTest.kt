@@ -25,7 +25,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -38,6 +42,7 @@ import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.headless.Commands
+import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.romm.pairing.PairedCredentials
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -52,12 +57,15 @@ class CatalogRefreshTest {
     private lateinit var workManager: WorkManager
     private lateinit var settings: SettingsStore
     private lateinit var credentials: CredentialStore
+    private lateinit var server: ActiveServer
     private lateinit var sync: CatalogSyncScheduler
     private lateinit var refresh: CatalogRefreshScheduler
 
     private val hour = TimeUnit.HOURS.toMillis(1)
+    private val romm = MockWebServer()
 
     @Before fun setUp() {
+        romm.start()
         // WorkManager's clock is the test's, so "when is the next refresh" has an exact answer.
         WorkManagerTestInitHelper.initializeTestWorkManager(
             context, Configuration.Builder().setExecutor(SynchronousExecutor()).setClock { now }.build(),
@@ -69,15 +77,16 @@ class CatalogRefreshTest {
             override fun encrypt(plaintext: String) = plaintext
             override fun decrypt(blob: String) = blob
         }, scope)
+        server = ActiveServer(settings, credentials, OkHttpClient(), scope)
         sync = CatalogSyncScheduler(workManager)
         refresh = CatalogRefreshScheduler(workManager)
     }
 
-    @After fun tearDown() = scope.cancel()
+    @After fun tearDown() { romm.close(); scope.cancel() }
 
     /** What onboarding leaves behind: a server, a ROMs folder, and setup marked done. */
-    private suspend fun finishSetup() {
-        settings.setServer(ServerConfig("http://100.64.0.7:8080/".toHttpUrl()), "5.3.1")
+    private suspend fun finishSetup(url: HttpUrl = "http://100.64.0.7:8080/".toHttpUrl()) {
+        settings.setServer(ServerConfig(url), "5.3.1")
         settings.setRomsRoot("/storage/9C33-6BBD/ROMs")
         settings.setOnboardingComplete(true)
     }
@@ -195,16 +204,24 @@ class CatalogRefreshTest {
         }
     }
 
-    private fun refreshWorker() = TestListenableWorkerBuilder<CatalogRefreshWorker>(context)
+    private fun refreshWorker(runAttempts: Int = 0) = TestListenableWorkerBuilder<CatalogRefreshWorker>(context)
         .setWorkerFactory(object : WorkerFactory() {
             override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) =
-                CatalogRefreshWorker(appContext, workerParameters, settings, credentials, sync)
+                CatalogRefreshWorker(appContext, workerParameters, settings, credentials, server, sync)
         })
+        .setRunAttemptCount(runAttempts)
         .build()
 
-    @Test fun aRefreshQueuesTheIncrementalSync() = runBlocking<Unit> {
-        finishSetup()
+    /** Set up and paired with a RomM that answers. */
+    private suspend fun readyToRefresh() {
+        romm.enqueue(MockResponse.Builder().code(200).setHeader("Content-Type", "application/json")
+            .body("""{"SYSTEM":{"VERSION":"5.3.1","SHOW_SETUP_WIZARD":false}}""").build())
+        finishSetup(romm.url("/"))
         pair()
+    }
+
+    @Test fun aRefreshQueuesTheIncrementalSync() = runBlocking<Unit> {
+        readyToRefresh()
         assertThat(refreshWorker().doWork()).isEqualTo(ListenableWorker.Result.success())
         val queued = syncWork().single()
         assertThat(queued.state).isEqualTo(WorkInfo.State.ENQUEUED)
@@ -227,12 +244,34 @@ class CatalogRefreshTest {
 
     /** The headless SYNC_CATALOG and a refresh share the one incremental sync: the refresh keeps the one queued. */
     @Test fun aRefreshWhileTheHeadlessSyncIsQueuedDoesNotQueueASecond() = runBlocking<Unit> {
-        finishSetup()
-        pair()
+        readyToRefresh()
         val headless = Commands.run(Intent(Commands.SYNC_CATALOG), credentials, sync)
         assertThat(headless.code).isEqualTo(Commands.RESULT_OK)
         val queued = syncWork().single()
         refreshWorker().doWork()
         assertThat(syncWork().single().id).isEqualTo(queued.id)
+    }
+
+    /**
+     * Found by review: away from RomM (Tailscale off, say), the refresh's sync failed and left "Sync failed" in
+     * the library for hours, for a sync nobody asked for. Now it tries again a few times, then waits for the next one.
+     */
+    @Test fun aRefreshThatCantReachRommQueuesNoSync() = runBlocking<Unit> {
+        val gone = MockWebServer().apply { start() }
+        finishSetup(gone.url("/"))
+        gone.close() // nothing answers there any more
+        pair()
+        assertThat(refreshWorker().doWork()).isEqualTo(ListenableWorker.Result.retry())
+        assertThat(refreshWorker(runAttempts = 3).doWork()).isEqualTo(ListenableWorker.Result.success())
+        assertThat(syncWork()).isEmpty()
+    }
+
+    /** Only "can't reach" is kept quiet: RomM refusing the token is the sync's to report, with Pair again beside it. */
+    @Test fun aRefreshThatRommAnswersWithAnErrorStillQueuesTheSync() = runBlocking<Unit> {
+        romm.enqueue(MockResponse.Builder().code(401).body("""{"detail":"Invalid token"}""").build())
+        finishSetup(romm.url("/"))
+        pair()
+        assertThat(refreshWorker().doWork()).isEqualTo(ListenableWorker.Result.success())
+        assertThat(syncWork().single().state).isEqualTo(WorkInfo.State.ENQUEUED)
     }
 }
