@@ -57,6 +57,9 @@ enum class PadAction { X, Y, L1, R1, START, SELECT }
  * bring the focus ring back, and a second press would be needed. Instead a press that needs focus
  * leaves touch mode and is delivered [later], once the screen has put focus on its primary
  * element. Its real key-up is dropped, since the replay sends one.
+ *
+ * X is the exception: it downloads or offloads the focused game, and the element focus lands on
+ * is the screen's default, not one the user picked. It only brings focus back, like the D-pad.
  */
 class TouchModePress(
     private val inTouchMode: () -> Boolean,
@@ -71,6 +74,7 @@ class TouchModePress(
         if (key.action == KeyEvent.ACTION_DOWN && key.repeatCount == 0 && inTouchMode()) {
             leaveTouchMode()
             replayedKey = key.keyCode
+            if (key.keyCode == KeyEvent.KEYCODE_BUTTON_X) return true
             later {
                 deliver(key)
                 deliver(KeyEvent.changeAction(key, KeyEvent.ACTION_UP))

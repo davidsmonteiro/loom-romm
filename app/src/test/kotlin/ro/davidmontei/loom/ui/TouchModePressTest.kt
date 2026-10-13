@@ -59,6 +59,17 @@ class TouchModePressTest {
         assertThat(delivered.first()).isEqualTo(KeyEvent.ACTION_DOWN to KeyEvent.KEYCODE_BUTTON_R1)
     }
 
+    /** Found by audit: X after a tap downloaded the screen's default game, one the user never picked. */
+    @Test fun xAfterATapOnlyBringsFocusBack() {
+        down(KeyEvent.KEYCODE_BUTTON_X)
+        assertThat(left).isEqualTo(1)
+        focusSettles()
+        up(KeyEvent.KEYCODE_BUTTON_X)
+        assertThat(delivered).isEmpty() // neither the press nor its key-up
+        down(KeyEvent.KEYCODE_BUTTON_X) // now that focus shows, X acts
+        assertThat(delivered).containsExactly(KeyEvent.ACTION_DOWN to KeyEvent.KEYCODE_BUTTON_X)
+    }
+
     @Test fun backAndTheDpadAreLeftToAndroid() {
         down(KeyEvent.KEYCODE_BACK); up(KeyEvent.KEYCODE_BACK)
         down(KeyEvent.KEYCODE_DPAD_DOWN)
