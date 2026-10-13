@@ -191,7 +191,7 @@ fun LoomRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = if (dense) 48.dp else 64.dp)
+            .heightIn(min = if (dense) 42.dp else 64.dp)
             .background(if (selected) LoomColors.SurfaceHighest else LoomColors.SurfaceRaised, shape)
             .then(
                 if (onClick != null) Modifier.clickable(
@@ -389,6 +389,17 @@ fun Modifier.padScroll(state: ScrollState): Modifier = composed {
 
 /** "1 game", "84 games". */
 fun gameCount(n: Int): String = if (n == 1) "1 game" else "$n games"
+
+/** "just now", "5 min ago", "3 h ago", "4 days ago". */
+fun ago(epochMs: Long, nowMs: Long = System.currentTimeMillis()): String {
+    val minutes = (nowMs - epochMs) / 60_000
+    return when {
+        minutes < 1 -> "just now"
+        minutes < 60 -> "$minutes min ago"
+        minutes < 48 * 60 -> "${minutes / 60} h ago"
+        else -> "${minutes / (24 * 60)} days ago"
+    }
+}
 
 /** A thin determinate bar in the accent colour (sage once complete). */
 @Composable

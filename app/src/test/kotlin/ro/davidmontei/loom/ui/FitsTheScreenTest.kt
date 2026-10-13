@@ -18,6 +18,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.ui.library.FolderQuestion
 import ro.davidmontei.loom.ui.library.GameItem
@@ -107,6 +108,31 @@ class FitsTheScreenTest {
             .assertExists()
         assertThat(overflow("Files to download")).isEqualTo(0f)
         rule.saveScreenshot("settings-mapping-editor-arcade")
+    }
+
+    /** How far the scrolling node tagged [tag] could scroll, in px: 0 when everything fits. */
+    private fun overflowOf(tag: String): Float {
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        return rule.onNodeWithTag(tag).fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].maxValue()
+    }
+
+    /** With Library sync added, the section list is seven rows: all of them in view, none below the fold. */
+    @Test fun theSettingsSectionListFits() {
+        rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample, SettingsScreenTest.noop) } }
+        assertThat(overflowOf("settings-sections")).isEqualTo(0f)
+    }
+
+    /** Library sync at its tallest: a failed sync's reason beside Full resync. */
+    @Test fun theLibrarySyncSectionFits() {
+        val state = SettingsScreenTest.sample.copy(
+            settings = SettingsScreenTest.sample.settings!!.copy(lastCatalogSyncEpochMs = System.currentTimeMillis() - 3 * 3_600_000L),
+            sync = CatalogSyncStatus(running = false, error = "RomM rejected Loom's token. Pair again in Settings.", needsPairing = true),
+        )
+        rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
+        rule.onNodeWithTag("section-LIBRARY").performClick()
+        val overflow = overflowOf("settings-content")
+        rule.saveScreenshot("settings-library-sync")
+        assertThat(overflow).isEqualTo(0f)
     }
 
     /** The question at a platform's first download, with its few options and with every folder of the Thor's ES-DE template. */

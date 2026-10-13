@@ -37,9 +37,11 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.data.auth.Credentials
+import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.data.download.VolumeInfo
+import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.Settings
 import ro.davidmontei.loom.storage.mapping.MappingJson
@@ -51,6 +53,7 @@ import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.ui.settings.MappingRow
 import ro.davidmontei.loom.ui.settings.SettingsActions
 import ro.davidmontei.loom.ui.settings.SettingsContent
+import ro.davidmontei.loom.ui.settings.SettingsSection
 import ro.davidmontei.loom.ui.settings.SettingsUiState
 import ro.davidmontei.loom.ui.settings.StorageInfo
 
@@ -98,6 +101,8 @@ class SettingsScreenTest {
         override fun repair() { calls += "repair" }
         override fun signOut() { calls += "signout" }
         override fun fullResync() { calls += "resync" }
+        override fun setCatalogRefresh(refresh: CatalogRefresh) { calls += "refresh:$refresh" }
+        override fun setRefreshOnWifiOnly(wifiOnly: Boolean) { calls += "wifi:$wifiOnly" }
         override fun setRomsRoot(dir: File) { calls += "root:$dir" }
         override fun volumes() = listOf(VolumeInfo("9C33-6BBD", File("/storage/9C33-6BBD"), "SD card", true))
         override fun saveOverride(entry: PlatformMappingEntry) { calls += "save:${entry.match.fsSlug ?: entry.match.slug}:${entry.folder}" }
@@ -121,6 +126,9 @@ class SettingsScreenTest {
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
     }
 
+    /** Down the section list from Server & pairing, where Settings opens, to [section]. */
+    private fun goTo(section: SettingsSection) = repeat(section.ordinal) { press(Key.DirectionDown) }
+
     /** Lets the press recompose first, so delayed focus requests it starts have run when it returns. */
     private fun press(key: Key) {
         rule.onRoot().performKeyInput { pressKey(key) }
@@ -142,7 +150,7 @@ class SettingsScreenTest {
     @Test fun sectionsAreReachableAndOpenWithA() {
         show()
         rule.onNodeWithTag("section-SERVER").assertIsFocused()
-        repeat(4) { press(Key.DirectionDown) }
+        goTo(SettingsSection.CONTROLS)
         rule.onNodeWithTag("section-CONTROLS").assertIsFocused()
         press(Key.DirectionCenter) // opens Controls on its switch
         press(Key.DirectionCenter)
@@ -152,7 +160,7 @@ class SettingsScreenTest {
     /** Found on the Thor: A selected a section but left focus in the list; the next press did nothing new. */
     @Test fun aOnASectionMovesIntoIt() {
         show()
-        press(Key.DirectionDown) // Storage
+        goTo(SettingsSection.STORAGE)
         press(Key.DirectionCenter)
         rule.onNodeWithText("Change folder").assertIsFocused()
     }
@@ -160,7 +168,7 @@ class SettingsScreenTest {
     /** Found on the Thor: Left from a section's control went to the section level with it, not the open one. */
     @Test fun leftReturnsToTheOpenSection() {
         show()
-        press(Key.DirectionDown) // Storage
+        goTo(SettingsSection.STORAGE)
         press(Key.DirectionCenter) // Change folder, level with "Platform folders"
         press(Key.DirectionLeft)
         rule.onNodeWithTag("section-STORAGE").assertIsFocused()
@@ -169,7 +177,7 @@ class SettingsScreenTest {
     /** Found by audit: B inside a section left Settings instead of going back to the section list. */
     @Test fun bInsideASectionReturnsToTheSectionList() {
         show()
-        press(Key.DirectionDown); press(Key.DirectionDown) // Platform folders
+        goTo(SettingsSection.MAPPING)
         press(Key.DirectionCenter) // Export
         press(Key.DirectionDown); press(Key.DirectionDown) // a platform row
         back()
@@ -180,7 +188,7 @@ class SettingsScreenTest {
     /** Found on the Thor: the licence text scrolled by touch only. */
     @Test fun licenceTextScrollsWithThePad() {
         show()
-        repeat(5) { press(Key.DirectionDown) } // About
+        goTo(SettingsSection.ABOUT)
         press(Key.DirectionCenter) // into the section: the GPL button
         press(Key.DirectionCenter) // open the licence; Close has focus
         press(Key.DirectionUp)
@@ -193,7 +201,7 @@ class SettingsScreenTest {
 
     @Test fun mappingEditorSavesAFolderOverride() {
         show()
-        press(Key.DirectionDown); press(Key.DirectionDown)
+        goTo(SettingsSection.MAPPING)
         rule.onNodeWithTag("section-MAPPING").assertIsFocused()
         press(Key.DirectionCenter) // opens the section on its first control, Export
         rule.onNodeWithText("Export").assertIsFocused()
@@ -209,7 +217,7 @@ class SettingsScreenTest {
 
     @Test fun aFolderTheUserTypesIsSaved() {
         show()
-        press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionCenter) // Platform folders: Export
+        goTo(SettingsSection.MAPPING); press(Key.DirectionCenter) // Export
         press(Key.DirectionDown); press(Key.DirectionCenter) // the first platform's editor
         rule.onAllNodes(hasSetTextAction(), useUnmergedTree = true)[0].performTextReplacement("ps1")
         rule.waitForIdle()
@@ -226,7 +234,7 @@ class SettingsScreenTest {
         state = sample.copy(mapping = listOf(chosenRow(5, "Arcade", "arcade", "arcade", "arcade"), row(6, "PlayStation 2", "ps2", "ps2")))
         actions.onCard = listOf(SystemFolder("arcade", 3), SystemFolder("MAME", 52), SystemFolder("fbneo", 0), SystemFolder("ps2", 9))
         show()
-        press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionCenter) // Platform folders: Export
+        press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionCenter) // Platform folders: Export
         press(Key.DirectionDown); press(Key.DirectionCenter) // Arcade
         rule.onNodeWithText("Other folders for Arcade: MAME (52 games), fbneo (no games), fba (not on the card)", useUnmergedTree = true)
             .assertExists()
@@ -242,7 +250,7 @@ class SettingsScreenTest {
     /** Found by audit: closing a dialog left focus on the section list, not on what opened it. */
     @Test fun closingTheFolderEditorGivesFocusBackToItsRow() {
         show()
-        press(Key.DirectionDown); press(Key.DirectionDown) // Platform folders
+        goTo(SettingsSection.MAPPING)
         press(Key.DirectionCenter) // Export
         press(Key.DirectionDown); press(Key.DirectionDown) // Super Nintendo, the second platform
         press(Key.DirectionCenter)
@@ -256,7 +264,7 @@ class SettingsScreenTest {
 
     @Test fun closingTheLicenceGivesFocusBackToItsButton() {
         show()
-        repeat(5) { press(Key.DirectionDown) } // About
+        goTo(SettingsSection.ABOUT)
         press(Key.DirectionCenter) // GNU GPL v3.0
         press(Key.DirectionRight)
         press(Key.DirectionCenter) // Inter font licence; Close has focus
@@ -279,7 +287,7 @@ class SettingsScreenTest {
 
     @Test fun allowingBackgroundDownloadsKeepsFocusInTheSection() {
         show()
-        repeat(3) { press(Key.DirectionDown) } // Downloads
+        goTo(SettingsSection.DOWNLOADS)
         press(Key.DirectionCenter) // the first concurrency chip
         press(Key.DirectionDown)
         rule.onNodeWithText("Allow background downloads").assertIsFocused()
@@ -289,9 +297,101 @@ class SettingsScreenTest {
         rule.onNodeWithText("1").assertIsFocused()
     }
 
+    @Test fun librarySyncOpensOnTheChosenIntervalAndAChoosesAnother() {
+        show()
+        goTo(SettingsSection.LIBRARY)
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Every 12 h").assertIsFocused() // the default: a second A changes nothing
+        press(Key.DirectionRight)
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("refresh:EVERY_24_HOURS")
+        update { it.copy(settings = it.settings!!.copy(catalogRefresh = CatalogRefresh.EVERY_24_HOURS)) }
+        rule.onNodeWithText("Every 24 h").assertIsFocused()
+        repeat(3) { press(Key.DirectionLeft) }
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("refresh:OFF")
+    }
+
+    @Test fun librarySyncTogglesWifiOnlyAndResyncsWithThePad() {
+        show()
+        goTo(SettingsSection.LIBRARY)
+        press(Key.DirectionCenter) // the interval
+        press(Key.DirectionDown)
+        rule.onNodeWithText("Only on Wi-Fi").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("wifi:true")
+        press(Key.DirectionDown)
+        rule.onNodeWithText("Full resync").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("resync")
+        back()
+        rule.onNodeWithTag("section-LIBRARY").assertIsFocused()
+    }
+
+    @Test fun librarySyncShowsWhenTheLibraryLastSynced() {
+        val threeHoursAgo = System.currentTimeMillis() - (3 * 60 + 5) * 60_000L
+        state = sample.copy(settings = sample.settings!!.copy(lastCatalogSyncEpochMs = threeHoursAgo))
+        show()
+        goTo(SettingsSection.LIBRARY)
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Last synced 3 h ago").assertExists()
+        update { it.copy(sync = CatalogSyncStatus(running = true, fetched = 1200, total = 23144)) }
+        rule.onNodeWithText("Syncing 1200 of 23144").assertExists()
+        update { it.copy(sync = CatalogSyncStatus(running = false, error = "Can't reach the RomM server")) }
+        rule.onNodeWithText("Last synced 3 h ago").assertExists()
+        rule.onNodeWithText("The last sync failed: Can't reach the RomM server").assertExists()
+    }
+
+    private val rejectedToken = CatalogSyncStatus(running = false, error = "RomM rejected Loom's token. Pair again in Settings.", needsPairing = true)
+
+    /** Found by review: a rejected token's line here said "Pair again in Settings", with no Pair again in the section. */
+    @Test fun aRejectedTokenInLibrarySyncLeadsToPairing() {
+        state = sample.copy(sync = rejectedToken)
+        show()
+        goTo(SettingsSection.LIBRARY)
+        press(Key.DirectionCenter) // the interval
+        rule.onNodeWithText("The last sync failed: RomM rejected Loom's token.").assertExists()
+        press(Key.DirectionDown); press(Key.DirectionDown) // past Only on Wi-Fi
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("repair")
+    }
+
+    /** Pairing again from Library sync comes back to its Pair again, and to the interval once the new token's sync starts. */
+    @Test fun backFromPairingAgainInLibrarySyncFocusesItsPairAgain() {
+        state = sample.copy(sync = rejectedToken)
+        val restore = StateRestorationTester(rule)
+        restore.setContent { LoomTestTheme { SettingsContent(state, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        goTo(SettingsSection.LIBRARY)
+        press(Key.DirectionCenter); press(Key.DirectionDown); press(Key.DirectionDown) // Pair again
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("repair")
+        // Pairing opens on top and Settings leaves composition; coming back recreates it from saved state.
+        restore.emulateSavedInstanceStateRestore()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        update { it.copy(sync = CatalogSyncStatus(running = true)) } // the new token works: its sync replaces the failure
+        rule.onNodeWithText("Every 12 h").assertIsFocused()
+    }
+
+    @Test fun backFromPairingAgainInLibrarySyncWithTheSyncAlreadyStartedFocusesTheInterval() {
+        state = sample.copy(sync = rejectedToken)
+        val restore = StateRestorationTester(rule)
+        restore.setContent { LoomTestTheme { SettingsContent(state, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        goTo(SettingsSection.LIBRARY)
+        press(Key.DirectionCenter); press(Key.DirectionDown); press(Key.DirectionDown) // Pair again
+        press(Key.DirectionCenter)
+        state = state.copy(sync = CatalogSyncStatus(running = true)) // paired while away: the sync is under way on return
+        restore.emulateSavedInstanceStateRestore()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText("Every 12 h").assertIsFocused()
+    }
+
     @Test fun pickingAFolderGivesFocusBackToChangeFolder() {
         show()
-        press(Key.DirectionDown) // Storage
+        goTo(SettingsSection.STORAGE)
         press(Key.DirectionCenter) // Change folder
         press(Key.DirectionCenter) // the browser opens; the SD card isn't there in tests, so it lists volumes
         rule.onNodeWithText("SD card").assertIsFocused()
@@ -305,7 +405,7 @@ class SettingsScreenTest {
     /** Found by audit: B in the folder browser left Settings instead of going up a folder or closing it. */
     @Test fun bGoesUpAFolderThenClosesTheBrowser() {
         show()
-        press(Key.DirectionDown) // Storage
+        goTo(SettingsSection.STORAGE)
         press(Key.DirectionCenter) // Change folder
         press(Key.DirectionCenter) // the browser lists volumes
         press(Key.DirectionCenter) // into the SD card
@@ -326,7 +426,7 @@ class SettingsScreenTest {
         val roms = File(card, "ROMs")
         state = sample.copy(storage = sample.storage.copy(romsRoot = roms.path))
         show()
-        press(Key.DirectionDown) // Storage
+        goTo(SettingsSection.STORAGE)
         press(Key.DirectionCenter) // Change folder
         press(Key.DirectionCenter) // the browser opens beside the ROMs folder
         rule.onNodeWithText("ROMs").assertIsFocused()
@@ -343,7 +443,7 @@ class SettingsScreenTest {
         state = sample.copy(mapping = sample.mapping + sample.mapping.map { it.copy(platform = it.platform.copy(
             platform = it.platform.platform.copy(id = it.platform.platform.id + 10, displayName = it.platform.platform.displayName + " 2"))) })
         show()
-        press(Key.DirectionDown); press(Key.DirectionDown) // Platform folders
+        goTo(SettingsSection.MAPPING)
         press(Key.DirectionCenter) // Export
         repeat(8) { press(Key.DirectionDown) } // down the platforms, scrolling the pane
         repeat(8) { press(Key.DirectionUp) } // to Export / Import
@@ -352,7 +452,7 @@ class SettingsScreenTest {
 
     @Test fun theFolderBrowsersToggleShowsTheRomsFolder() {
         show()
-        press(Key.DirectionDown) // Storage
+        goTo(SettingsSection.STORAGE)
         press(Key.DirectionCenter) // Change folder
         press(Key.DirectionCenter) // open the browser, on the SD card
         repeat(2) { press(Key.DirectionDown) } // down the games on the device, scrolling the pane
@@ -364,7 +464,7 @@ class SettingsScreenTest {
     /** Found by audit: the editor was taller than the screen; its title and the folder's label scrolled out of reach. */
     @Test fun theFolderEditorFitsTheScreen() {
         show()
-        press(Key.DirectionDown); press(Key.DirectionDown) // Platform folders
+        goTo(SettingsSection.MAPPING)
         press(Key.DirectionCenter) // Export
         press(Key.DirectionDown) // PlayStation
         press(Key.DirectionCenter)
@@ -385,7 +485,7 @@ class SettingsScreenTest {
         }
         rule.setContent { CompositionLocalProvider(LocalInputModeManager provides pad) { LoomTestTheme { SettingsContent(state, actions) } } }
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
-        press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionCenter) // Platform folders: Export
+        press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionCenter) // Platform folders: Export
         press(Key.DirectionDown); press(Key.DirectionCenter) // PlayStation's editor
         rule.onNodeWithText("Cancel").assertIsFocused()
     }
@@ -475,7 +575,7 @@ class SettingsScreenTest {
     @Test fun pairAgainAsksFirst() {
         show()
         press(Key.DirectionCenter) // Server & pairing: the address
-        press(Key.DirectionDown); press(Key.DirectionLeft); press(Key.DirectionLeft) // the first pairing button
+        press(Key.DirectionDown); press(Key.DirectionLeft) // the first pairing button
         rule.onNodeWithText("Pair again").assertIsFocused()
         press(Key.DirectionCenter)
         rule.onNodeWithText("Cancel").assertIsFocused() // the dialog opens on the safe choice
@@ -493,7 +593,7 @@ class SettingsScreenTest {
         restore.setContent { LoomTestTheme { SettingsContent(state, actions) } }
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
         press(Key.DirectionCenter) // Server & pairing: the address
-        press(Key.DirectionDown); press(Key.DirectionLeft); press(Key.DirectionLeft) // Pair again
+        press(Key.DirectionDown); press(Key.DirectionLeft) // Pair again
         press(Key.DirectionCenter); press(Key.DirectionRight); press(Key.DirectionCenter) // confirmed
         assertThat(calls).contains("repair")
         // Pairing opens on top and Settings leaves composition; coming back recreates it from saved state.

@@ -9,6 +9,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import ro.davidmontei.loom.data.catalog.AfterCatalogSync
+import ro.davidmontei.loom.data.catalog.CatalogRefreshScheduler
 import ro.davidmontei.loom.data.catalog.CatalogSyncScheduler
 import ro.davidmontei.loom.data.catalog.CatalogSyncer
 import ro.davidmontei.loom.data.catalog.CoverStore
@@ -51,4 +52,7 @@ object DataModule {
 
     @Provides @Singleton
     fun catalogSyncScheduler(workManager: WorkManager) = CatalogSyncScheduler(workManager)
+
+    @Provides @Singleton
+    fun catalogRefreshScheduler(workManager: WorkManager) = CatalogRefreshScheduler(workManager)
 }

@@ -85,6 +85,7 @@ import ro.davidmontei.loom.ui.components.LoomTextField
 import ro.davidmontei.loom.ui.components.ScreenScaffold
 import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.StatusBadge
+import ro.davidmontei.loom.ui.components.ago
 import ro.davidmontei.loom.ui.components.gameCount
 import ro.davidmontei.loom.ui.input.PadAction
 import ro.davidmontei.loom.ui.input.onPadAction
@@ -686,15 +687,5 @@ private fun detailsButtons(
         InstallState.FAILED -> if (game.retryable) Pair(DialogAction("Retry", primary = true) { retry(game) }, removeFromQueue)
             else Pair(removeFromQueue, null)
         InstallState.QUEUED, InstallState.DOWNLOADING -> Pair(closeButton, DialogAction("Cancel download", destructive = true) { cancel(game) })
-    }
-}
-
-private fun ago(epochMs: Long): String {
-    val minutes = (System.currentTimeMillis() - epochMs) / 60_000
-    return when {
-        minutes < 1 -> "just now"
-        minutes < 60 -> "$minutes min ago"
-        minutes < 48 * 60 -> "${minutes / 60} h ago"
-        else -> "${minutes / (24 * 60)} days ago"
     }
 }
