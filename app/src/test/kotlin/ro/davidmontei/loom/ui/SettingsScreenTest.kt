@@ -9,10 +9,11 @@ import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalInputModeManager
-import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -21,9 +22,11 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.pressKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import java.io.File
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Rule
 import org.junit.Test
@@ -45,7 +48,6 @@ import ro.davidmontei.loom.ui.settings.SettingsActions
 import ro.davidmontei.loom.ui.settings.SettingsContent
 import ro.davidmontei.loom.ui.settings.SettingsUiState
 import ro.davidmontei.loom.ui.settings.StorageInfo
-import java.io.File
 
 @OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
@@ -86,7 +88,7 @@ class SettingsScreenTest {
         override fun fullResync() { calls += "resync" }
         override fun setRomsRoot(dir: File) { calls += "root:$dir" }
         override fun volumes() = listOf(VolumeInfo("9C33-6BBD", File("/storage/9C33-6BBD"), "SD card", true))
-        override fun saveOverride(entry: PlatformMappingEntry) { calls += "save:${entry.match.slug}:${entry.folder}" }
+        override fun saveOverride(entry: PlatformMappingEntry) { calls += "save:${entry.match.fsSlug ?: entry.match.slug}:${entry.folder}" }
         override fun resetOverride(match: PlatformMatch) { calls += "reset" }
         override fun exportMapping() { calls += "export" }
         override fun importMapping() { calls += "import" }
@@ -186,7 +188,18 @@ class SettingsScreenTest {
         press(Key.DirectionCenter)
         rule.onNodeWithText("Cancel").assertIsFocused() // editor opens on the safe choice
         press(Key.DirectionRight); press(Key.DirectionCenter) // Save
-        assertThat(calls).contains("save:psx:psx")
+        // Saved for its server folder; the folder untouched isn't pinned, so Loom still looks on the card.
+        assertThat(calls).contains("save:psx:null")
+    }
+
+    @Test fun aFolderTheUserTypesIsSaved() {
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionCenter) // Platform folders: Export
+        press(Key.DirectionDown); press(Key.DirectionCenter) // the first platform's editor
+        rule.onAllNodes(hasSetTextAction(), useUnmergedTree = true)[0].performTextReplacement("ps1")
+        rule.waitForIdle()
+        rule.onNodeWithText("Save", useUnmergedTree = true).performClick()
+        assertThat(calls).contains("save:psx:ps1")
     }
 
     /** Found by audit: closing a dialog left focus on the section list, not on what opened it. */

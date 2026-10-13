@@ -413,7 +413,8 @@ private fun MappingSection(state: SettingsUiState, actions: SettingsActions, mod
 @Composable
 private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: () -> Unit) {
     val r = row.resolved
-    val match = row.override?.match ?: PlatformMatch(slug = row.platform.platform.slug)
+    // Saved per server folder: RomM gives one slug ("arcade") to several (MAME, FBNeo, NAOMI…).
+    val match = PlatformMatch(fsSlug = row.platform.platform.fsSlug)
     var folder by remember { mutableStateOf(r.folder) }
     var archive by remember { mutableStateOf(r.archive) }
     var multiDisc by remember { mutableStateOf(r.multiDisc) }
@@ -463,10 +464,13 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
             Text("RomM slug ${row.platform.platform.slug} · server folder ${row.platform.platform.fsSlug}",
                 Modifier.weight(1f).align(Alignment.CenterVertically),
                 style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = LoomColors.TextFaint)
-            if (row.override != null) LoomButton("Reset", { actions.resetOverride(match); onClose() })
+            row.override?.let { o -> LoomButton("Reset", { actions.resetOverride(o.match); onClose() }) }
             LoomButton("Cancel", onClose, Modifier.focusRequester(f))
             LoomButton("Save", enabled = folderProblem == null && include.isNotEmpty(), primary = true, onClick = {
-                actions.saveOverride(PlatformMappingEntry(match, folder = folder, archive = archive, multiDisc = multiDisc, include = include.sorted()))
+                // The folder only when the user set it: saving other settings mustn't pin the default and
+                // stop Loom looking on the card at the first download.
+                actions.saveOverride(PlatformMappingEntry(match, folder = folder.takeIf { it != r.folder || r.folderChosen },
+                    archive = archive, multiDisc = multiDisc, include = include.sorted()))
                 onClose()
             })
         },
