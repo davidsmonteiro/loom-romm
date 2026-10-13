@@ -13,10 +13,12 @@ import ro.davidmontei.loom.storage.saves.SaveFixtures.AZAHAR_UNIT_HASH
 import ro.davidmontei.loom.storage.saves.SaveFixtures.folderOf
 import ro.davidmontei.loom.storage.saves.SaveFixtures.zipOf
 import ro.davidmontei.loom.storage.saves.SaveFixtures.zipWithSymlink
+import java.io.IOException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
+import java.nio.file.attribute.PosixFilePermissions
 import java.time.LocalDateTime
 import java.util.TimeZone
 
@@ -88,6 +90,25 @@ class SaveZipperTest {
         Files.createSymbolicLink(data.resolve("dirlink"), outside)
         assertThat(SaveZipper.entries(listOf(SaveRoot("data", data))).map { it.name })
             .containsExactly("data/00000001.metadata", "data/00000001/main")
+    }
+
+    /**
+     * A folder Loom can't read (or one that vanishes mid-walk) is an IOException, "try again
+     * later", never an unchecked exception that would crash a sync or read as "no save".
+     */
+    @Test fun anUnreadableFolderInTheUnitIsAnIOException() {
+        val data = azaharData()
+        val locked = data.resolve("00000001")
+        val before = Files.getPosixFilePermissions(locked)
+        Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("---------"))
+        try {
+            val unit = listOf(SaveRoot("data", data))
+            assertThrows(IOException::class.java) { SaveHasher.hashUnit(unit) }
+            assertThrows(IOException::class.java) { SaveZipper.zip(unit, path("unit.zip")) }
+            assertThrows(IOException::class.java) { SaveZipper.entries(unit) }
+        } finally {
+            Files.setPosixFilePermissions(locked, before)
+        }
     }
 
     @Test fun anEmptyUnitIsNeverArchived() {

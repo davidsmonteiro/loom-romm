@@ -4,6 +4,8 @@ import org.apache.commons.compress.archivers.zip.ZipFile
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.UncheckedIOException
+import java.nio.file.DirectoryIteratorException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -57,16 +59,21 @@ object SaveZipper {
     /**
      * The files of [roots] as the archive names them, in code-point order (Python's `sorted`).
      * Only regular files count: symlinks are not followed, and a missing root adds nothing.
+     *
+     * @throws IOException when a folder in the unit can't be read or vanishes during the walk
+     *   (the SD card was pulled, the emulator replaced a folder): try again later.
      */
     fun entries(roots: List<SaveRoot>): List<SaveEntry> {
         require(roots.map { it.name }.toSet().size == roots.size) { "Archive roots must have distinct names" }
         val entries = mutableListOf<SaveEntry>()
         for (root in roots) {
             if (!root.folder.isDirectory(LinkOption.NOFOLLOW_LINKS)) continue
-            Files.walk(root.folder).use { walk ->
-                walk.filter { it.isRegularFile(LinkOption.NOFOLLOW_LINKS) }.forEach { file ->
-                    val relative = root.folder.relativize(file).joinToString("/") { it.name }
-                    entries += SaveEntry("${root.name}/$relative", file)
+            checkedIo {
+                Files.walk(root.folder).use { walk ->
+                    walk.filter { it.isRegularFile(LinkOption.NOFOLLOW_LINKS) }.forEach { file ->
+                        val relative = root.folder.relativize(file).joinToString("/") { it.name }
+                        entries += SaveEntry("${root.name}/$relative", file)
+                    }
                 }
             }
         }
@@ -79,6 +86,7 @@ object SaveZipper {
      * wrote in between, they differ and the archive must not be uploaded.
      *
      * @throws SaveArchiveException when the unit holds no files: an empty archive is never a save.
+     * @throws IOException when the unit can't be read; [target] may then hold a partial archive.
      */
     fun zip(roots: List<SaveRoot>, target: Path): String {
         val entries = entries(roots)
@@ -164,8 +172,21 @@ object SaveZipper {
 
     private fun deleteTree(path: Path) {
         if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return
-        Files.walk(path).use { walk -> walk.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } }
+        checkedIo { Files.walk(path).use { walk -> walk.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } } }
     }
+}
+
+/**
+ * Runs a directory walk or listing so it fails only with [IOException]. The JDK's streams wrap any
+ * error after the first folder in an unchecked exception, which a caller following "an
+ * IOException means try again later" would miss.
+ */
+internal inline fun <T> checkedIo(block: () -> T): T = try {
+    block()
+} catch (e: UncheckedIOException) {
+    throw e.cause ?: IOException(e)
+} catch (e: DirectoryIteratorException) {
+    throw e.cause ?: IOException(e)
 }
 
 /** Python's `sorted()` order for strings: by code point, so characters beyond U+FFFF sort last. */

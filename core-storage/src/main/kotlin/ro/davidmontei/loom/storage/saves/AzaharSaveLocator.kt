@@ -32,6 +32,7 @@ sealed interface AzaharSaveLocation {
  */
 class AzaharSaveLocator(private val userDir: Path) {
 
+    /** @throws java.io.IOException when the SD card's folders can't be listed: try again later. */
     fun locate(titleId: ThreeDsTitleId): AzaharSaveLocation {
         if (!titleId.isGame) return AzaharSaveLocation.NotAGame
         val trees = id1Trees()
@@ -56,8 +57,10 @@ class AzaharSaveLocator(private val userDir: Path) {
     private fun idFolders(dir: Path): List<Path> {
         if (!dir.isDirectory(LinkOption.NOFOLLOW_LINKS)) return emptyList()
         // Through a sequence: Stream.toList() is missing before Android 14.
-        return Files.list(dir).use { list ->
-            list.iterator().asSequence().filter { it.isDirectory(LinkOption.NOFOLLOW_LINKS) && ID_FOLDER.matches(it.name) }.toList()
+        return checkedIo {
+            Files.list(dir).use { list ->
+                list.iterator().asSequence().filter { it.isDirectory(LinkOption.NOFOLLOW_LINKS) && ID_FOLDER.matches(it.name) }.toList()
+            }
         }
     }
 

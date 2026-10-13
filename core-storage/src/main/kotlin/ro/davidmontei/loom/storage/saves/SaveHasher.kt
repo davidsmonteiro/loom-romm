@@ -38,6 +38,8 @@ object SaveHasher {
     /**
      * Hash of the archive [SaveZipper.zip] would write for [roots], without writing it. Null when
      * the unit holds no files: there is no save to compare.
+     *
+     * @throws IOException when the unit can't be read. That is never "no save": try again later.
      */
     fun hashUnit(roots: List<SaveRoot>): String? {
         val entries = SaveZipper.entries(roots)
