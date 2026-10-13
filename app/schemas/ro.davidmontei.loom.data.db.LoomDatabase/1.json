@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "508e73f3282bc6d359fbf52ca80fe40f",
+    "identityHash": "7da372f4370ad4d3a0d77e8dd1b53a45",
     "entities": [
       {
         "tableName": "platforms",
@@ -393,11 +393,259 @@
             "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_installs_volume_uuid_path_key` ON `${TABLE_NAME}` (`volume_uuid`, `path_key`)"
           }
         ]
+      },
+      {
+        "tableName": "download_jobs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `rom_id` INTEGER NOT NULL, `platform_id` INTEGER NOT NULL, `title` TEXT NOT NULL, `phase` TEXT NOT NULL, `wait_reason` TEXT, `failure_code` TEXT, `failure_detail` TEXT, `failure_retryable` INTEGER NOT NULL, `lease_id` TEXT, `attempt` INTEGER NOT NULL, `generation` INTEGER NOT NULL, `checksum_retries` INTEGER NOT NULL, `plan_json` TEXT NOT NULL, `fingerprint` TEXT NOT NULL, `volume_uuid` TEXT NOT NULL, `staging_root` TEXT NOT NULL, `roms_root` TEXT NOT NULL, `final_rel_path` TEXT, `final_key` TEXT, `final_kind` TEXT, `bytes_done` INTEGER NOT NULL, `bytes_total` INTEGER NOT NULL, `queue_order` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "romId",
+            "columnName": "rom_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "platformId",
+            "columnName": "platform_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "phase",
+            "columnName": "phase",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "waitReason",
+            "columnName": "wait_reason",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "failureCode",
+            "columnName": "failure_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "failureDetail",
+            "columnName": "failure_detail",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "failureRetryable",
+            "columnName": "failure_retryable",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "leaseId",
+            "columnName": "lease_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "attempt",
+            "columnName": "attempt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "checksumRetries",
+            "columnName": "checksum_retries",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "planJson",
+            "columnName": "plan_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fingerprint",
+            "columnName": "fingerprint",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "volumeUuid",
+            "columnName": "volume_uuid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stagingRoot",
+            "columnName": "staging_root",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "romsRoot",
+            "columnName": "roms_root",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "finalRelPath",
+            "columnName": "final_rel_path",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "finalKey",
+            "columnName": "final_key",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "finalKind",
+            "columnName": "final_kind",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "bytesDone",
+            "columnName": "bytes_done",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bytesTotal",
+            "columnName": "bytes_total",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "queueOrder",
+            "columnName": "queue_order",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_download_jobs_rom_id",
+            "unique": true,
+            "columnNames": [
+              "rom_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_download_jobs_rom_id` ON `${TABLE_NAME}` (`rom_id`)"
+          },
+          {
+            "name": "index_download_jobs_phase_queue_order",
+            "unique": false,
+            "columnNames": [
+              "phase",
+              "queue_order"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_download_jobs_phase_queue_order` ON `${TABLE_NAME}` (`phase`, `queue_order`)"
+          }
+        ]
+      },
+      {
+        "tableName": "download_parts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`job_id` INTEGER NOT NULL, `rom_file_id` INTEGER NOT NULL, `plan_json` TEXT NOT NULL, `rel_url` TEXT NOT NULL, `durable_bytes` INTEGER NOT NULL, `validator` TEXT, `digest` TEXT, `state` TEXT NOT NULL, PRIMARY KEY(`job_id`, `rom_file_id`), FOREIGN KEY(`job_id`) REFERENCES `download_jobs`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "jobId",
+            "columnName": "job_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "romFileId",
+            "columnName": "rom_file_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "planJson",
+            "columnName": "plan_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "relUrl",
+            "columnName": "rel_url",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durableBytes",
+            "columnName": "durable_bytes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "validator",
+            "columnName": "validator",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "digest",
+            "columnName": "digest",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "job_id",
+            "rom_file_id"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "download_jobs",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "job_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '508e73f3282bc6d359fbf52ca80fe40f')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7da372f4370ad4d3a0d77e8dd1b53a45')"
     ]
   }
 }

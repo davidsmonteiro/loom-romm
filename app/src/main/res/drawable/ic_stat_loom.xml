@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon: the Loom mark (warp, weft, download arrow) as white strokes. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:pathData="M14 5V10.8M14 19.2V26 M24 5V26 M34 5V10.8M34 19.2V26 M6 15H19.8M28.2 15H37 M37 15A6 6 0 0 1 43 21V25.5A6 6 0 0 1 37 31.5H30A6 6 0 0 0 24 37.5V43.5 M19.5 39.0L24 43.5L28.5 39.0"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

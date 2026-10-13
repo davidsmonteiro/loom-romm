@@ -1,4 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Loom</string>
+
+    <!-- Downloads -->
+    <string name="channel_downloads">Downloads</string>
+    <string name="channel_download_results">Finished downloads</string>
+    <string name="download_preparing">Preparing download…</string>
+    <string name="download_more_queued">%1$d more queued</string>
+    <string name="download_installed">%1$s is on your device</string>
+    <string name="download_failed">%1$s didn\'t download</string>
+    <string name="download_waiting_title">Downloads are waiting</string>
+    <string name="download_waiting_text">Android paused them in the background. Open Loom to continue.</string>
+    <string name="action_pause_all">Pause all</string>
+    <string name="action_cancel">Cancel</string>
 </resources>

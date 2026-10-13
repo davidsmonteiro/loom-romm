@@ -16,6 +16,11 @@ import ro.davidmontei.loom.ui.theme.LoomTheme
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    companion object {
+        /** Opens straight to the download queue (notification taps, the "Downloads" shortcut). */
+        const val ACTION_OPEN_QUEUE = "ro.davidmontei.loom.action.OPEN_QUEUE"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
