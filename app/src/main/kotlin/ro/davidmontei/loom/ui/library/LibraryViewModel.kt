@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl
+import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.catalog.CatalogSyncScheduler
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.catalog.CatalogSyncer
@@ -59,7 +60,8 @@ class LibraryViewModel @Inject constructor(
     private val installs: InstallManager,
     private val syncScheduler: CatalogSyncScheduler,
     private val server: ActiveServer,
-    settings: SettingsStore,
+    private val settings: SettingsStore,
+    private val credentials: CredentialStore,
 ) : ViewModel() {
 
     val platforms: StateFlow<List<PlatformSummary>> = catalog.observePlatformSummaries()
@@ -112,6 +114,16 @@ class LibraryViewModel @Inject constructor(
     fun setQuery(q: String) { query.value = q }
     fun toggleGrid() { gridMode.value = !gridMode.value }
     fun sync(full: Boolean = false) = syncScheduler.enqueue(full)
+
+    /**
+     * RomM rejected the token: forget it and walk through pairing again, as Settings' "Pair again"
+     * does (the catalog and installs stay). Onboarding skips pairing while a token is stored.
+     */
+    fun repair(then: () -> Unit) = viewModelScope.launch {
+        credentials.clear()
+        settings.setOnboardingComplete(false)
+        then()
+    }
 
     fun download(game: GameItem) = viewModelScope.launch {
         when (val r = downloads.enqueue(game.id)) {

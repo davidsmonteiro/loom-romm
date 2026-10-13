@@ -150,7 +150,7 @@ fun LibraryScreen(
             override fun cancel(game: GameItem) { vm.cancel(game) }
             override fun openQueue(focusJobId: Long?) = openQueue(focusJobId)
             override fun openSettings() = openSettings()
-            override fun repair() = onRepair()
+            override fun repair() { vm.repair(onRepair) }
         }
     }
     LibraryContent(LibraryUiState(platforms, selected, games, filter, query, grid, header, coverBase, message), actions)
