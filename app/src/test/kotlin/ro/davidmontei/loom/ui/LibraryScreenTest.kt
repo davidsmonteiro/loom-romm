@@ -93,6 +93,14 @@ class LibraryScreenTest {
         rule.waitForIdle()
     }
 
+    /** Recompose with the new state first, then let delayed focus requests run. */
+    private fun update(change: (LibraryUiState) -> LibraryUiState) {
+        state = change(state)
+        rule.waitForIdle()
+        rule.mainClock.advanceTimeBy(300)
+        rule.waitForIdle()
+    }
+
     // Key is a value class, so no vararg: press(a, b) is spelled press(listOf(a, b)).
     private fun press(key: Key) = press(listOf(key))
     private fun press(keys: List<Key>) = keys.forEach { key ->
@@ -153,6 +161,25 @@ class LibraryScreenTest {
         press(Key.ButtonY)
         rule.onNode(hasSetTextAction()).performTextInput("Chrono")
         press(Key.Enter)
+        rule.onNodeWithTag("game-1").assertIsFocused()
+    }
+
+    /**
+     * Found on the Thor: results that vanished and came back while typing pulled focus to the
+     * first game, so the rest of the typing went to it (a space opened it, Enter downloaded it).
+     */
+    @Test fun typingASearchKeepsFocusInTheField() {
+        show()
+        press(Key.ButtonY)
+        update { it.copy(query = "Alley M", games = emptyList()) }
+        update { it.copy(query = "Alley", games = games.take(2)) }
+        rule.onNode(hasSetTextAction()).assertIsFocused()
+    }
+
+    @Test fun gamesThatLoadLateStillGetFocus() {
+        state = state.copy(games = emptyList())
+        show()
+        update { it.copy(games = games) }
         rule.onNodeWithTag("game-1").assertIsFocused()
     }
 

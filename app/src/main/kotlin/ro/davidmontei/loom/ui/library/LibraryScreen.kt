@@ -48,6 +48,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -153,6 +154,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     var detailsFor by remember { mutableStateOf<GameItem?>(null) }
     var confirmOffload by remember { mutableStateOf<GameItem?>(null) }
     var searchEdits by remember { mutableIntStateOf(0) }
+    var searchFocused by remember { mutableStateOf(false) }
     val firstGame = remember { FocusRequester() }
     val railFocus = remember { FocusRequester() }
 
@@ -162,6 +164,11 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
         InstallState.FAILED -> actions.retry(game)
         InstallState.QUEUED, InstallState.DOWNLOADING -> actions.openQueue()
     }
+
+    // Into the games when they first appear and whenever the platform, filter or layout changes,
+    // but never while a search is being typed: results that vanish and come back as the query
+    // changes must not pull focus out of the field.
+    InitialFocus(firstGame, state.selected?.platform?.id, state.filter, state.gridMode, state.games.isNotEmpty(), unless = { searchFocused })
 
     Box(Modifier.fillMaxSize().onPadAction { action ->
         when (action) {
@@ -184,7 +191,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                     Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                         LoomTextField(
                             value = state.query, onValueChange = actions::setQuery, label = null,
-                            placeholder = "Search", modifier = Modifier.weight(1f), tag = "search", editRequest = searchEdits,
+                            placeholder = "Search", modifier = Modifier.weight(1f).onFocusChanged { searchFocused = it.hasFocus }, tag = "search", editRequest = searchEdits,
                             onImeAction = { runCatching { firstGame.requestFocus() } },
                         )
                         LibraryFilter.entries.forEach { f ->
@@ -336,9 +343,6 @@ private fun Games(
         )
         return
     }
-    // Back into the grid with the first game focused whenever the platform or filter changes.
-    InitialFocus(firstGame, state.selected?.platform?.id, state.filter, state.gridMode)
-
     if (state.gridMode) {
         val gridState = rememberLazyGridState()
         LaunchedEffect(state.selected?.platform?.id) { gridState.scrollToItem(0) }
