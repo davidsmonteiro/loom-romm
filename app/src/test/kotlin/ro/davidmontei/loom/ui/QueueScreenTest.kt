@@ -1,5 +1,8 @@
 package ro.davidmontei.loom.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
@@ -52,9 +55,18 @@ class QueueScreenTest {
         )
     }
 
-    private fun show(state: QueueUiState = sample) {
+    private var state by mutableStateOf(sample)
+
+    private fun show(initial: QueueUiState = sample) {
+        state = initial
         rule.setContent { LoomTestTheme { QueueContent(state, actions) } }
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+    }
+
+    /** Recompose with the new state first, then let delayed focus requests run. */
+    private fun update(change: (QueueUiState) -> QueueUiState) {
+        state = change(state)
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
     }
 
     private fun press(key: Key) { rule.onRoot().performKeyInput { pressKey(key) }; rule.mainClock.advanceTimeBy(100); rule.waitForIdle() }
@@ -75,6 +87,17 @@ class QueueScreenTest {
         rule.onNodeWithTag("done-101").assertIsFocused()
         repeat(11) { press(Key.DirectionDown) }
         rule.onNodeWithTag("done-112").assertIsFocused()
+    }
+
+    /** Found by audit: the first job finishing pulled focus to the new first job, so A paused that one. */
+    @Test fun focusStaysOnItsJobWhenTheFirstOneFinishes() {
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown)
+        rule.onNodeWithTag("job-3").assertIsFocused()
+        update { it.copy(active = it.active.drop(1)) } // Final Fantasy VII is done
+        rule.onNodeWithTag("job-3").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("pause:3")
     }
 
     @Test fun xIgnoresFinishedGames() {

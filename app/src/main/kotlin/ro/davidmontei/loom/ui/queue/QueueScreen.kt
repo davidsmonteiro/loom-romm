@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
@@ -142,6 +143,7 @@ fun QueueContent(state: QueueUiState, actions: QueueActions) {
     // The job X acts on: only while it has focus, and as it is now.
     var focusedId by remember { mutableStateOf<Long?>(null) }
     var confirmCancel by remember { mutableStateOf<QueueItem?>(null) }
+    var listHasFocus by remember { mutableStateOf(false) }
     val first = remember { FocusRequester() }
     val firstItem = state.active.firstOrNull() ?: state.failed.firstOrNull()
 
@@ -168,8 +170,9 @@ fun QueueContent(state: QueueUiState, actions: QueueActions) {
                 return@ScreenScaffold
             }
             // The first job, or the newest finished game when nothing is queued, so the pad can scroll the list.
-            InitialFocus(first, firstItem?.jobId, state.finished.isEmpty())
-            LazyColumn(Modifier.fillMaxSize().testTag("queue-list"), contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+            // Only while the list has no focus: the first job finishing mustn't pull it off the row the user is on.
+            InitialFocus(first, firstItem?.jobId, state.finished.isEmpty(), unless = { listHasFocus })
+            LazyColumn(Modifier.fillMaxSize().onFocusChanged { listHasFocus = it.hasFocus }.testTag("queue-list"), contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(Space.s)) {
                 if (state.active.isNotEmpty()) item { SectionHeader("In progress") }
                 items(state.active, key = { it.jobId }) { item ->
                     JobRow(item, if (item == firstItem) Modifier.focusRequester(first) else Modifier, onFocus = ::trackFocus) { primary(item) }
