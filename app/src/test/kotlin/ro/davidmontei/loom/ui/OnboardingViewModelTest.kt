@@ -48,6 +48,8 @@ import ro.davidmontei.loom.ui.onboarding.OnboardingStep
 import ro.davidmontei.loom.ui.onboarding.OnboardingViewModel
 import ro.davidmontei.loom.ui.onboarding.PairMode
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /** The onboarding ViewModel against a fake RomM: what it saves, and when. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -69,6 +71,8 @@ class OnboardingViewModelTest {
     private val me = """{"id":1,"username":"david","enabled":true,"oauth_scopes":["roms.read"]}"""
 
     @Volatile private var meRequests = 0
+    private val heartbeatReceived = CountDownLatch(1)
+    private val heartbeatServed = CountDownLatch(1)
 
     private val heartbeat = """{"SYSTEM":{"VERSION":"5.3.1","SHOW_SETUP_WIZARD":false}}"""
 
@@ -76,7 +80,12 @@ class OnboardingViewModelTest {
     private fun serve(goodToken: String = "rmm_new", meDelayMs: Long = 0, heartbeatDelayMs: Long = 0) {
         romm.server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when (request.url.encodedPath) {
-                "/api/heartbeat" -> { Thread.sleep(heartbeatDelayMs); json(heartbeat) }
+                "/api/heartbeat" -> {
+                    heartbeatReceived.countDown()
+                    Thread.sleep(heartbeatDelayMs)
+                    heartbeatServed.countDown()
+                    json(heartbeat)
+                }
                 "/api/users/me" -> {
                     meRequests++
                     Thread.sleep(meDelayMs)
@@ -168,9 +177,11 @@ class OnboardingViewModelTest {
         vm.go(OnboardingStep.SERVER)
         vm.connect()
         assertThat(vm.state.value.probing).isTrue()
+        assertThat(heartbeatReceived.await(10, TimeUnit.SECONDS)).isTrue() // the check is with RomM
         vm.setAddress("romm.example.org") // retyping while it hangs
         assertThat(vm.state.value.probing).isFalse() // so the new address can be checked straight away
-        Thread.sleep(1_500)
+        assertThat(heartbeatServed.await(10, TimeUnit.SECONDS)).isTrue() // RomM answered the old check…
+        Thread.sleep(300) // …and that answer has had time to reach Loom
         assertThat(vm.state.value.serverSummary).isNull()
         assertThat(vm.state.value.serverError).isNull()
     }

@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -171,5 +172,14 @@ class OnboardingScreenTest {
         rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
         rule.onNodeWithText("Allow background downloads").assertIsFocused()
         rule.onNodeWithText("Allow notifications").assertExists() // still there, for another try
+    }
+
+    /** Found by review: a check that ended after A started editing the address, before the first key, took focus away. */
+    @Test fun aLateCheckResultLeavesTheAddressBeingTyped() {
+        show(OnboardingState(step = OnboardingStep.SERVER, addressInput = "romm.example.org", probing = true))
+        press(Key.DirectionCenter) // edit the address
+        rule.onNode(hasSetTextAction()).assertIsFocused()
+        update { it.copy(probing = false, serverError = "Couldn't reach RomM") }
+        rule.onNode(hasSetTextAction()).assertIsFocused()
     }
 }

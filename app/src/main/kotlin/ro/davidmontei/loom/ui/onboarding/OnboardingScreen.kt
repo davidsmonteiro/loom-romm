@@ -189,10 +189,13 @@ private fun Server(state: OnboardingState, actions: OnboardingActions, first: Fo
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.l)) {
             // Back on this step with the address already checked, A carries on: focus starts on Continue.
             val checked = state.serverSummary != null
+            // Focus inside the field, not just on its frame: the user is typing.
+            var addressEditing by remember { mutableStateOf(false) }
             LoomTextField(
                 value = state.addressInput, onValueChange = actions::setAddress, label = "Server address",
                 placeholder = "romm.example.org or 100.x.y.z:8080", keyboardType = KeyboardType.Uri, onImeAction = actions::connect,
-                modifier = if (checked) Modifier else Modifier.focusRequester(first), isError = state.serverError != null,
+                modifier = (if (checked) Modifier else Modifier.focusRequester(first)).onFocusChanged { addressEditing = it.hasFocus && !it.isFocused },
+                isError = state.serverError != null,
             )
             state.serverError?.let { Text(it, color = LoomColors.Error, style = MaterialTheme.typography.bodyMedium) }
             state.serverSummary?.let { Text(it, color = LoomColors.Installed, style = MaterialTheme.typography.bodyMedium) }
@@ -201,6 +204,7 @@ private fun Server(state: OnboardingState, actions: OnboardingActions, first: Fo
             val checkFocus = remember { FocusRequester() }
             // After a check, focus goes where the next press should: Continue on success, Check on failure.
             LaunchedEffect(state.serverSummary, state.serverError) {
+                if (addressEditing) return@LaunchedEffect // a late result never takes over an address being typed
                 if (state.serverSummary != null) runCatching { continueFocus.requestFocus() }
                 else if (state.serverError != null) runCatching { checkFocus.requestFocus() }
             }
