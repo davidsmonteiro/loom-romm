@@ -31,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,12 +63,53 @@ import ro.davidmontei.loom.ui.components.ScreenScaffold
 import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
+import java.io.File
+
+/** Everything the onboarding steps can do, so they can be driven in tests without Hilt. */
+interface OnboardingActions {
+    val knownSystemFolders: Set<String>
+    fun go(step: OnboardingStep)
+    fun setAddress(text: String)
+    fun connect()
+    fun setPairMode(mode: PairMode)
+    fun setPairInput(text: String)
+    fun submitPairInput()
+    fun startDeviceAuth()
+    fun pairAgain()
+    fun refreshStorage()
+    fun pickRoot(dir: File)
+    fun createSuggestedRoot()
+    fun finish()
+}
 
 private val hints = listOf(ButtonHint("A", "Select"), ButtonHint("B", "Back"))
 
 @Composable
 fun OnboardingScreen(onFinished: () -> Unit, vm: OnboardingViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val finished by rememberUpdatedState(onFinished)
+    val actions = remember(vm) {
+        object : OnboardingActions {
+            override val knownSystemFolders get() = vm.knownSystemFolders
+            override fun go(step: OnboardingStep) = vm.go(step)
+            override fun setAddress(text: String) = vm.setAddress(text)
+            override fun connect() = vm.connect()
+            override fun setPairMode(mode: PairMode) = vm.setPairMode(mode)
+            override fun setPairInput(text: String) = vm.setPairInput(text)
+            override fun submitPairInput() = vm.submitPairInput()
+            override fun startDeviceAuth() = vm.startDeviceAuth()
+            override fun pairAgain() = vm.pairAgain()
+            override fun refreshStorage() = vm.refreshStorage()
+            override fun pickRoot(dir: File) = vm.pickRoot(dir)
+            override fun createSuggestedRoot() = vm.createSuggestedRoot()
+            override fun finish() = vm.finish { finished() }
+        }
+    }
+    OnboardingContent(state, actions)
+}
+
+@Composable
+fun OnboardingContent(state: OnboardingState, actions: OnboardingActions) {
     val previous = when (state.step) {
         OnboardingStep.WELCOME -> null
         OnboardingStep.SERVER -> OnboardingStep.WELCOME
@@ -78,7 +120,7 @@ fun OnboardingScreen(onFinished: () -> Unit, vm: OnboardingViewModel = hiltViewM
         OnboardingStep.SYNC -> OnboardingStep.BACKGROUND
     }
     // B steps back; on the first step it does nothing rather than close Loom.
-    BackHandler { previous?.let(vm::go) }
+    BackHandler { previous?.let(actions::go) }
 
     val stepNumber = state.step.ordinal
     ScreenScaffold(title = "Set up Loom", hints = hints, actions = {
@@ -97,13 +139,13 @@ fun OnboardingScreen(onFinished: () -> Unit, vm: OnboardingViewModel = hiltViewM
             verticalArrangement = Arrangement.spacedBy(Space.l),
         ) {
             when (state.step) {
-                OnboardingStep.WELCOME -> Welcome(first) { vm.go(OnboardingStep.SERVER) }
-                OnboardingStep.SERVER -> Server(state, vm, first)
-                OnboardingStep.PAIR -> Pair(state, vm, first)
-                OnboardingStep.STORAGE -> Storage(state, vm, first)
-                OnboardingStep.ROMS_ROOT -> RomsRoot(state, vm, first)
-                OnboardingStep.BACKGROUND -> Background(vm, first)
-                OnboardingStep.SYNC -> Sync(state, first) { vm.finish(onFinished) }
+                OnboardingStep.WELCOME -> Welcome(first) { actions.go(OnboardingStep.SERVER) }
+                OnboardingStep.SERVER -> Server(state, actions, first)
+                OnboardingStep.PAIR -> Pair(state, actions, first)
+                OnboardingStep.STORAGE -> Storage(state, actions, first)
+                OnboardingStep.ROMS_ROOT -> RomsRoot(state, actions, first)
+                OnboardingStep.BACKGROUND -> Background(actions, first)
+                OnboardingStep.SYNC -> Sync(state, first, actions::finish)
             }
         }
     }
@@ -128,15 +170,15 @@ private fun Welcome(first: FocusRequester, next: () -> Unit) {
 }
 
 @Composable
-private fun Server(state: OnboardingState, vm: OnboardingViewModel, first: FocusRequester) {
+private fun Server(state: OnboardingState, actions: OnboardingActions, first: FocusRequester) {
     Title(
         "Where is your RomM server?",
         "Use whichever address reaches it from the Thor: a local one (192.168.1.10:8080), Tailscale " +
             "(100.x.y.z:8080 or a MagicDNS name) or your domain (romm.example.org). You can change it later in Settings.",
     )
     LoomTextField(
-        value = state.addressInput, onValueChange = vm::setAddress, label = "Server address",
-        placeholder = "romm.example.org or 100.x.y.z:8080", keyboardType = KeyboardType.Uri, onImeAction = vm::connect,
+        value = state.addressInput, onValueChange = actions::setAddress, label = "Server address",
+        placeholder = "romm.example.org or 100.x.y.z:8080", keyboardType = KeyboardType.Uri, onImeAction = actions::connect,
         modifier = Modifier.focusRequester(first), isError = state.serverError != null,
     )
     state.serverError?.let { Text(it, color = LoomColors.Error, style = MaterialTheme.typography.bodyMedium) }
@@ -150,20 +192,20 @@ private fun Server(state: OnboardingState, vm: OnboardingViewModel, first: Focus
         else if (state.serverError != null) runCatching { checkFocus.requestFocus() }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-        LoomButton(if (state.probing) "Checking…" else "Check address", onClick = vm::connect, enabled = !state.probing,
+        LoomButton(if (state.probing) "Checking…" else "Check address", onClick = actions::connect, enabled = !state.probing,
             modifier = Modifier.focusRequester(checkFocus))
-        LoomButton("Continue", onClick = { vm.go(OnboardingStep.PAIR) }, primary = true, enabled = state.serverSummary != null,
+        LoomButton("Continue", onClick = { actions.go(OnboardingStep.PAIR) }, primary = true, enabled = state.serverSummary != null,
             modifier = Modifier.focusRequester(continueFocus))
     }
 }
 
 @Composable
-private fun Pair(state: OnboardingState, vm: OnboardingViewModel, first: FocusRequester) {
+private fun Pair(state: OnboardingState, actions: OnboardingActions, first: FocusRequester) {
     if (state.pairedAs != null) {
         Title("Paired with RomM", "Loom is signed in as ${state.pairedAs}.")
         Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-            LoomButton("Continue", onClick = { vm.go(OnboardingStep.STORAGE) }, primary = true, modifier = Modifier.focusRequester(first))
-            LoomButton("Pair again", onClick = vm::pairAgain)
+            LoomButton("Continue", onClick = { actions.go(OnboardingStep.STORAGE) }, primary = true, modifier = Modifier.focusRequester(first))
+            LoomButton("Pair again", onClick = actions::pairAgain)
         }
         return
     }
@@ -174,15 +216,15 @@ private fun Pair(state: OnboardingState, vm: OnboardingViewModel, first: FocusRe
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.m)) {
             Title("Pair with RomM")
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                LoomChip("Scan a code", state.pairMode == PairMode.DEVICE_CODE, { vm.setPairMode(PairMode.DEVICE_CODE) },
+                LoomChip("Scan a code", state.pairMode == PairMode.DEVICE_CODE, { actions.setPairMode(PairMode.DEVICE_CODE) },
                     Modifier.focusRequester(first))
-                LoomChip("Enter a pair code", state.pairMode == PairMode.PAIR_CODE, { vm.setPairMode(PairMode.PAIR_CODE) })
-                LoomChip("Paste a token", state.pairMode == PairMode.PASTE_TOKEN, { vm.setPairMode(PairMode.PASTE_TOKEN) })
+                LoomChip("Enter a pair code", state.pairMode == PairMode.PAIR_CODE, { actions.setPairMode(PairMode.PAIR_CODE) })
+                LoomChip("Paste a token", state.pairMode == PairMode.PASTE_TOKEN, { actions.setPairMode(PairMode.PASTE_TOKEN) })
             }
             when (state.pairMode) {
                 PairMode.DEVICE_CODE -> if (session == null) {
                     if (state.pairing) Text("Asking RomM for a code…", color = LoomColors.TextMuted)
-                    LoomButton("Get a new code", onClick = vm::startDeviceAuth, primary = true)
+                    LoomButton("Get a new code", onClick = actions::startDeviceAuth, primary = true)
                 } else {
                     Text("Scan with your phone, sign in to RomM if asked, and approve Loom.", style = MaterialTheme.typography.bodyLarge)
                     Text(session.displayCode, style = MaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace, letterSpacing = 4.sp), color = LoomColors.Accent)
@@ -192,14 +234,14 @@ private fun Pair(state: OnboardingState, vm: OnboardingViewModel, first: FocusRe
                 PairMode.PAIR_CODE -> {
                     Text("In RomM's web UI, open your profile → API tokens, create a token for Loom and choose “Pair device”. Type the 8-character code it shows (it lasts 60 seconds).",
                         style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
-                    LoomTextField(state.pairInput, vm::setPairInput, "Pair code", placeholder = "ABCD-2345", onImeAction = vm::submitPairInput)
-                    LoomButton(if (state.pairing) "Pairing…" else "Pair", onClick = vm::submitPairInput, primary = true, enabled = !state.pairing)
+                    LoomTextField(state.pairInput, actions::setPairInput, "Pair code", placeholder = "ABCD-2345", onImeAction = actions::submitPairInput)
+                    LoomButton(if (state.pairing) "Pairing…" else "Pair", onClick = actions::submitPairInput, primary = true, enabled = !state.pairing)
                 }
                 PairMode.PASTE_TOKEN -> {
                     Text("Paste a RomM client API token (starts with rmm_), e.g. sent over adb or KDE Connect.",
                         style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
-                    LoomTextField(state.pairInput, vm::setPairInput, "API token", placeholder = "rmm_…", secret = true, onImeAction = vm::submitPairInput)
-                    LoomButton(if (state.pairing) "Checking…" else "Use token", onClick = vm::submitPairInput, primary = true, enabled = !state.pairing)
+                    LoomTextField(state.pairInput, actions::setPairInput, "API token", placeholder = "rmm_…", secret = true, onImeAction = actions::submitPairInput)
+                    LoomButton(if (state.pairing) "Checking…" else "Use token", onClick = actions::submitPairInput, primary = true, enabled = !state.pairing)
                 }
             }
             state.pairError?.let { Text(it, color = LoomColors.Error, style = MaterialTheme.typography.bodyMedium) }
@@ -218,9 +260,9 @@ private fun Countdown(startedAt: Long, seconds: Int) {
 }
 
 @Composable
-private fun Storage(state: OnboardingState, vm: OnboardingViewModel, first: FocusRequester) {
+private fun Storage(state: OnboardingState, actions: OnboardingActions, first: FocusRequester) {
     val context = LocalContext.current
-    LifecycleResumeEffect(Unit) { vm.refreshStorage(); onPauseOrDispose { } }
+    LifecycleResumeEffect(Unit) { actions.refreshStorage(); onPauseOrDispose { } }
     Title(
         "Let Loom write to your ROM folders",
         "Cocoon reads games from folders like ROMs/snes on your SD card. To put games there, and to delete them " +
@@ -229,7 +271,7 @@ private fun Storage(state: OnboardingState, vm: OnboardingViewModel, first: Focu
     )
     if (state.hasAllFilesAccess) {
         Text("All files access is on.", color = LoomColors.Installed, style = MaterialTheme.typography.bodyLarge)
-        LoomButton("Continue", onClick = { vm.go(OnboardingStep.ROMS_ROOT) }, primary = true, modifier = Modifier.focusRequester(first))
+        LoomButton("Continue", onClick = { actions.go(OnboardingStep.ROMS_ROOT) }, primary = true, modifier = Modifier.focusRequester(first))
     } else {
         LoomButton("Open Android settings", primary = true, modifier = Modifier.focusRequester(first), onClick = {
             val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, "package:${context.packageName}".toUri())
@@ -242,16 +284,16 @@ private fun Storage(state: OnboardingState, vm: OnboardingViewModel, first: Focu
 }
 
 @Composable
-private fun RomsRoot(state: OnboardingState, vm: OnboardingViewModel, first: FocusRequester) {
+private fun RomsRoot(state: OnboardingState, actions: OnboardingActions, first: FocusRequester) {
     val suggested = state.suggestedRoot
     Row(Modifier.fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.l)) {
             Title("Which folder does Cocoon scan?", "Pick the folder that holds your system folders (snes, psx, gba…). Loom adds games inside it.")
             if (suggested != null) {
                 if (suggested.isDirectory) {
-                    LoomButton("Use ${suggested.path}", onClick = { vm.pickRoot(suggested) }, primary = true, modifier = Modifier.focusRequester(first))
+                    LoomButton("Use ${suggested.path}", onClick = { actions.pickRoot(suggested) }, primary = true, modifier = Modifier.focusRequester(first))
                 } else {
-                    LoomButton("Create ${suggested.path}", onClick = vm::createSuggestedRoot, primary = true, modifier = Modifier.focusRequester(first))
+                    LoomButton("Create ${suggested.path}", onClick = actions::createSuggestedRoot, primary = true, modifier = Modifier.focusRequester(first))
                 }
             }
         }
@@ -260,8 +302,8 @@ private fun RomsRoot(state: OnboardingState, vm: OnboardingViewModel, first: Foc
             FolderPicker(
                 volumes = state.volumes,
                 initial = suggested?.parentFile,
-                knownSystemFolders = vm.knownSystemFolders,
-                onPick = vm::pickRoot,
+                knownSystemFolders = actions.knownSystemFolders,
+                onPick = actions::pickRoot,
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 focusOnOpen = suggested == null,
             )
@@ -271,7 +313,7 @@ private fun RomsRoot(state: OnboardingState, vm: OnboardingViewModel, first: Foc
 
 @SuppressLint("BatteryLife")
 @Composable
-private fun Background(vm: OnboardingViewModel, first: FocusRequester) {
+private fun Background(actions: OnboardingActions, first: FocusRequester) {
     val context = LocalContext.current
     val power = context.getSystemService(PowerManager::class.java)
     fun notificationsOn() = NotificationManagerCompat.from(context).areNotificationsEnabled()
@@ -301,7 +343,7 @@ private fun Background(vm: OnboardingViewModel, first: FocusRequester) {
             context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri()))
         }
     }
-    LoomButton("Continue", onClick = { vm.go(OnboardingStep.SYNC) }, primary = true,
+    LoomButton("Continue", onClick = { actions.go(OnboardingStep.SYNC) }, primary = true,
         modifier = if (notifications && background) Modifier.focusRequester(first) else Modifier)
 }
 
