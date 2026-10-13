@@ -48,6 +48,21 @@ class MappingRepositoryTest {
         assertThat(repo.overrides.first().map { it.match.slug }).containsExactly("gba")
     }
 
+    @Test fun choosingAFolderKeepsTheOtherSettings() = runBlocking<Unit> {
+        repo.setOverride(PlatformMappingEntry(PlatformMatch(slug = "arcade"), archive = ArchivePolicy.EXTRACT))
+        repo.chooseFolder("arcade", "arcade", "arcade")
+        val arcade = repo.currentMapper().resolve("arcade", "arcade")
+        assertThat(arcade.folder).isEqualTo("arcade")
+        assertThat(arcade.folderChosen).isTrue()
+        assertThat(arcade.archive).isEqualTo(ArchivePolicy.EXTRACT)
+    }
+
+    @Test fun aFolderIsChosenForThePlatformAsTheMappingSplitsIt() = runBlocking<Unit> {
+        repo.chooseFolder("arcade", "fbneo", "fba") // RomM's arcade platform served from the fbneo folder
+        assertThat(repo.currentMapper().resolve("arcade", "fbneo").folder).isEqualTo("fba")
+        assertThat(repo.currentMapper().resolve("arcade", "arcade").folderChosen).isFalse() // other arcade folders untouched
+    }
+
     @Test fun badImportLeavesOverridesAlone() = runBlocking<Unit> {
         repo.setOverride(PlatformMappingEntry(PlatformMatch(slug = "snes"), folder = "sfc"))
         assertThrows(InvalidMappingException::class.java) { runBlocking { repo.importJson("{nope") } }

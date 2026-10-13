@@ -150,6 +150,16 @@ class PlatformMapper(
         )
     }
 
+    /**
+     * The key a user override for this platform is stored under: the one already in use, else the
+     * shipped row's (its server folder first), else the RomM slug. [resolve] then finds it first.
+     */
+    fun matchFor(slug: String, fsSlug: String): PlatformMatch =
+        (overrides.find { it.match.fsSlug == fsSlug } ?: overrides.find { it.match.slug == slug && it.match.fsSlug == null }
+            ?: defaults.platforms.find { it.match.fsSlug == fsSlug }
+            ?: defaults.platforms.find { it.match.slug == slug && it.match.fsSlug == null })?.match
+            ?: PlatformMatch(slug = slug)
+
     /** The file a user would export: defaults with their overrides folded in. */
     fun export(): PlatformMappingFile {
         val merged = defaults.platforms.map { base ->

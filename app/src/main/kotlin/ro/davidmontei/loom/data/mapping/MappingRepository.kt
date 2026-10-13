@@ -31,9 +31,18 @@ class MappingRepository(private val dataStore: DataStore<Preferences>) {
     /** Replaces (or adds) the override for [match]. Passing an entry with only `match` clears it. */
     suspend fun setOverride(entry: PlatformMappingEntry) = edit { list ->
         val rest = list.filterNot { it.match == entry.match }
-        val empty = entry.folder == null && entry.archive == null && entry.multiDisc == null &&
+        val empty = entry.folder == null && entry.aliases == null && entry.archive == null && entry.multiDisc == null &&
             entry.include == null && entry.saveDir == null
         if (empty) rest else rest + entry
+    }
+
+    /** Makes [folder] the platform's system folder, keeping whatever else the user set for it. */
+    suspend fun chooseFolder(slug: String, fsSlug: String, folder: String) {
+        val match = currentMapper().matchFor(slug, fsSlug)
+        edit { list ->
+            val existing = list.find { it.match == match }
+            list.filterNot { it.match == match } + (existing?.copy(folder = folder) ?: PlatformMappingEntry(match, folder = folder))
+        }
     }
 
     suspend fun clearOverride(match: PlatformMatch) = edit { list -> list.filterNot { it.match == match } }
