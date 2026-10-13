@@ -162,11 +162,23 @@ fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? =
     val first = remember { FocusRequester() }
     val listFocus = remember { FocusRequester() }
     val listState = rememberLazyListState()
-    val startItem = (state.active + state.failed).firstOrNull { it.jobId == focusJobId } ?: state.active.firstOrNull() ?: state.failed.firstOrNull()
+    val jobs = state.active + state.failed
+    val startItem = jobs.firstOrNull { it.jobId == focusJobId } ?: state.active.firstOrNull() ?: state.failed.firstOrNull()
+    // Where focus goes back into the list: the job last focused, or the one now in its place once that
+    // one has left (finished or cancelled), rather than the top of the queue.
+    var lastJobIndex by remember { mutableStateOf<Int?>(null) }
+    val entryItem = lastJobIndex?.let { jobs.getOrNull(it.coerceAtMost(jobs.lastIndex)) } ?: startItem
+    val entry = remember { FocusRequester() }
 
     fun trackFocus(item: QueueItem, focused: Boolean) {
-        if (focused) focusedId = item.jobId else if (focusedId == item.jobId) focusedId = null
+        if (focused) {
+            focusedId = item.jobId
+            lastJobIndex = jobs.indexOfFirst { it.jobId == item.jobId }.takeIf { it >= 0 }
+        } else if (focusedId == item.jobId) focusedId = null
     }
+    // A focused job that leaves the list takes focus with it; the job now in its place takes over.
+    val focusedLeft = focusedId != null && jobs.none { it.jobId == focusedId }
+    LaunchedEffect(focusedLeft) { if (focusedLeft) runCatching { entry.requestFocus() } }
 
     fun primary(item: QueueItem) = when {
         item.failed -> if (item.retryable) actions.retry(item.jobId) else Unit
@@ -203,7 +215,7 @@ fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? =
                 if (index >= 0) listState.scrollToItem(index)
             }
             LazyColumn(
-                Modifier.fillMaxSize().onFocusChanged { listHasFocus = it.hasFocus }.focusRequester(listFocus).focusRestorer(first)
+                Modifier.fillMaxSize().onFocusChanged { listHasFocus = it.hasFocus }.focusRequester(listFocus).focusRestorer(entry)
                     .testTag("queue-list"),
                 state = listState,
                 contentPadding = PaddingValues(8.dp),
@@ -214,7 +226,9 @@ fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? =
                 items(jobRows, key = { it.key }) { row ->
                     when (row) {
                         is JobListRow.Header -> SectionHeader(row.text)
-                        is JobListRow.Job -> JobRow(row.item, if (row.item == startItem) Modifier.focusRequester(first) else Modifier,
+                        is JobListRow.Job -> JobRow(row.item,
+                            (if (row.item == startItem) Modifier.focusRequester(first) else Modifier)
+                                .then(if (row.item.jobId == entryItem?.jobId) Modifier.focusRequester(entry) else Modifier),
                             onFocus = ::trackFocus) { primary(row.item) }
                     }
                 }
@@ -224,7 +238,7 @@ fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? =
                     val interaction = remember { MutableInteractionSource() }
                     Column(
                         Modifier.fillMaxWidth()
-                            .then(if (startItem == null && done == state.finished.first()) Modifier.focusRequester(first) else Modifier)
+                            .then(if (startItem == null && done == state.finished.first()) Modifier.focusRequester(first).focusRequester(entry) else Modifier)
                             .background(LoomColors.Surface, RoundedCornerShape(12.dp))
                             .focusable(interactionSource = interaction)
                             .indication(interaction, FocusRingIndication(cornerRadius = 12.dp))

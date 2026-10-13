@@ -167,4 +167,16 @@ class QueueScreenTest {
         val line = transferLine(item(1, "x", JobPhase.DOWNLOADING, done = 1_000_000_000, total = 2_000_000_000, speed = 10_000_000))
         assertThat(line).isEqualTo("954 MB of 1.9 GB · 9.5 MB/s · 1 min left")
     }
+
+    /** Found by review: when the focused job left the queue (cancelled, finished), focus jumped to the top job. */
+    @Test fun focusGoesToTheJobInPlaceOfOneThatLeft() {
+        var current by mutableStateOf(sample)
+        rule.setContent { LoomTestTheme { QueueContent(current, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        press(Key.DirectionDown); press(Key.DirectionDown)
+        rule.onNodeWithTag("job-3").assertIsFocused() // Mario Kart
+        current = current.copy(active = current.active.filterNot { it.jobId == 3L }) // cancelled
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithTag("job-4").assertIsFocused() // the job now in its place, not job 1
+    }
 }
