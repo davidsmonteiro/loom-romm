@@ -7,7 +7,8 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -40,7 +41,7 @@ import ro.davidmontei.loom.ui.library.LibraryUiState
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = THOR_TOP_SCREEN)
 class LibraryScreenTest {
-    @get:Rule val rule = createComposeRule()
+    @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
 
     private val calls = mutableListOf<String>()
     private val actions = object : LibraryActions {
@@ -107,6 +108,30 @@ class LibraryScreenTest {
         rule.onRoot().performKeyInput { pressKey(key) }
         rule.mainClock.advanceTimeBy(100)
         rule.waitForIdle()
+    }
+
+    /** What the activity does with B (BACK) once nothing in Compose has used it. */
+    private fun back() {
+        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        rule.waitForIdle()
+    }
+
+    /** Found on the Thor: B on the library, the root screen, closed Loom. */
+    @Test fun bOnTheLibraryNeverClosesLoom() {
+        show()
+        calls.clear() // the search box reports its starting value when it appears
+        back()
+        assertThat(rule.activity.isFinishing).isFalse()
+        assertThat(calls).isEmpty()
+    }
+
+    @Test fun bClearsASearchFirst() {
+        state = state.copy(query = "Chrono")
+        show()
+        calls.clear()
+        back()
+        assertThat(calls).containsExactly("query:")
+        assertThat(rule.activity.isFinishing).isFalse()
     }
 
     @Test fun rendersGridAndFocusesTheFirstGame() {

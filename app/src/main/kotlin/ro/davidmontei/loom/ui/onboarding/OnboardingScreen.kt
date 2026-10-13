@@ -77,7 +77,8 @@ fun OnboardingScreen(onFinished: () -> Unit, vm: OnboardingViewModel = hiltViewM
         OnboardingStep.BACKGROUND -> OnboardingStep.ROMS_ROOT
         OnboardingStep.SYNC -> OnboardingStep.BACKGROUND
     }
-    BackHandler(enabled = previous != null) { previous?.let(vm::go) }
+    // B steps back; on the first step it does nothing rather than close Loom.
+    BackHandler { previous?.let(vm::go) }
 
     val stepNumber = state.step.ordinal
     ScreenScaffold(title = "Set up Loom", hints = hints, actions = {

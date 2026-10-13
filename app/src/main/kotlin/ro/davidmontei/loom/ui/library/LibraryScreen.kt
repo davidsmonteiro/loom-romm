@@ -35,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -168,6 +169,9 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
         InstallState.FAILED -> actions.retry(game)
         InstallState.QUEUED, InstallState.DOWNLOADING -> actions.openQueue()
     }
+
+    // The library is the root: B never closes Loom (Home does). It clears a search, if there is one.
+    BackHandler { if (state.query.isNotEmpty()) actions.setQuery("") }
 
     // Into the games when they first appear and whenever the platform, filter or layout changes,
     // but never while a search is being typed: results that vanish and come back as the query
