@@ -7,6 +7,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.hasSetTextAction
@@ -60,6 +61,7 @@ class LibraryScreenTest {
         override fun cancel(game: GameItem) { calls += "cancel:${game.id}" }
         override fun openQueue(focusJobId: Long?) { calls += if (focusJobId == null) "queue" else "queue:$focusJobId" }
         override fun openSettings() { calls += "settings" }
+        override fun repair() { calls += "repair" }
     }
 
     private fun platform(id: Int, name: String, roms: Int, installed: Int, bytes: Long) =
@@ -302,6 +304,28 @@ class LibraryScreenTest {
         state = state.copy(gridMode = false)
         show()
         rule.onNodeWithTag("game-1").assertIsFocused()
+    }
+
+    /** Found by audit: a sync error was cut to one line in the header, and nothing there led to pairing again. */
+    @Test fun aRejectedTokenShowsWhyAndLeadsToPairing() {
+        val error = "RomM rejected Loom's token. Pair again in Settings."
+        state = state.copy(header = state.header.copy(sync = CatalogSyncStatus(false, error = error, needsPairing = true)))
+        show()
+        rule.onNodeWithTag("sync-error").assertTextEquals(error)
+        rule.onNodeWithText("Not paired").assertExists() // all the header has room for
+        rule.onNodeWithTag("game-1").assertIsFocused() // games still come first
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("repair")
+    }
+
+    @Test fun otherSyncErrorsDontOfferPairing() {
+        state = state.copy(header = state.header.copy(sync = CatalogSyncStatus(false, error = "Can't reach the RomM server")))
+        show()
+        rule.onNodeWithTag("sync-error").assertTextEquals("Can't reach the RomM server")
+        rule.onNodeWithText("Sync failed").assertExists()
+        rule.onNodeWithText("Pair again").assertDoesNotExist()
     }
 
     @Test fun emptyLibraryOffersSync() {

@@ -21,6 +21,8 @@ import ro.davidmontei.loom.ui.settings.SettingsScreen
 /** Three screens plus first-run onboarding. B (back) always pops; Library is the root. */
 @Composable
 fun LoomNavHost(nav: NavHostController, onboarded: Boolean, openQueue: Boolean, onQueueOpened: () -> Unit) {
+    // Settings' "Pair again", and the library's when RomM rejects the token.
+    val repair = { nav.navigate(OnboardingRoute) { popUpTo(LibraryRoute) { inclusive = true } } }
     NavHost(navController = nav, startDestination = if (onboarded) LibraryRoute else OnboardingRoute) {
         composable<OnboardingRoute> {
             OnboardingScreen(onFinished = {
@@ -31,6 +33,7 @@ fun LoomNavHost(nav: NavHostController, onboarded: Boolean, openQueue: Boolean, 
             LibraryScreen(
                 openQueue = { jobId -> nav.navigate(QueueRoute(jobId)) { launchSingleTop = true } },
                 openSettings = { nav.navigate(SettingsRoute) { launchSingleTop = true } },
+                onRepair = repair,
             )
         }
         composable<QueueRoute> { entry ->
@@ -39,7 +42,7 @@ fun LoomNavHost(nav: NavHostController, onboarded: Boolean, openQueue: Boolean, 
         composable<SettingsRoute> {
             SettingsScreen(
                 onBack = { nav.popBackStack() },
-                onRepair = { nav.navigate(OnboardingRoute) { popUpTo(LibraryRoute) { inclusive = true } } },
+                onRepair = repair,
             )
         }
     }

@@ -66,6 +66,7 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import kotlinx.coroutines.delay
 import okhttp3.HttpUrl
+import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.catalog.CoverRef
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.storage.engine.formatBytes
@@ -113,10 +114,17 @@ interface LibraryActions {
     /** Opens the queue, on [focusJobId]'s row when given. */
     fun openQueue(focusJobId: Long? = null)
     fun openSettings()
+    /** Pairs Loom with RomM again, after RomM rejected its token. */
+    fun repair()
 }
 
 @Composable
-fun LibraryScreen(openQueue: (focusJobId: Long?) -> Unit, openSettings: () -> Unit, vm: LibraryViewModel = hiltViewModel()) {
+fun LibraryScreen(
+    openQueue: (focusJobId: Long?) -> Unit,
+    openSettings: () -> Unit,
+    onRepair: () -> Unit,
+    vm: LibraryViewModel = hiltViewModel(),
+) {
     val platforms by vm.platforms.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val games by vm.games.collectAsStateWithLifecycle()
@@ -142,6 +150,7 @@ fun LibraryScreen(openQueue: (focusJobId: Long?) -> Unit, openSettings: () -> Un
             override fun cancel(game: GameItem) { vm.cancel(game) }
             override fun openQueue(focusJobId: Long?) = openQueue(focusJobId)
             override fun openSettings() = openSettings()
+            override fun repair() = onRepair()
         }
     }
     LibraryContent(LibraryUiState(platforms, selected, games, filter, query, grid, header, coverBase, message), actions)
@@ -216,6 +225,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                         }
                     }
                     state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = LoomColors.Accent) }
+                    SyncError(state.header.sync, actions)
                     Games(state, entryGame, lastGameId, gamesFocus, onFocus = { game, focused ->
                         if (focused) { focusedId = game.id; lastGameId = game.id } else if (focusedId == game.id) focusedId = null
                     }, onOpen = { detailsFor = it }, actions = actions)
@@ -263,7 +273,8 @@ private fun HeaderActions(state: LibraryUiState, actions: LibraryActions) {
     val status = when {
         sync.running && sync.total != null -> "Syncing ${sync.fetched} of ${sync.total}"
         sync.running -> "Syncing…"
-        sync.error != null -> sync.error
+        sync.needsPairing -> "Not paired"
+        sync.error != null -> "Sync failed" // the reason has more room above the games
         state.header.lastSyncMs != null -> "Synced ${ago(state.header.lastSyncMs)}"
         else -> "Not synced yet"
     }
@@ -273,6 +284,17 @@ private fun HeaderActions(state: LibraryUiState, actions: LibraryActions) {
     IconAction(if (state.gridMode) Icons.AutoMirrored.Outlined.ViewList else Icons.Outlined.GridView, "Grid or list", actions::toggleGrid)
     IconAction(Icons.Outlined.Download, "Queue (${state.header.activeDownloads})", actions::openQueue, badge = state.header.activeDownloads)
     IconAction(Icons.Outlined.Settings, "Settings", actions::openSettings)
+}
+
+/** Why the last sync failed, in full, and the way out when RomM no longer accepts Loom's token. */
+@Composable
+private fun SyncError(sync: CatalogSyncStatus, actions: LibraryActions) {
+    val error = sync.error ?: return
+    Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+        // The button comes first, so Up from the first game lands on it.
+        if (sync.needsPairing) LoomButton("Pair again", onClick = actions::repair)
+        Text(error, style = MaterialTheme.typography.bodyMedium, color = LoomColors.Error, modifier = Modifier.weight(1f).testTag("sync-error"))
+    }
 }
 
 @Composable
