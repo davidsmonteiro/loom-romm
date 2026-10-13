@@ -66,6 +66,9 @@ object RommFixtures {
         multiple: Boolean = files.size > 1,
         updatedAt: String = "2026-10-01T10:00:00+00:00",
         cover: String = "/assets/romm/resources/roms/1/$id/cover/small.png?ts=2026-10-01 10:00:00.123+00:00",
+        titleId: String? = null,
+        saveTarget: String? = null,
+        saveTargetLayout: String? = null,
     ) = buildJsonObject {
         put("id", id); put("platform_id", platformId); put("platform_slug", platformSlug)
         put("platform_fs_slug", platformSlug); put("platform_custom_name", JsonNull)
@@ -83,6 +86,8 @@ object RommFixtures {
         putJsonArray("tags") {}
         put("revision", JsonNull)
         put("crc_hash", "1234abcd"); put("md5_hash", "0".repeat(32)); put("sha1_hash", "1".repeat(40))
+        put("title_id", titleId.json()); put("save_target", saveTarget.json())
+        put("save_target_layout", saveTargetLayout.json())
         put("has_simple_single_file", !multiple); put("has_nested_single_file", false)
         put("has_multiple_files", multiple)
         put("missing_from_fs", false); put("is_physical", false); put("has_file_on_disk", true)

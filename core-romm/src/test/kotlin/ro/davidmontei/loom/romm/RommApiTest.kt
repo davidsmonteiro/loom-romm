@@ -16,6 +16,7 @@ import ro.davidmontei.loom.romm.RommFixtures.rom
 import ro.davidmontei.loom.romm.RommFixtures.romFile
 import ro.davidmontei.loom.romm.api.RommApi
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 
 class RommApiTest {
     @get:Rule val rule = MockWebServerRule()
@@ -88,6 +89,24 @@ class RommApiTest {
         assertThat(detail.files[2].archiveMembers!!.single().crcHash).isEqualTo("cafebabe")
         assertThat(detail.files[3].category).isEqualTo("manual")
         assertThat(detail.fsSizeBytes).isEqualTo(1024)
+    }
+
+    @Test fun romsCarryTheirSaveKeys() = runTest {
+        server.enqueue(json(rom(7, platformSlug = "n3ds", fsName = "Pokemon X.3ds", titleId = "0004000000055D00",
+            saveTarget = "00040000/00055d00", saveTargetLayout = "folder-split").toString()))
+        val detail = rommCall { api.rom(7) }
+        assertThat(detail.titleId).isEqualTo("0004000000055D00")
+        assertThat(detail.saveTarget).isEqualTo("00040000/00055d00")
+        assertThat(detail.saveTargetLayout).isEqualTo("folder-split")
+    }
+
+    /** A server that predates these fields leaves them out; the ROM still parses. */
+    @Test fun romsWithoutSaveKeysStillParse() = runTest {
+        val old = JsonObject(rom(7) - setOf("title_id", "save_target", "save_target_layout"))
+        server.enqueue(json(old.toString()))
+        val detail = rommCall { api.rom(7) }
+        assertThat(detail.titleId).isNull()
+        assertThat(detail.saveTargetLayout).isNull()
     }
 
     @Test fun romIdentifiersParse() = runTest {

@@ -73,6 +73,15 @@ data class RomDto(
     @SerialName("crc_hash") val crcHash: String?,
     @SerialName("md5_hash") val md5Hash: String?,
     @SerialName("sha1_hash") val sha1Hash: String?,
+    /**
+     * The game's own id where RomM could read one at scan time (3DS, Switch, PSP, …). Null for
+     * compressed ROMs, and absent (read as null) on older servers that don't send these three.
+     */
+    @SerialName("title_id") val titleId: String?,
+    /** Where the game keeps its save, keyed as [saveTargetLayout] says, e.g. "0004000e/0011c500". */
+    @SerialName("save_target") val saveTarget: String?,
+    /** `SaveTargetLayout`: folder-exact, folder-prefix, file-exact, file-prefix or folder-split. */
+    @SerialName("save_target_layout") val saveTargetLayout: String?,
     @SerialName("has_simple_single_file") val hasSimpleSingleFile: Boolean,
     @SerialName("has_nested_single_file") val hasNestedSingleFile: Boolean,
     @SerialName("has_multiple_files") val hasMultipleFiles: Boolean,
