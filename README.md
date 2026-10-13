@@ -94,6 +94,12 @@ Behind the scenes:
   - Two RomM games that would get the same name are told apart with a ` (romm-<id>)` suffix.
 - **Games you already had.** Games already on your card in the expected place, with a matching size, are picked up as "On device" without downloading.
 
+## Preparing your RomM library
+
+Loom installs what RomM serves, so a few things are best fixed in the library itself:
+- **Multi-disc games:** keep each one in its own folder in RomM (`roms/psx/Final Fantasy IX/` holding the discs). RomM then serves it as one game and Loom installs it as one `Name.m3u/` entry. Loose `Game (Disc 1).chd`, `Game (Disc 2).chd` files are listed by RomM, and installed, as separate games.
+- **Sidecar files** such as PlayStation LibCrypt `.sbi` files: keep them in the game's folder next to its disc. Loose in the platform folder, RomM lists each as a game of its own, and the disc gets installed without it.
+
 ## Platform folders
 
 Defaults map RomM's platform slugs to Cocoon's folder names. For example, `ngc → gc`, `3ds → n3ds`, `sms → mastersystem`, `dc → dreamcast`. RomM's single `arcade` slug is split by its server folder into `mame`, `fbneo`, `naomi` and `atomiswave`. The defaults are in [`core-storage/src/main/resources/platform-mapping.default.json`](core-storage/src/main/resources/platform-mapping.default.json); tests check them against RomM 5.3.1's slug list and Cocoon's `platforms/index.json`.
@@ -155,7 +161,7 @@ Long-press Loom's icon for the **Sync library** and **Downloads** shortcuts.
 | "Needs X free on the SD card" | Offload something (X on an installed game) and retry from the queue. |
 | Downloads stop in the background | Allow background downloads in Settings → Downloads. Opening Loom resumes them either way. |
 | "RomM rejected Loom's token" | The token expired or was revoked. Use Settings → Server & pairing → Pair again. Your library and games stay. |
-| A multi-disc game shows up as one game per disc | RomM lists loose `(Disc N)` files as separate games; keep each multi-disc game in its own folder in RomM so it arrives as one `Name.m3u/` entry. See [docs/ROADMAP.md](docs/ROADMAP.md#needs-a-decision). |
+| A multi-disc game shows up as one game per disc | RomM lists loose `(Disc N)` files as separate games; see [Preparing your RomM library](#preparing-your-romm-library). |
 | Multi-disc PS1 games don't start in DuckStation via Cocoon | A known Cocoon issue with relative `.m3u` paths for DuckStation's default player (CocoonFE discussion #414). |
 
 ## Development

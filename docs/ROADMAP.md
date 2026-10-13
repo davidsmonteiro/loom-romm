@@ -51,15 +51,5 @@ Risks:
 - The top screen shows cover art and details for the focused game. The bottom screen shows the list and the queue.
 - With a single display, Loom falls back to today's layout.
 
-## Needs a decision
-
-Found while testing against a real 23,000-game library on the Thor.
-
-### Multi-disc games stored as one RomM entry per disc
-RomM lists `Final Fantasy IX (Europe) (Disc 1).chd` … `(Disc 4).chd` as four games when the discs sit loose in the platform folder; it only groups discs kept in a folder per game. Loom's `Name.m3u/` layout applies to ROMs with several files, so such discs install as separate games in Cocoon. Two ways out:
-- Reorganise in RomM (one folder per multi-disc game). Loom already installs those as one `Name.m3u/` entry.
-- Teach Loom to group sibling ROMs whose names differ only by `(Disc N)` into one install with a generated playlist. This makes an install span several ROMs, which the catalog and offload don't model today.
-
-### Sidecar files listed as games
-RomM lists PlayStation LibCrypt `.sbi` files (about 450 bytes) as games of their own: 88 of them in this library. Installing a `.chd` without its `.sbi` breaks LibCrypt-protected discs in DuckStation. Loom could hide these entries and fetch a matching `.sbi` alongside its disc, or the files could move into per-game folders in RomM.
-
+## Later: design refresh
+- Rework the logo and the overall look (palette, type, layout) so Loom sits naturally next to Cocoon. Phase 1's warp-and-weft logo and dark palette are placeholders until then.
