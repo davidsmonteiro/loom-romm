@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -274,5 +275,31 @@ class SettingsScreenTest {
         press(Key.DirectionCenter) // A goes into it
         rule.onNodeWithText("snes").assertExists()
         assertThat(calls.filter { it.startsWith("root:") }).isEmpty()
+    }
+
+    /** The top of the settings pane: anything above it has scrolled out of view. */
+    private fun paneTop() = rule.onNodeWithTag("settings-sections").getBoundsInRoot().top
+
+    /** Found by audit: back on a section's first control, the text above it stayed scrolled out of view. */
+    @Test fun aSectionsFirstControlsShowItsHeading() {
+        state = sample.copy(mapping = sample.mapping + sample.mapping.map { it.copy(platform = it.platform.copy(
+            platform = it.platform.platform.copy(id = it.platform.platform.id + 10, displayName = it.platform.platform.displayName + " 2"))) })
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown) // Platform folders
+        press(Key.DirectionCenter) // Export
+        repeat(8) { press(Key.DirectionDown) } // down the platforms, scrolling the pane
+        repeat(8) { press(Key.DirectionUp) } // to Export / Import
+        assertThat(rule.onNodeWithText("WHERE EACH PLATFORM'S GAMES GO").getBoundsInRoot().top).isAtLeast(paneTop())
+    }
+
+    @Test fun theFolderBrowsersToggleShowsTheRomsFolder() {
+        show()
+        press(Key.DirectionDown) // Storage
+        press(Key.DirectionCenter) // Change folder
+        press(Key.DirectionCenter) // open the browser, on the SD card
+        repeat(2) { press(Key.DirectionDown) } // down the games on the device, scrolling the pane
+        repeat(3) { press(Key.DirectionUp) }
+        rule.onNodeWithText("Close folder browser").assertIsFocused()
+        assertThat(rule.onNodeWithText("ROMS FOLDER").getBoundsInRoot().top).isAtLeast(paneTop())
     }
 }

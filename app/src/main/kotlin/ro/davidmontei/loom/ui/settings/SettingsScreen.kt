@@ -11,6 +11,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -33,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -52,6 +56,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import ro.davidmontei.loom.data.download.VolumeInfo
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.mapping.ArchivePolicy
@@ -215,6 +220,22 @@ private fun ReturnFocusOnClose(open: Boolean, opener: () -> FocusRequester?) {
     }
 }
 
+/**
+ * A section's heading and explanation together with its first controls. Focus arriving on those
+ * controls shows the whole block: moving focus only scrolls as far as the control itself, and with
+ * nothing focusable above it the text could never be brought back with the pad.
+ */
+@Composable
+private fun SectionTop(content: @Composable ColumnScope.() -> Unit) {
+    val top = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
+    Column(
+        Modifier.bringIntoViewRequester(top).onFocusChanged { if (it.hasFocus) scope.launch { top.bringIntoView() } },
+        verticalArrangement = Arrangement.spacedBy(Space.m),
+        content = content,
+    )
+}
+
 @Composable
 private fun ServerSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
     val first = modifier
@@ -274,15 +295,17 @@ private fun StorageSection(state: SettingsUiState, actions: SettingsActions, mod
     var pickerFocused by remember { mutableStateOf(false) }
     BackHandler(enabled = picking && (toggleFocused || pickerFocused)) { picking = false }
     val s = state.storage
-    SectionHeader("ROMs folder")
-    Text(s.romsRoot ?: "Not set", style = MaterialTheme.typography.titleSmall)
-    if (s.freeBytes != null && s.totalBytes != null) {
-        Text("${s.volumeLabel ?: "Storage"}: ${formatBytes(s.freeBytes)} free of ${formatBytes(s.totalBytes)}",
-            style = MaterialTheme.typography.bodyMedium.tabular(), color = LoomColors.TextMuted)
+    SectionTop {
+        SectionHeader("ROMs folder")
+        Text(s.romsRoot ?: "Not set", style = MaterialTheme.typography.titleSmall)
+        if (s.freeBytes != null && s.totalBytes != null) {
+            Text("${s.volumeLabel ?: "Storage"}: ${formatBytes(s.freeBytes)} free of ${formatBytes(s.totalBytes)}",
+                style = MaterialTheme.typography.bodyMedium.tabular(), color = LoomColors.TextMuted)
+        }
+        if (!state.allFilesAccess) Text("All files access is off: Loom can't write games. Turn it on in Android settings.", color = LoomColors.Error)
+        LoomButton(if (picking) "Close folder browser" else "Change folder", onClick = { picking = !picking },
+            modifier = first.focusRequester(changeFolder).onFocusChanged { toggleFocused = it.isFocused })
     }
-    if (!state.allFilesAccess) Text("All files access is off: Loom can't write games. Turn it on in Android settings.", color = LoomColors.Error)
-    LoomButton(if (picking) "Close folder browser" else "Change folder", onClick = { picking = !picking },
-        modifier = first.focusRequester(changeFolder).onFocusChanged { toggleFocused = it.isFocused })
     if (picking) {
         Text("Games already installed stay where they are; Loom looks for games it knows in the new folder.", color = LoomColors.TextMuted,
             style = MaterialTheme.typography.bodySmall)
@@ -318,12 +341,14 @@ private fun MappingSection(state: SettingsUiState, actions: SettingsActions, mod
     val rowFocus = remember { mutableMapOf<Int, FocusRequester>() }
     var editedId by remember { mutableStateOf<Int?>(null) }
     ReturnFocusOnClose(editing != null) { editedId?.let(rowFocus::get) }
-    SectionHeader("Where each platform's games go")
-    Text("Folder names must match the system folders Cocoon scans. Platforms marked “check” use the server's folder name because Loom has no default for them.",
-        color = LoomColors.TextMuted, style = MaterialTheme.typography.bodySmall)
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-        LoomButton("Export", onClick = actions::exportMapping, modifier = first)
-        LoomButton("Import", onClick = actions::importMapping)
+    SectionTop {
+        SectionHeader("Where each platform's games go")
+        Text("Folder names must match the system folders Cocoon scans. Platforms marked “check” use the server's folder name because Loom has no default for them.",
+            color = LoomColors.TextMuted, style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+            LoomButton("Export", onClick = actions::exportMapping, modifier = first)
+            LoomButton("Import", onClick = actions::importMapping)
+        }
     }
     Text("File: ${actions.exportPath}", style = MaterialTheme.typography.labelMedium, color = LoomColors.TextFaint)
     if (state.mapping.isEmpty()) Text("Sync the library to see your platforms here.", color = LoomColors.TextMuted)
