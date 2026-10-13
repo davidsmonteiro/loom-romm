@@ -79,7 +79,7 @@ fun OnboardingScreen(onFinished: () -> Unit, vm: OnboardingViewModel = hiltViewM
         if (stepNumber > 0) Text("Step $stepNumber of ${OnboardingStep.entries.size - 1}", style = MaterialTheme.typography.labelLarge.tabular(), color = LoomColors.TextMuted)
     }) {
         val first = remember { FocusRequester() }
-        InitialFocus(first, state.step, state.pairMode)
+        InitialFocus(first, state.step, state.pairMode, state.pairedAs)
         Column(
             // Padding keeps focus rings inside the scroll container's clip.
             Modifier.fillMaxWidth().widthIn(max = 900.dp).verticalScroll(rememberScrollState()).padding(8.dp),
@@ -148,6 +148,14 @@ private fun Server(state: OnboardingState, vm: OnboardingViewModel, first: Focus
 
 @Composable
 private fun Pair(state: OnboardingState, vm: OnboardingViewModel, first: FocusRequester) {
+    if (state.pairedAs != null) {
+        Title("Paired with RomM", "Loom is signed in as ${state.pairedAs}.")
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+            LoomButton("Continue", onClick = { vm.go(OnboardingStep.STORAGE) }, primary = true, modifier = Modifier.focusRequester(first))
+            LoomButton("Pair again", onClick = vm::pairAgain)
+        }
+        return
+    }
     val session = state.session.takeIf { state.pairMode == PairMode.DEVICE_CODE }
     // The QR code sits beside the whole step rather than under it: nothing below the chips takes focus, so on a
     // gamepad anything pushed off the bottom of the screen could never be scrolled to.

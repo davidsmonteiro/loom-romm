@@ -36,6 +36,19 @@ enum class OnboardingStep { WELCOME, SERVER, PAIR, STORAGE, ROMS_ROOT, BACKGROUN
 
 enum class PairMode { DEVICE_CODE, PAIR_CODE, PASTE_TOKEN }
 
+/**
+ * The first step not done yet. Onboarding opens here, so a setup the process died in part-way
+ * (Android may kill Loom while the user is in its settings) picks up where it was instead of
+ * pairing a second time, and pairing moves on from here too.
+ */
+internal fun resumeStep(hasServer: Boolean, paired: Boolean, hasAllFilesAccess: Boolean, hasRomsRoot: Boolean): OnboardingStep = when {
+    !hasServer -> OnboardingStep.WELCOME
+    !paired -> OnboardingStep.PAIR
+    !hasAllFilesAccess -> OnboardingStep.STORAGE
+    !hasRomsRoot -> OnboardingStep.ROMS_ROOT
+    else -> OnboardingStep.BACKGROUND
+}
+
 data class OnboardingState(
     val step: OnboardingStep = OnboardingStep.WELCOME,
     val addressInput: String = "",
@@ -78,16 +91,12 @@ class OnboardingViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             val s = settings.snapshot()
+            val creds = credentials.current.value
             _state.update {
-                it.copy(
-                    addressInput = s.server?.url?.toString().orEmpty(),
-                    base = s.server?.url,
-                    romsRoot = s.romsRoot,
-                    // Re-pairing from Settings: the server is known, go straight to the code.
-                    step = if (s.server != null && credentials.current.value == null) OnboardingStep.PAIR else OnboardingStep.WELCOME,
-                )
+                it.copy(addressInput = s.server?.url?.toString().orEmpty(), base = s.server?.url, romsRoot = s.romsRoot, pairedAs = creds?.username)
             }
-            if (_state.value.step == OnboardingStep.PAIR) startDeviceAuth()
+            // Re-pairing from Settings forgets the token first, so this lands on the code.
+            go(resumeStep(s.server != null, creds != null, volumes.hasAllFilesAccess(), s.romsRoot != null))
         }
         viewModelScope.launch { sync.status.collect { st -> _state.update { it.copy(sync = st) } } }
     }
@@ -95,7 +104,7 @@ class OnboardingViewModel @Inject constructor(
     fun go(step: OnboardingStep) {
         _state.update { it.copy(step = step) }
         when (step) {
-            OnboardingStep.PAIR -> if (_state.value.session == null && _state.value.pairMode == PairMode.DEVICE_CODE) startDeviceAuth()
+            OnboardingStep.PAIR -> if (_state.value.pairedAs == null && _state.value.session == null && _state.value.pairMode == PairMode.DEVICE_CODE) startDeviceAuth()
             OnboardingStep.STORAGE -> refreshStorage()
             OnboardingStep.ROMS_ROOT -> refreshStorage()
             OnboardingStep.SYNC -> sync.enqueue(full = true)
@@ -134,6 +143,12 @@ class OnboardingViewModel @Inject constructor(
                 _state.update { it.copy(probing = false, serverError = "Couldn't reach RomM: ${e.message}") }
             }
         }
+    }
+
+    /** Back on the pairing step after pairing: replace the token with a new one. */
+    fun pairAgain() {
+        _state.update { it.copy(pairedAs = null, pairMode = PairMode.DEVICE_CODE) }
+        startDeviceAuth()
     }
 
     fun setPairMode(mode: PairMode) {
@@ -191,8 +206,7 @@ class OnboardingViewModel @Inject constructor(
     private suspend fun paired(creds: PairedCredentials) {
         credentials.save(creds)
         _state.update { it.copy(pairing = false, pairedAs = creds.username, session = null) }
-        val next = if (settings.snapshot().onboardingComplete) OnboardingStep.SYNC else OnboardingStep.STORAGE
-        go(next)
+        go(resumeStep(hasServer = true, paired = true, volumes.hasAllFilesAccess(), _state.value.romsRoot != null))
     }
 
     fun refreshStorage() {
