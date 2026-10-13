@@ -3,6 +3,7 @@ package ro.davidmontei.loom.data.catalog
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.core.graphics.scale
 import androidx.hilt.work.HiltWorker
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -123,7 +124,7 @@ class CoverStore(private val dir: File, private val http: OkHttpClient) {
                 ?: return null
             val scale = max(CARD_WIDTH / decoded.width.toFloat(), CARD_HEIGHT / decoded.height.toFloat())
             if (scale >= 1f) return decoded
-            val scaled = Bitmap.createScaledBitmap(decoded, (decoded.width * scale).roundToInt(), (decoded.height * scale).roundToInt(), true)
+            val scaled = decoded.scale((decoded.width * scale).roundToInt(), (decoded.height * scale).roundToInt())
             if (scaled !== decoded) decoded.recycle()
             return scaled
         }
