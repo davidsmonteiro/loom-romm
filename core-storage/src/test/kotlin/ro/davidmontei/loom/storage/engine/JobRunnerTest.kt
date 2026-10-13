@@ -158,8 +158,9 @@ class JobRunnerTest {
 
     @Test fun archiveIsExtractedAndCheckedAgainstRommMembers() = runBlocking {
         val nds = random(80_000, 4)
-        val archive = zip("Mario Kart DS (USA).nds" to nds, "__MACOSX/._junk" to ByteArray(10))
-        val members = listOf(ArchiveMember("Mario Kart DS (USA).nds", nds.size.toLong(), crc(nds), null, null))
+        // Named differently inside the archive: the install takes the game's name.
+        val archive = zip("mkds.nds" to nds, "__MACOSX/._junk" to ByteArray(10))
+        val members = listOf(ArchiveMember("mkds.nds", nds.size.toLong(), crc(nds), null, null))
         val plan = singleFile(30, "nds", "nds", "Mario Kart DS (USA).zip", file(300, "Mario Kart DS (USA).zip", archive, "roms/nds", members = members))
         assertThat(plan.parts.single().extract).isTrue()
 

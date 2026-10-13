@@ -5,7 +5,7 @@ import ro.davidmontei.loom.storage.mapping.MultiDiscLayout
 import java.util.Locale
 
 /** A file that will end up in the install: a downloaded part or a member of an unpacked archive. */
-data class PayloadFile(val relPath: String, val size: Long)
+data class PayloadFile(val relPath: String, val size: Long, val unpacked: Boolean = false)
 
 @Serializable
 enum class EntryKind { FILE, DIRECTORY }
@@ -33,7 +33,8 @@ data class Layout(
  *
  * | payload                                   | entry                                      |
  * |-------------------------------------------|--------------------------------------------|
- * | one file (after dropping junk)            | that file                                  |
+ * | one file (after dropping junk)            | that file; named after the game if it came |
+ * |                                           | out of an archive                          |
  * | discs: ≥1 launchable + its tracks/sidecars| `Name.m3u/` (or `Name/`) with `Name.m3u`   |
  * | anything else                             | `Name/` mirroring the ROM's folder         |
  *
@@ -65,7 +66,15 @@ object LayoutDecider {
 
         if (files.size == 1) {
             val only = files.single()
-            val name = NameSanitizer.sanitize(only.relPath.substringAfterLast('/'))
+            val fileName = only.relPath.substringAfterLast('/')
+            // Unpacked, the file goes by the game's name rather than whatever it was called inside
+            // the archive ("SLUS-20115 (1.00).bin"); Cocoon shows file names. A downloaded file
+            // already has RomM's name, compound extensions (".p8.png") included.
+            val name = if (only.unpacked) {
+                NameSanitizer.sanitize(stem + fileName.lastIndexOf('.').takeIf { it > 0 }?.let { fileName.substring(it) }.orEmpty())
+            } else {
+                NameSanitizer.sanitize(fileName)
+            }
             val hiddenBin = Discs.ext(name) == "bin" && systemFolder in COCOON_HIDES_BIN
             if (!hiddenBin) {
                 return Layout(name, EntryKind.FILE, listOf(Placement(source(only.relPath), "")), emptyList(),

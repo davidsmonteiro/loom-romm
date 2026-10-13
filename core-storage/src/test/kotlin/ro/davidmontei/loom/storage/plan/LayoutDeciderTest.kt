@@ -24,6 +24,18 @@ class LayoutDeciderTest {
         assertThat(l.placements).containsExactly(Placement("Chrono Trigger (USA).sfc", ""))
     }
 
+    /** Found on the Thor: a PS2 7z held "SLUS-20115 (1.00).bin", and that is what Cocoon listed. */
+    @Test fun aFileUnpackedAloneTakesTheGamesName() {
+        val l = decide("Super Bust-A-Move (USA)", listOf(PayloadFile("SLUS-20115 (1.00).bin", 100, unpacked = true)), folder = "ps2")
+        assertThat(l.entryName).isEqualTo("Super Bust-A-Move (USA).bin")
+        assertThat(l.placements).containsExactly(Placement("SLUS-20115 (1.00).bin", ""))
+    }
+
+    @Test fun aDownloadedFileKeepsRommsNameAndCompoundExtension() {
+        val l = decide("celeste", files("celeste.p8.png"), folder = "pico8")
+        assertThat(l.entryName).isEqualTo("celeste.p8.png")
+    }
+
     @Test fun nestedSingleFileIsFlattened() {
         val l = decide("Metroid Prime", files("Metroid Prime/Metroid Prime.rvz"), folder = "gc")
         assertThat(l.kind).isEqualTo(EntryKind.FILE)

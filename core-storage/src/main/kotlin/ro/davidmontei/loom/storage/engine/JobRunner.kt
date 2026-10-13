@@ -266,7 +266,7 @@ class JobRunner(
                     val rel = file.relativeTo(dir).toString().replace('\\', '/')
                     val key = if (parts.size > 1) "${part.romFileId}/$rel" else rel
                     sources[key] = file
-                    PayloadFile(key, Files.size(file))
+                    PayloadFile(key, Files.size(file), unpacked = true)
                 }
             } else {
                 sources[part.plan.relPath] = jobDir(job).resolve("dl").resolve(part.stagingName)
