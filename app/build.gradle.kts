@@ -10,8 +10,8 @@ plugins {
     alias(libs.plugins.room)
 }
 
-// Release signing material lives in a gitignored keystore.properties. Without it the release build
-// stays unsigned instead of failing; debug builds are unaffected.
+// Release signing material lives in a gitignored keystore.properties (CI writes one from repository
+// secrets). Without it the release build is signed with the debug key; debug builds always are.
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) FileInputStream(keystorePropsFile).use { load(it) }
@@ -24,16 +24,24 @@ val gitVersionCode: Int = providers.exec {
     isIgnoreExitValue = true // no commits yet / no git → fall back to 1
 }.standardOutput.asText.get().trim().toIntOrNull()?.coerceAtLeast(1) ?: 1
 
+// versionName comes from the latest v* tag: "0.2.0" on the tagged commit, "0.2.0-3-gabc1234" after
+// it, plus "-dirty" with uncommitted changes. Obtainium compares it with the release tag.
+val gitVersionName: String = providers.exec {
+    commandLine("git", "describe", "--tags", "--match", "v[0-9]*", "--dirty")
+    isIgnoreExitValue = true // no tag yet / no git → fall back to 0.0.0
+}.standardOutput.asText.get().trim().removePrefix("v").ifEmpty { "0.0.0" }
+
 android {
     namespace = "ro.davidmontei.loom"
     compileSdk = 37
+    buildToolsVersion = "37.0.0" // also what the release workflow verifies APKs with
 
     defaultConfig {
         applicationId = "ro.davidmontei.loom"
         minSdk = 30
         targetSdk = 37
         versionCode = gitVersionCode
-        versionName = "0.1.0"
+        versionName = gitVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -50,6 +58,8 @@ android {
     }
 
     buildTypes {
+        // Debug builds keep the debug key: a debuggable build signed with the release key would install
+        // over a release and open its data to run-as.
         debug {
             isMinifyEnabled = false
         }
@@ -64,6 +74,13 @@ android {
             // over a debug build in place (keeping pairing and data) for testing R8 on the device.
             signingConfig = signingConfigs.getByName(if (hasReleaseSigning) "release" else "debug")
         }
+    }
+
+    lint {
+        // Warnings fail the build, so lint stays at zero. Version hints are only informational: they'd
+        // otherwise turn the build red by themselves whenever a dependency or Android ships a release.
+        warningsAsErrors = true
+        informational += setOf("GradleDependency", "AndroidGradlePluginVersion", "OldTargetApi")
     }
 
     compileOptions {
