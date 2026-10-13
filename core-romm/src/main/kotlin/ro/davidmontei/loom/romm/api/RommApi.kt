@@ -147,10 +147,19 @@ interface RommApi {
     @POST("api/saves/{id}/downloaded")
     suspend fun confirmSaveDownloaded(@Path("id") saveId: Int, @Body body: SaveDeviceRequest): SaveDto
 
-    /** Stops syncing this save's slot on the device: negotiate answers `no_op` for it. */
+    /**
+     * Marks this one save version untracked on the device: negotiate answers `no_op` for it, with
+     * no server time or hash. It is not a per-game switch. In 5.3.1 the mark is per save id, so
+     * once any client uploads a newer head, negotiate offers that head again. Untracking a version
+     * the device never synced also records a sync row stamped "now", and [trackSave] leaves that
+     * time, so RomM then treats the device as holding a version it never downloaded. Loom keeps
+     * any "don't sync this game here" choice in its own state and leaves those games out before
+     * deciding.
+     */
     @POST("api/saves/{id}/untrack")
     suspend fun untrackSave(@Path("id") saveId: Int, @Body body: SaveDeviceRequest): SaveDto
 
+    /** Clears [untrackSave]'s mark on this save version; the sync row's time stays as it was. */
     @POST("api/saves/{id}/track")
     suspend fun trackSave(@Path("id") saveId: Int, @Body body: SaveDeviceRequest): SaveDto
 
