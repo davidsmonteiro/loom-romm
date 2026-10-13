@@ -27,6 +27,17 @@ class PlatformMappingTest {
         }
     }
 
+    @Test fun everyAliasIsAFolderNameFrontendsUse() {
+        val esde = resourceLines("/esde-folders.txt").map { it.substringBefore('|') }.toSet()
+        val common = setOf("3ds", "ps1", "gamecube", "ngc", "dc", "gg", "sms", "lynx", "jaguar", "cdi")
+        shipped.platforms.filter { it.aliases != null }.forEach { entry ->
+            val aliases = entry.aliases!!
+            assertWithMessage("${entry.match} lists each alias once").that(aliases).containsNoDuplicates()
+            assertWithMessage("${entry.match}'s aliases differ from its folder").that(aliases).doesNotContain(entry.folder)
+            aliases.forEach { assertWithMessage("'$it' (${entry.match}) is an ES-DE or common folder").that(esde + common).contains(it) }
+        }
+    }
+
     @Test fun defaultsHaveNoDuplicateMatches() {
         val matches = shipped.platforms.map { it.match }
         assertThat(matches).containsNoDuplicates()
@@ -47,6 +58,21 @@ class PlatformMappingTest {
         val mapper = PlatformMapper(shipped)
         assertThat(mapper.resolve("pico", "pico8").folder).isEqualTo("pico8") // RomM pico = PICO-8
         assertThat(mapper.resolve("sega-pico", "segapico").folder).isEqualTo("pico") // Cocoon pico = Sega Pico
+    }
+
+    @Test fun candidatesAreTheFolderThenItsAliases() {
+        val arcade = PlatformMapper(shipped).resolve("arcade", "arcade")
+        assertThat(arcade.candidates).containsExactly("mame", "arcade", "fbneo", "fba").inOrder()
+        assertThat(arcade.folderChosen).isFalse()
+    }
+
+    @Test fun onlyAFolderTheUserSetCountsAsChosen() {
+        val policyOnly = PlatformMappingEntry(PlatformMatch(slug = "arcade"), archive = ArchivePolicy.EXTRACT)
+        assertThat(PlatformMapper(shipped, listOf(policyOnly)).resolve("arcade", "arcade").folderChosen).isFalse()
+        val folder = PlatformMappingEntry(PlatformMatch(slug = "arcade"), folder = "arcade")
+        val chosen = PlatformMapper(shipped, listOf(folder)).resolve("arcade", "arcade")
+        assertThat(chosen.folderChosen).isTrue()
+        assertThat(chosen.folder).isEqualTo("arcade")
     }
 
     @Test fun arcadeIsSplitByServerFolder() {

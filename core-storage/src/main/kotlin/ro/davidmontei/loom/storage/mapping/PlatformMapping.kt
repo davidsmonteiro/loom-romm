@@ -5,6 +5,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import ro.davidmontei.loom.storage.plan.NameSanitizer
 
 /** What to do with a ROM file that is an archive (.zip, .7z). */
 @Serializable
@@ -42,6 +43,11 @@ data class PlatformMatch(
 data class PlatformMappingEntry(
     val match: PlatformMatch,
     val folder: String? = null,
+    /**
+     * Other names the same system folder goes by (ES-DE's, other frontends'). Loom looks for these
+     * on the card before settling on [folder], and asks when more than one could be the one.
+     */
+    val aliases: List<String>? = null,
     val archive: ArchivePolicy? = null,
     val multiDisc: MultiDiscLayout? = null,
     /** RomM file categories to download; "game" covers files with no category. */
@@ -83,6 +89,10 @@ data class ResolvedPlatform(
     val include: Set<String>,
     val saveDir: String?,
     val source: MappingSource,
+    /** True when the user picked [folder] (not just other settings), so nothing should second-guess it. */
+    val folderChosen: Boolean = false,
+    /** Folder names this platform's games may already live under on the card: [folder] first, then its aliases. */
+    val candidates: List<String> = listOf(folder),
 ) {
     /** True when a RomM file with [category] should be downloaded. */
     fun includes(category: String?): Boolean =
@@ -119,6 +129,7 @@ class PlatformMapper(
             defaults.platforms.find { it.match.slug == slug && it.match.fsSlug == null },
         )
         val folderEntry = chain.firstOrNull { it.folder != null }
+        val folder = folderEntry?.folder ?: FolderNames.fromServer(fsSlug)
         val userTouched = chain.any { it in overrides }
         val source = when {
             userTouched -> MappingSource.USER
@@ -127,12 +138,15 @@ class PlatformMapper(
         }
         val d = defaults.defaults
         return ResolvedPlatform(
-            folder = folderEntry?.folder ?: FolderNames.fromServer(fsSlug),
+            folder = folder,
             archive = chain.firstNotNullOfOrNull { it.archive } ?: d.archive,
             multiDisc = chain.firstNotNullOfOrNull { it.multiDisc } ?: d.multiDisc,
             include = (chain.firstNotNullOfOrNull { it.include } ?: d.include).toSet(),
             saveDir = chain.firstNotNullOfOrNull { it.saveDir },
             source = source,
+            folderChosen = folderEntry != null && folderEntry in overrides,
+            candidates = (listOf(folder) + chain.firstNotNullOfOrNull { it.aliases }.orEmpty())
+                .distinctBy { FolderNames.key(it) },
         )
     }
 
@@ -146,6 +160,7 @@ class PlatformMapper(
 
     private fun merge(base: PlatformMappingEntry, o: PlatformMappingEntry) = base.copy(
         folder = o.folder ?: base.folder,
+        aliases = o.aliases ?: base.aliases,
         archive = o.archive ?: base.archive,
         multiDisc = o.multiDisc ?: base.multiDisc,
         include = o.include ?: base.include,
@@ -173,7 +188,9 @@ object MappingJson {
             throw InvalidMappingException("Mapping file version ${file.schemaVersion} is newer than this Loom understands")
         }
         file.platforms.forEach { entry ->
-            entry.folder?.let { FolderNames.validate(it)?.let { problem -> throw InvalidMappingException("${entry.match}: $problem") } }
+            (listOfNotNull(entry.folder) + entry.aliases.orEmpty()).forEach { name ->
+                FolderNames.validate(name)?.let { problem -> throw InvalidMappingException("${entry.match}: $problem") }
+            }
             entry.include?.forEach { c ->
                 if (c !in ROM_FILE_CATEGORIES) throw InvalidMappingException("${entry.match}: unknown file category '$c'")
             }
@@ -202,6 +219,9 @@ object FolderNames {
         name.any { it in "*?\"<>|:" } -> "folder name contains a character SD cards don't allow"
         else -> null
     }
+
+    /** Comparison key: SD cards treat "MAME" and "mame" as one folder. */
+    fun key(name: String): String = NameSanitizer.key(name)
 
     /** Server folder names are already single components; this only guards against odd ones. */
     fun fromServer(fsSlug: String): String =

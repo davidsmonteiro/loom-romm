@@ -1,0 +1,180 @@
+# ES-DE system folders (folder|full system name|scraper platform), from the systeminfo.txt files of
+# ES-DE's ROM folder template on an AYN Thor, 2026-10-13
+3do|3DO Interactive Multiplayer|3do
+adam|Coleco Adam|adam
+amiga|Commodore Amiga|amiga
+amiga1200|Commodore Amiga 1200|amiga
+amiga600|Commodore Amiga 600|amiga
+amigacd32|Commodore Amiga CD32|amigacd32
+amstradcpc|Amstrad CPC|amstradcpc
+androidapps|Android Apps|android
+androidgames|Android Games|android
+apple2|Apple II|apple2
+apple2gs|Apple IIGS|apple2gs
+arcade|Arcade|arcade
+arcadia|Emerson Arcadia 2001|arcadia
+archimedes|Acorn Archimedes|archimedes
+arduboy|Arduboy Miniature Game System|arduboy
+astrocde|Bally Astrocade|astrocde
+atari2600|Atari 2600|atari2600
+atari5200|Atari 5200|atari5200
+atari7800|Atari 7800 ProSystem|atari7800
+atari800|Atari 800|atari800
+atarijaguar|Atari Jaguar|atarijaguar
+atarilynx|Atari Lynx|atarilynx
+atarist|Atari ST|atarist
+atarixe|Atari XE|atarixe
+atomiswave|Sammy Corporation Atomiswave|arcade
+bbcmicro|Acorn Computers BBC Micro|bbcmicro
+c64|Commodore 64|c64
+cdimono1|Philips CD-i|cdimono1
+cdtv|Commodore CDTV|cdtv
+chailove|ChaiLove Game Engine|love
+channelf|Fairchild Channel F|channelf
+coco|Tandy Color Computer|coco
+colecovision|Coleco ColecoVision|colecovision
+consolearcade|Console Arcade Systems|arcade
+cps|Capcom Play System|arcade
+cps1|Capcom Play System I|arcade
+cps2|Capcom Play System II|arcade
+cps3|Capcom Play System III|arcade
+crvision|VTech CreatiVision|crvision
+daphne|Daphne Arcade LaserDisc Emulator|
+doom|Doom|
+dos|DOS (PC)|dos
+dragon32|Dragon Data Dragon 32|dragon32
+dreamcast|Sega Dreamcast|dreamcast
+easyrpg|EasyRPG Game Engine|easyrpg
+electron|Acorn Electron|electron
+emulators|Emulators|android
+epic|Epic Games Store|android
+famicom|Nintendo Family Computer|famicom
+fba|FinalBurn Alpha|arcade
+fbneo|FinalBurn Neo|arcade
+fds|Nintendo Famicom Disk System|fds
+flash|Adobe Flash|flash
+fm7|Fujitsu FM-7|fm7
+fmtowns|Fujitsu FM Towns|fmtowns
+gamate|Bit Corporation Gamate|gamate
+gameandwatch|Nintendo Game and Watch|gameandwatch
+gamecom|Tiger Electronics Game.com|gamecom
+gamegear|Sega Game Gear|gamegear
+gb|Nintendo Game Boy|gb
+gba|Nintendo Game Boy Advance|gba
+gbc|Nintendo Game Boy Color|gbc
+gc|Nintendo GameCube|gc
+genesis|Sega Genesis|genesis
+gmaster|Hartung Game Master|gmaster
+gx4000|Amstrad GX4000|gx4000
+intellivision|Mattel Electronics Intellivision|intellivision
+j2me|Java 2 Micro Edition (J2ME)|android
+laserdisc|LaserDisc Games|
+lcdgames|LCD Handheld Games|
+lowresnx|LowRes NX Fantasy Console|lowresnx
+lutro|Lutro Game Engine|lutro
+macintosh|Apple Macintosh|macintosh
+mame|Multiple Arcade Machine Emulator|arcade
+mark3|Sega Mark III|mastersystem
+mastersystem|Sega Master System|mastersystem
+megacd|Sega Mega-CD|segacd
+megacdjp|Sega Mega-CD|segacd
+megadrive|Sega Mega Drive|megadrive
+megadrivejp|Sega Mega Drive|megadrive
+megaduck|Creatronic Mega Duck|megaduck
+mess|Multi Emulator Super System|mess
+model2|Sega Model 2|arcade
+model3|Sega Model 3|arcade
+moto|Thomson MO/TO Series|moto
+msx|MSX|msx
+msx1|MSX1|msx
+msx2|MSX2|msx2
+msxturbor|MSX Turbo R|msxturbor
+multivision|Othello Multivision|sg-1000
+n3ds|Nintendo 3DS|n3ds
+n64|Nintendo 64|n64
+n64dd|Nintendo 64DD|n64
+naomi|Sega NAOMI|arcade
+naomi2|Sega NAOMI 2|arcade
+naomigd|Sega NAOMI GD-ROM|arcade
+nds|Nintendo DS|nds
+neogeo|SNK Neo Geo|neogeo
+neogeocd|SNK Neo Geo CD|neogeocd
+neogeocdjp|SNK Neo Geo CD|neogeocd
+nes|Nintendo Entertainment System|nes
+ngage|Nokia N-Gage|ngage
+ngp|SNK Neo Geo Pocket|ngp
+ngpc|SNK Neo Geo Pocket Color|ngpc
+odyssey2|Magnavox Odyssey 2|odyssey2
+openbor|OpenBOR Game Engine|openbor
+oric|Tangerine Computer Systems Oric|oric
+palm|Palm OS|palm
+pc|IBM PC|pc
+pc88|NEC PC-8800 Series|pc88
+pc98|NEC PC-9800 Series|pc98
+pcarcade|PC Arcade Systems|arcade
+pcengine|NEC PC Engine|pcengine
+pcenginecd|NEC PC Engine CD|pcenginecd
+pcfx|NEC PC-FX|pcfx
+pico8|PICO-8 Fantasy Console|pico8
+plus4|Commodore Plus/4|plus4
+pokemini|Nintendo Pokémon Mini|pokemini
+ports|Ports|
+ps2|Sony PlayStation 2|ps2
+ps3|Sony PlayStation 3|ps3
+psp|Sony PlayStation Portable|psp
+psvita|Sony PlayStation Vita|psvita
+psx|Sony PlayStation|psx
+pv1000|Casio PV-1000|pv1000
+quake|Quake|
+samcoupe|MGT SAM Coupé|samcoupe
+satellaview|Nintendo Satellaview|satellaview
+saturn|Sega Saturn|saturn
+saturnjp|Sega Saturn|saturn
+scummvm|ScummVM Game Engine|scummvm
+scv|Epoch Super Cassette Vision|scv
+sega32x|Sega Mega Drive 32X|sega32x
+sega32xjp|Sega Super 32X|sega32x
+sega32xna|Sega Genesis 32X|sega32x
+segacd|Sega CD|segacd
+sfc|Nintendo SFC (Super Famicom)|snes
+sg-1000|Sega SG-1000|sg-1000
+sgb|Nintendo Super Game Boy|sgb
+snes|Nintendo SNES (Super Nintendo)|snes
+snesna|Nintendo SNES (Super Nintendo)|snes
+spectravideo|Spectravideo|spectravideo
+steam|Valve Steam|steam
+stv|Sega Titan Video Game System|arcade
+sufami|Bandai SuFami Turbo|sufami
+supergrafx|NEC SuperGrafx|supergrafx
+supervision|Watara Supervision|supervision
+supracan|Funtech Super A'Can|supracan
+switch|Nintendo Switch|switch
+symbian|Symbian|ngage
+tanodragon|Tano Dragon|dragon32
+tg-cd|NEC TurboGrafx-CD|pcenginecd
+tg16|NEC TurboGrafx-16|pcengine
+ti99|Texas Instruments TI-99|ti99
+tic80|TIC-80 Fantasy Computer|tic80
+to8|Thomson TO8|moto
+type-x|Taito Type X|arcade
+uzebox|Uzebox Open Source Console|uzebox
+vectrex|GCE Vectrex|vectrex
+vic20|Commodore VIC-20|vic20
+videopac|Philips Videopac G7000|odyssey2
+vircon32|Vircon32 Virtual Console|vircon32
+virtualboy|Nintendo Virtual Boy|virtualboy
+vpinball|Visual Pinball|vpinball
+vsmile|VTech V.Smile|vsmile
+wasm4|WASM-4 Fantasy Console|wasm4
+wii|Nintendo Wii|wii
+wiiu|Nintendo Wii U|wiiu
+windows|Microsoft Windows|pcwindows
+windows3x|Microsoft Windows 3.x|windows3x
+windows9x|Microsoft Windows 9x|pcwindows
+wonderswan|Bandai WonderSwan|wonderswan
+wonderswancolor|Bandai WonderSwan Color|wonderswancolor
+x1|Sharp X1|x1
+x68000|Sharp X68000|x68000
+zmachine|Infocom Z-machine|zmachine
+zx81|Sinclair ZX81|zx81
+zxspectrum|Sinclair ZX Spectrum|zxspectrum
