@@ -6,8 +6,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -301,5 +303,17 @@ class SettingsScreenTest {
         repeat(3) { press(Key.DirectionUp) }
         rule.onNodeWithText("Close folder browser").assertIsFocused()
         assertThat(rule.onNodeWithText("ROMS FOLDER").getBoundsInRoot().top).isAtLeast(paneTop())
+    }
+
+    /** Found by audit: the editor was taller than the screen; its title and the folder's label scrolled out of reach. */
+    @Test fun theFolderEditorFitsTheScreen() {
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown) // Platform folders
+        press(Key.DirectionCenter) // Export
+        press(Key.DirectionDown) // PlayStation
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Cancel").assertIsFocused()
+        val editor = rule.onNode(hasText("Files to download")).fetchSemanticsNode()
+        assertThat(editor.config[SemanticsProperties.VerticalScrollAxisRange].maxValue()).isEqualTo(0f)
     }
 }

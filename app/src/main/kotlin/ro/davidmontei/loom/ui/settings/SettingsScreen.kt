@@ -50,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -383,33 +384,50 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
     var multiDisc by remember { mutableStateOf(r.multiDisc) }
     var include by remember { mutableStateOf(r.include) }
     val folderProblem = FolderNames.validate(folder)
+    // As wide as the screen, with the choices beside the folder field and RomM's names beside the
+    // buttons: stacked, the form was taller than the screen and its top scrolled out of the pad's reach.
     LoomDialog(
         title = row.platform.platform.displayName,
         onDismiss = onClose,
+        maxWidth = Dp.Unspecified,
         body = {
-            Text("RomM slug ${row.platform.platform.slug} · server folder ${row.platform.platform.fsSlug}",
-                style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = LoomColors.TextFaint)
-            LoomTextField(folder, { folder = it.trim() }, "Folder in your ROMs folder", isError = folderProblem != null,
-                supporting = folderProblem ?: actions.cocoonFolders.filter { it.startsWith(folder.take(1)) && it != folder }.take(8)
-                    .takeIf { it.isNotEmpty() && folder.isNotEmpty() }?.joinToString(prefix = "Other Cocoon folders: "))
-            Text("Archives (.zip, .7z)", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                LoomChip("Keep as is", archive == ArchivePolicy.KEEP, { archive = ArchivePolicy.KEEP })
-                LoomChip("Unpack", archive == ArchivePolicy.EXTRACT, { archive = ArchivePolicy.EXTRACT })
-            }
-            Text("Multi-disc games", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                LoomChip("Game.m3u folder", multiDisc == MultiDiscLayout.M3U_DIR, { multiDisc = MultiDiscLayout.M3U_DIR })
-                LoomChip("Plain folder", multiDisc == MultiDiscLayout.FOLDER, { multiDisc = MultiDiscLayout.FOLDER })
-            }
-            Text("Files to download", style = MaterialTheme.typography.labelLarge)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                ROM_FILE_CATEGORIES.forEach { c ->
-                    LoomChip(c, c in include, { include = if (c in include) include - c else include + c })
+            Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
+                    LoomTextField(folder, { folder = it.trim() }, "Folder in your ROMs folder", isError = folderProblem != null,
+                        supporting = folderProblem ?: actions.cocoonFolders.filter { it.startsWith(folder.take(1)) && it != folder }.take(8)
+                            .takeIf { it.isNotEmpty() && folder.isNotEmpty() }?.joinToString(prefix = "Other Cocoon folders: "),
+                        modifier = Modifier.weight(1f))
+                    Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                            Text("Archives (.zip, .7z)", style = MaterialTheme.typography.labelLarge)
+                            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                                LoomChip("Keep as is", archive == ArchivePolicy.KEEP, { archive = ArchivePolicy.KEEP })
+                                LoomChip("Unpack", archive == ArchivePolicy.EXTRACT, { archive = ArchivePolicy.EXTRACT })
+                            }
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                            Text("Multi-disc games", style = MaterialTheme.typography.labelLarge)
+                            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                                LoomChip("Game.m3u folder", multiDisc == MultiDiscLayout.M3U_DIR, { multiDisc = MultiDiscLayout.M3U_DIR })
+                                LoomChip("Plain folder", multiDisc == MultiDiscLayout.FOLDER, { multiDisc = MultiDiscLayout.FOLDER })
+                            }
+                        }
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                    Text("Files to download", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                        ROM_FILE_CATEGORIES.forEach { c ->
+                            LoomChip(c, c in include, { include = if (c in include) include - c else include + c })
+                        }
+                    }
                 }
             }
         },
         buttons = { f ->
+            Text("RomM slug ${row.platform.platform.slug} · server folder ${row.platform.platform.fsSlug}",
+                Modifier.weight(1f).align(Alignment.CenterVertically),
+                style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = LoomColors.TextFaint)
             if (row.override != null) LoomButton("Reset", { actions.resetOverride(match); onClose() })
             LoomButton("Cancel", onClose, Modifier.focusRequester(f))
             LoomButton("Save", enabled = folderProblem == null && include.isNotEmpty(), primary = true, onClick = {
