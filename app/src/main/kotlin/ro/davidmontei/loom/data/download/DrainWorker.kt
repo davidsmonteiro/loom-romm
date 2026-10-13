@@ -2,6 +2,7 @@ package ro.davidmontei.loom.data.download
 
 import android.content.Context
 import android.content.pm.ServiceInfo
+import android.os.Build
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
@@ -87,7 +88,7 @@ class DrainWorker @AssistedInject constructor(
             }
         } catch (e: CancellationException) {
             // Stopped by the system. Jobs go back to the queue (or wait for the app on a timeout).
-            val timedOut = stopReason == STOP_REASON_FGS_TIMEOUT
+            val timedOut = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && stopReason == STOP_REASON_FGS_TIMEOUT
             dao.requeueStale(System.currentTimeMillis())
             if (timedOut) { repository.parkQueued(WaitReason.APP_OPEN); notifications.resumeHint() }
             throw e

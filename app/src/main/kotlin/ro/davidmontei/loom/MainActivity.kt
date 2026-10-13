@@ -1,5 +1,6 @@
 package ro.davidmontei.loom
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
@@ -79,7 +80,12 @@ class MainActivity : ComponentActivity() {
         if (intent.action == ACTION_OPEN_QUEUE) openQueue = true
     }
 
-    /** Pad A/B become confirm/back before Compose sees them (see [GamepadKeys]). */
+    /**
+     * Pad A/B become confirm/back before Compose sees them (see [GamepadKeys]). Lint flags this
+     * override because androidx.core re-declares the platform method as library-restricted; it is
+     * the public Activity.dispatchKeyEvent.
+     */
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean =
         super.dispatchKeyEvent(GamepadKeys.remapEvent(event, app.state.value?.swapConfirmBack ?: false))
 }

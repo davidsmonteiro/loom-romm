@@ -3,18 +3,20 @@ package ro.davidmontei.loom.ui.onboarding
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
-import android.net.Uri
+import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -31,15 +33,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import ro.davidmontei.loom.R
 import ro.davidmontei.loom.ui.components.ButtonHint
 import ro.davidmontei.loom.ui.components.FolderPicker
 import ro.davidmontei.loom.ui.components.LoomButton
@@ -100,6 +105,7 @@ private fun Title(text: String, body: String? = null) {
 
 @Composable
 private fun Welcome(first: FocusRequester, next: () -> Unit) {
+    Image(painterResource(R.drawable.ic_loom_mark), contentDescription = "Loom", modifier = Modifier.size(72.dp))
     Title(
         "Your RomM library, in Cocoon",
         "Loom copies games from your RomM server into the folders Cocoon already scans, removes them when you need " +
@@ -197,7 +203,7 @@ private fun Storage(state: OnboardingState, vm: OnboardingViewModel, first: Focu
         LoomButton("Continue", onClick = { vm.go(OnboardingStep.ROMS_ROOT) }, primary = true, modifier = Modifier.focusRequester(first))
     } else {
         LoomButton("Open Android settings", primary = true, modifier = Modifier.focusRequester(first), onClick = {
-            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${context.packageName}"))
+            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, "package:${context.packageName}".toUri())
             runCatching { context.startActivity(intent) }.onFailure {
                 context.startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
             }
@@ -242,12 +248,13 @@ private fun Background(vm: OnboardingViewModel, first: FocusRequester) {
     )
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
         LoomButton("Allow notifications", modifier = Modifier.focusRequester(first), onClick = {
-            notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+            // Before Android 13 notifications need no runtime permission.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         })
         if (!power.isIgnoringBatteryOptimizations(context.packageName)) {
             LoomButton("Allow background downloads", onClick = {
                 runCatching {
-                    context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}")))
+                    context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri()))
                 }
             })
         }

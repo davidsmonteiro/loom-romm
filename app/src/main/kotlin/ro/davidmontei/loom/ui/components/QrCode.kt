@@ -23,7 +23,7 @@ import ro.davidmontei.loom.ui.theme.LoomColors
 
 /** A QR code drawn module by module: dark on off-white, which every phone camera reads. */
 @Composable
-fun QrCode(content: String, size: Dp = 240.dp, modifier: Modifier = Modifier) {
+fun QrCode(content: String, modifier: Modifier = Modifier, size: Dp = 240.dp) {
     val matrix = remember(content) {
         QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, 0, 0,
             mapOf(EncodeHintType.MARGIN to 0, EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M))

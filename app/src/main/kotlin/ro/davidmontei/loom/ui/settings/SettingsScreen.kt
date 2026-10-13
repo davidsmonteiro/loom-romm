@@ -2,7 +2,6 @@ package ro.davidmontei.loom.ui.settings
 
 import android.annotation.SuppressLint
 import android.content.Intent
-import android.net.Uri
 import android.provider.Settings as AndroidSettings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +39,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -115,7 +115,7 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
             override fun setSwap(swap: Boolean) { vm.setSwap(swap) }
             override fun openBatterySettings() {
                 runCatching {
-                    context.startActivity(Intent(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}")))
+                    context.startActivity(Intent(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri()))
                 }
             }
             override fun licenseText() = vm.licenseText()
@@ -171,7 +171,8 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
 }
 
 @Composable
-private fun ServerSection(state: SettingsUiState, actions: SettingsActions, first: Modifier) {
+private fun ServerSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
+    val first = modifier
     val server = state.settings?.server
     var primary by remember(server) { mutableStateOf(server?.primary?.toString().orEmpty()) }
     var fallback by remember(server) { mutableStateOf(server?.fallback?.toString().orEmpty()) }
@@ -209,7 +210,8 @@ private fun ServerSection(state: SettingsUiState, actions: SettingsActions, firs
 }
 
 @Composable
-private fun StorageSection(state: SettingsUiState, actions: SettingsActions, first: Modifier) {
+private fun StorageSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
+    val first = modifier
     var picking by remember { mutableStateOf(false) }
     val s = state.storage
     SectionHeader("ROMs folder")
@@ -240,7 +242,8 @@ private fun StorageSection(state: SettingsUiState, actions: SettingsActions, fir
 }
 
 @Composable
-private fun MappingSection(state: SettingsUiState, actions: SettingsActions, first: Modifier) {
+private fun MappingSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
+    val first = modifier
     var editing by remember { mutableStateOf<MappingRow?>(null) }
     SectionHeader("Where each platform's games go")
     Text("Folder names must match the system folders Cocoon scans. Platforms marked “check” use the server's folder name because Loom has no default for them.",
@@ -318,7 +321,8 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
 }
 
 @Composable
-private fun DownloadsSection(state: SettingsUiState, actions: SettingsActions, first: Modifier) {
+private fun DownloadsSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
+    val first = modifier
     SectionHeader("At the same time")
     Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
         (1..3).forEach { n ->
@@ -338,7 +342,8 @@ private fun DownloadsSection(state: SettingsUiState, actions: SettingsActions, f
 }
 
 @Composable
-private fun AboutSection(state: SettingsUiState, actions: SettingsActions, first: Modifier) {
+private fun AboutSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
+    val first = modifier
     var showing by remember { mutableStateOf<Pair<String, String>?>(null) }
     SectionHeader("Loom ${state.appVersion}")
     Text("Puts games from your RomM server into the folders Cocoon scans. Free software under the GNU GPL v3.0.",

@@ -2,11 +2,11 @@
 <!-- Self-hosted RomM is often reached over plain HTTP on a LAN or Tailnet (WireGuard already
      encrypts that link), or over HTTPS with a private CA. Loom warns in the UI when HTTP is used
      for a public host. -->
-<network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
+            <certificates src="user" tools:ignore="AcceptsUserCertificates" />
         </trust-anchors>
     </base-config>
 </network-security-config>
