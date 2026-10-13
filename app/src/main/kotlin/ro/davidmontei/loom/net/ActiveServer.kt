@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
@@ -31,11 +32,11 @@ class ActiveServer(
     scope: CoroutineScope,
 ) : AuthSource {
 
-    private data class Snapshot(val server: ServerConfig?, val credentials: Credentials?)
+    private data class Snapshot(val server: ServerConfig?, val credentials: Credentials?, val loaded: Boolean)
 
     private val state: StateFlow<Snapshot> = combine(settings.settings, credentials.current) { s, c ->
-        Snapshot(s.server, c)
-    }.stateIn(scope, SharingStarted.Eagerly, Snapshot(null, null))
+        Snapshot(s.server, c, loaded = true)
+    }.stateIn(scope, SharingStarted.Eagerly, Snapshot(null, null, loaded = false))
 
     private val apis = ConcurrentHashMap<HttpUrl, RommApi>()
 
@@ -48,7 +49,9 @@ class ActiveServer(
     /** Base URL to use right now. Throws [NotPairedException] or the selector's last failure. */
     suspend fun baseUrl(): HttpUrl {
         credentials.awaitLoaded()
-        val server = state.value.server ?: throw NotPairedException()
+        // A worker started cold by WorkManager can get here before settings have been read once.
+        val server = state.first { it.loaded && (it.credentials != null || credentials.current.value == null) }.server
+            ?: throw NotPairedException()
         return selector.select(server.addresses)
     }
 

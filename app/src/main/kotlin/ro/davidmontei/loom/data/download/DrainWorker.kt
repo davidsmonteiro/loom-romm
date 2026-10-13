@@ -9,6 +9,7 @@ import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -69,7 +70,11 @@ class DrainWorker @AssistedInject constructor(
             notifications.resumeHint()
             return Result.success()
         }
-        if (!volumes.hasAllFilesAccess()) return Result.success()
+        if (!volumes.hasAllFilesAccess()) {
+            // Queued jobs stay queued; they continue once access is granted again and Loom opens.
+            notifications.failed("Downloads", applicationContext.getString(ro.davidmontei.loom.R.string.download_needs_files_access))
+            return Result.success()
+        }
 
         dao.requeueStale(System.currentTimeMillis()) // this worker is the only owner of leases
         try {
@@ -97,7 +102,8 @@ class DrainWorker @AssistedInject constructor(
     }
 
     private fun startJob(scope: kotlinx.coroutines.CoroutineScope, job: DownloadJobEntity, lease: String) {
-        val runnerJob = scope.launch {
+        // Registered before it starts, so a job that finishes at once can't leave a stale entry.
+        val runnerJob = scope.launch(start = CoroutineStart.LAZY) {
             val reserved = { running.values.filter { it.job.id != job.id }.sumOf { it.remaining } }
             val runner = JobRunner(
                 store = store,
@@ -112,9 +118,10 @@ class DrainWorker @AssistedInject constructor(
                 },
             )
             val self = coroutineContext[Job]!!
-            // A pause or cancel from the UI clears the lease: stop this runner right away.
+            // A pause or cancel from the UI clears the lease: stop this runner right away. (The row
+            // disappearing is the normal end of a successful run, not a reason to cancel.)
             val watcher = launch {
-                dao.observeJob(job.id).first { it == null || it.leaseId != lease }
+                dao.observeJob(job.id).first { it != null && it.leaseId != lease }
                 self.cancel()
             }
             try {
@@ -132,6 +139,7 @@ class DrainWorker @AssistedInject constructor(
             }
         }
         running[job.id] = Running(job, lease, runnerJob, job.bytesTotal - job.bytesDone)
+        runnerJob.start()
     }
 
     /** Claims the oldest QUEUED job, re-planning it first if the server's files changed. */

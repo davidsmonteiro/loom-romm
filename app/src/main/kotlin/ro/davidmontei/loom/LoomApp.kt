@@ -45,6 +45,8 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
 
+    @Volatile private var lastReconcile = 0L
+
     override fun onCreate() {
         super.onCreate()
         // Coming to the foreground lets Android start the download service again: resume anything
@@ -54,7 +56,12 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                 scope.launch {
                     downloads.resumeWaiting(WaitReason.APP_OPEN)
                     // Files may have been added or deleted in a file manager while Loom was away.
-                    runCatching { installs.emptyTrash(); installs.reconcile() }
+                    // Listing every system folder isn't free, so at most once a minute.
+                    val now = System.currentTimeMillis()
+                    if (now - lastReconcile > 60_000) {
+                        lastReconcile = now
+                        runCatching { installs.emptyTrash(); installs.reconcile() }
+                    }
                 }
             }
         })
