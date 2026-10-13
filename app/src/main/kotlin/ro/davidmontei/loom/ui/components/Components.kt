@@ -1,0 +1,364 @@
+package ro.davidmontei.loom.ui.components
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import ro.davidmontei.loom.ui.theme.LoomColors
+import ro.davidmontei.loom.ui.theme.tabular
+
+/** Spacing scale: generous, because the Thor's top screen is read at arm's length. */
+object Space {
+    val xs = 4.dp
+    val s = 8.dp
+    val m = 12.dp
+    val l = 16.dp
+    val xl = 24.dp
+    val xxl = 32.dp
+}
+
+private val buttonShape = RoundedCornerShape(12.dp)
+
+@Composable
+fun LoomButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+    enabled: Boolean = true,
+    icon: ImageVector? = null,
+    destructive: Boolean = false,
+) {
+    val container = when {
+        !enabled -> LoomColors.SurfaceRaised.copy(alpha = 0.5f)
+        primary && destructive -> LoomColors.Error
+        primary -> LoomColors.Accent
+        else -> LoomColors.SurfaceHighest
+    }
+    val content = when {
+        !enabled -> LoomColors.TextFaint
+        primary && destructive -> LoomColors.OnError
+        primary -> LoomColors.OnAccent
+        destructive -> LoomColors.Error
+        else -> LoomColors.Text
+    }
+    Row(
+        modifier = modifier
+            .heightIn(min = 52.dp)
+            .background(container, buttonShape)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = FocusRingIndication(cornerRadius = 12.dp),
+                enabled = enabled,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = Space.xl, vertical = Space.m),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.size(Space.s))
+        }
+        Text(text, color = content, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+    }
+}
+
+@Composable
+fun LoomChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(50)
+    Box(
+        modifier = modifier
+            .heightIn(min = 40.dp)
+            .background(if (selected) LoomColors.AccentMuted else LoomColors.SurfaceRaised, shape)
+            .border(1.dp, if (selected) LoomColors.Accent else LoomColors.Outline, shape)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = FocusRingIndication(cornerRadius = 20.dp),
+                role = Role.Tab,
+                onClick = onClick,
+            )
+            .padding(horizontal = Space.l, vertical = Space.s),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, style = MaterialTheme.typography.labelLarge, color = if (selected) LoomColors.Text else LoomColors.TextMuted)
+    }
+}
+
+/** A row in a list or settings section. */
+@Composable
+fun LoomRow(
+    title: String,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    onClick: (() -> Unit)? = null,
+    leading: (@Composable () -> Unit)? = null,
+    trailing: (@Composable RowScope.() -> Unit)? = null,
+    selected: Boolean = false,
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .background(if (selected) LoomColors.SurfaceHighest else LoomColors.SurfaceRaised, shape)
+            .then(
+                if (onClick != null) Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = FocusRingIndication(),
+                    onClick = onClick,
+                ) else Modifier,
+            )
+            .padding(horizontal = Space.l, vertical = Space.m),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.m),
+    ) {
+        leading?.invoke()
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (subtitle != null) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = 3,
+                    overflow = TextOverflow.Ellipsis)
+            }
+        }
+        trailing?.invoke(this)
+    }
+}
+
+@Composable
+fun LoomSwitchRow(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit, subtitle: String? = null) {
+    LoomRow(title = title, subtitle = subtitle, onClick = { onCheckedChange(!checked) }, trailing = {
+        val shape = RoundedCornerShape(50)
+        Box(
+            Modifier.size(width = 52.dp, height = 30.dp)
+                .background(if (checked) LoomColors.Accent else LoomColors.SurfaceHighest, shape)
+                .padding(4.dp),
+            contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
+        ) { Box(Modifier.size(22.dp).background(if (checked) LoomColors.OnAccent else LoomColors.TextMuted, CircleShape)) }
+    })
+}
+
+@Composable
+fun LoomTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+    placeholder: String? = null,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    imeAction: ImeAction = ImeAction.Done,
+    onImeAction: () -> Unit = {},
+    secret: Boolean = false,
+    singleLine: Boolean = true,
+    supporting: String? = null,
+    isError: Boolean = false,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(12.dp)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted)
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = singleLine,
+            interactionSource = interaction,
+            textStyle = MaterialTheme.typography.bodyLarge.copy(color = LoomColors.Text),
+            cursorBrush = SolidColor(LoomColors.Accent),
+            visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction, autoCorrectEnabled = false),
+            keyboardActions = KeyboardActions(onAny = { onImeAction() }),
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(LoomColors.Surface, shape)
+                .border(
+                    width = if (focused) 3.dp else 1.dp,
+                    color = when { focused -> LoomColors.Accent; isError -> LoomColors.Error; else -> LoomColors.Outline },
+                    shape = shape,
+                )
+                .padding(horizontal = Space.l, vertical = 14.dp),
+            decorationBox = { inner ->
+                Box {
+                    if (value.isEmpty() && placeholder != null) {
+                        Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = LoomColors.TextFaint)
+                    }
+                    inner()
+                }
+            },
+        )
+        if (supporting != null) {
+            Text(supporting, style = MaterialTheme.typography.bodySmall, color = if (isError) LoomColors.Error else LoomColors.TextMuted)
+        }
+    }
+}
+
+/** A thin determinate bar in the accent colour (sage once complete). */
+@Composable
+fun LoomProgressBar(fraction: Float?, modifier: Modifier = Modifier, height: Dp = 6.dp, color: Color = LoomColors.Accent) {
+    val shape = RoundedCornerShape(50)
+    Box(modifier.fillMaxWidth().height(height).background(LoomColors.SurfaceHighest, shape)) {
+        if (fraction != null) {
+            Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(height).background(color, shape))
+        }
+    }
+}
+
+/** Small status label: "On device" in sage, or an accent / error variant. */
+@Composable
+fun StatusBadge(text: String, modifier: Modifier = Modifier, color: Color = LoomColors.Installed, onColor: Color = LoomColors.OnInstalled) {
+    Box(modifier.background(color, RoundedCornerShape(8.dp)).padding(horizontal = Space.s, vertical = 2.dp)) {
+        Text(text, style = MaterialTheme.typography.labelSmall, color = onColor, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** One button hint in the footer: a round glyph and what it does. */
+data class ButtonHint(val glyph: String, val label: String)
+
+@Composable
+fun ButtonHints(hints: List<ButtonHint>, modifier: Modifier = Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(Space.xl), verticalAlignment = Alignment.CenterVertically) {
+        hints.forEach { hint ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                Box(
+                    Modifier.heightIn(min = 26.dp).widthIn(min = 26.dp).background(LoomColors.SurfaceHighest, RoundedCornerShape(13.dp))
+                        .padding(horizontal = 7.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text(hint.glyph, style = MaterialTheme.typography.labelMedium, color = LoomColors.Text) }
+                Text(hint.label, style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted)
+            }
+        }
+    }
+}
+
+/** Screen chrome: title bar, content, and a footer of button hints. */
+@Composable
+fun ScreenScaffold(
+    title: String,
+    hints: List<ButtonHint>,
+    modifier: Modifier = Modifier,
+    actions: @Composable RowScope.() -> Unit = {},
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier
+            .fillMaxSize()
+            .background(LoomColors.Background)
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(horizontal = Space.xl, vertical = Space.l),
+        verticalArrangement = Arrangement.spacedBy(Space.l),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+            actions()
+        }
+        Column(Modifier.weight(1f).fillMaxWidth()) { content() }
+        ButtonHints(hints)
+    }
+}
+
+@Composable
+fun SectionHeader(text: String, modifier: Modifier = Modifier) {
+    Text(text.uppercase(), style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted, modifier = modifier.padding(top = Space.s))
+}
+
+/**
+ * A dialog drawn in the activity's own window (Compose's Dialog opens a separate window, which
+ * would bypass the activity's gamepad remapping). Focus is trapped inside; B closes it.
+ */
+@Composable
+fun LoomDialog(
+    title: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    body: @Composable ColumnScope.() -> Unit = {},
+    buttons: @Composable RowScope.(firstFocus: FocusRequester) -> Unit,
+) {
+    val first = remember { FocusRequester() }
+    BackHandler(onBack = onDismiss)
+    LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier
+                .widthIn(max = 640.dp)
+                .padding(Space.xl)
+                .background(LoomColors.Surface, RoundedCornerShape(16.dp))
+                .border(1.dp, LoomColors.Outline, RoundedCornerShape(16.dp))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
+                .focusProperties { onExit = { cancelFocusChange() } }
+                .focusGroup()
+                .padding(Space.xl),
+            verticalArrangement = Arrangement.spacedBy(Space.l),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleLarge)
+            body()
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.m, Alignment.End)) { buttons(first) }
+        }
+    }
+}
+
+/** Tabular, readable byte counts for the UI. */
+@Composable
+fun BytesText(bytes: Long, modifier: Modifier = Modifier, color: Color = LoomColors.TextMuted) {
+    Text(ro.davidmontei.loom.storage.engine.formatBytes(bytes), modifier = modifier, color = color,
+        style = MaterialTheme.typography.bodySmall.tabular())
+}
+
+val NoPadding = PaddingValues(0.dp)
+
+/** Shorthand used by screens that ask for initial focus. */
+fun Modifier.initialFocus(requester: FocusRequester) = focusRequester(requester)
