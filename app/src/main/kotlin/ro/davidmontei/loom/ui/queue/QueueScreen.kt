@@ -49,6 +49,7 @@ import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.WaitReason
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.ui.components.ButtonHint
+import ro.davidmontei.loom.ui.components.InitialFocus
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.components.LoomButton
 import ro.davidmontei.loom.ui.components.LoomDialog
@@ -159,7 +160,7 @@ fun QueueContent(state: QueueUiState, actions: QueueActions) {
                 Text("Nothing downloading. Press X on a game in the library to add it here.", color = LoomColors.TextMuted)
                 return@ScreenScaffold
             }
-            LaunchedEffect(firstItem?.jobId) { delay(50); runCatching { first.requestFocus() } }
+            InitialFocus(first, firstItem?.jobId)
             LazyColumn(Modifier.fillMaxSize().testTag("queue-list"), contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(Space.s)) {
                 if (state.active.isNotEmpty()) item { SectionHeader("In progress") }
                 items(state.active, key = { it.jobId }) { item ->

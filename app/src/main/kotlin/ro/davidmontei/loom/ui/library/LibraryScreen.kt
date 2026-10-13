@@ -66,6 +66,7 @@ import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.romm.RommUrls
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.ui.components.ButtonHint
+import ro.davidmontei.loom.ui.components.InitialFocus
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.components.LoomButton
 import ro.davidmontei.loom.ui.components.LoomChip
@@ -319,7 +320,7 @@ private fun Games(
             Text("Sync with RomM to see your games.", color = LoomColors.TextMuted)
             LoomButton("Sync now", onClick = actions::sync, primary = true, modifier = Modifier.focusRequester(firstGame))
         }
-        LaunchedEffect(Unit) { delay(50); runCatching { firstGame.requestFocus() } }
+        InitialFocus(firstGame)
         return
     }
     if (state.games.isEmpty()) {
@@ -334,7 +335,7 @@ private fun Games(
         return
     }
     // Back into the grid with the first game focused whenever the platform or filter changes.
-    LaunchedEffect(state.selected?.platform?.id, state.filter, state.gridMode) { delay(50); runCatching { firstGame.requestFocus() } }
+    InitialFocus(firstGame, state.selected?.platform?.id, state.filter, state.gridMode)
 
     if (state.gridMode) {
         val gridState = rememberLazyGridState()

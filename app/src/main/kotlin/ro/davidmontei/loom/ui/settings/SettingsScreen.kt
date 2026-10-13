@@ -54,6 +54,7 @@ import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.ROM_FILE_CATEGORIES
 import ro.davidmontei.loom.ui.components.ButtonHint
+import ro.davidmontei.loom.ui.components.InitialFocus
 import ro.davidmontei.loom.ui.components.FolderPicker
 import ro.davidmontei.loom.ui.components.LoomButton
 import ro.davidmontei.loom.ui.components.LoomChip
@@ -134,7 +135,7 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
     // Moving right from the section list lands on the section's first control, not the nearest one.
     val contentFirst = remember { FocusRequester() }
     val first = Modifier.focusRequester(contentFirst)
-    LaunchedEffect(Unit) { delay(50); runCatching { firstSection.requestFocus() } }
+    InitialFocus(firstSection)
 
     ScreenScaffold(title = "Settings", hints = settingsHints) {
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(Space.xl)) {

@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import ro.davidmontei.loom.R
 import ro.davidmontei.loom.ui.components.ButtonHint
+import ro.davidmontei.loom.ui.components.InitialFocus
 import ro.davidmontei.loom.ui.components.FolderPicker
 import ro.davidmontei.loom.ui.components.LoomButton
 import ro.davidmontei.loom.ui.components.LoomChip
@@ -78,7 +79,7 @@ fun OnboardingScreen(onFinished: () -> Unit, vm: OnboardingViewModel = hiltViewM
         if (stepNumber > 0) Text("Step $stepNumber of ${OnboardingStep.entries.size - 1}", style = MaterialTheme.typography.labelLarge.tabular(), color = LoomColors.TextMuted)
     }) {
         val first = remember { FocusRequester() }
-        LaunchedEffect(state.step, state.pairMode) { delay(50); runCatching { first.requestFocus() } }
+        InitialFocus(first, state.step, state.pairMode)
         Column(
             // Padding keeps focus rings inside the scroll container's clip.
             Modifier.fillMaxWidth().widthIn(max = 900.dp).verticalScroll(rememberScrollState()).padding(8.dp),

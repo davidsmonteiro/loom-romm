@@ -378,7 +378,7 @@ private fun DialogSurface(
 ) {
     val first = remember { FocusRequester() }
     BackHandler(onBack = onDismiss)
-    LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
+    InitialFocus(first, delayMs = 0)
     Box(
         Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),

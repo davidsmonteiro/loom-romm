@@ -47,7 +47,7 @@ fun FolderPicker(
         current?.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }.orEmpty().sortedBy { it.name.lowercase() }
     }
     val systems = children.count { it.name.lowercase() in knownSystemFolders }
-    LaunchedEffect(current) { runCatching { firstFocus.requestFocus() } }
+    InitialFocus(firstFocus, current)
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.m)) {
         Text(current?.path ?: "Choose a storage", style = MaterialTheme.typography.titleSmall, color = LoomColors.TextMuted)
