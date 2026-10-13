@@ -2,10 +2,15 @@ package ro.davidmontei.loom.ui
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -55,8 +60,9 @@ class LibraryScreenTest {
         override fun offload(game: GameItem) { calls += "offload:${game.id}" }
         override fun retry(game: GameItem) { calls += "retry:${game.id}" }
         override fun cancel(game: GameItem) { calls += "cancel:${game.id}" }
-        override fun openQueue() { calls += "queue" }
+        override fun openQueue(focusJobId: Long?) { calls += if (focusJobId == null) "queue" else "queue:$focusJobId" }
         override fun openSettings() { calls += "settings" }
+        override fun repair() { calls += "repair" }
     }
 
     private fun platform(id: Int, name: String, roms: Int, installed: Int, bytes: Long) =
@@ -163,6 +169,14 @@ class LibraryScreenTest {
         assertThat(calls).contains("settings")
     }
 
+    /** Found by audit: X on a queued game opened the queue on the first job, so A paused a different game. */
+    @Test fun xOnAQueuedGameOpensTheQueueOnItsJob() {
+        show()
+        press(listOf(Key.DirectionRight, Key.DirectionRight, Key.DirectionRight)) // Zelda, queued
+        press(Key.ButtonX)
+        assertThat(calls).contains("queue:4")
+    }
+
     @Test fun xOnAnInstalledGameAsksBeforeOffloading() {
         show()
         press(Key.ButtonX) // Chrono Trigger is installed
@@ -170,6 +184,70 @@ class LibraryScreenTest {
         rule.onNodeWithText("Keep it").assertIsFocused() // the safe choice has focus
         press(listOf(Key.DirectionRight, Key.DirectionCenter))
         assertThat(calls).contains("offload:1")
+    }
+
+    /** Found by audit: "Remove from device" in the details opened the question with nothing focused. */
+    @Test fun removingFromTheDetailsAsksWithFocusOnKeepIt() {
+        show()
+        press(listOf(Key.DirectionCenter, Key.DirectionRight, Key.DirectionCenter)) // Chrono Trigger: details, Remove
+        rule.onNodeWithText("Remove Chrono Trigger from this device?").assertExists()
+        rule.onNodeWithText("Keep it").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls.filter { it.startsWith("offload") }).isEmpty()
+    }
+
+    private fun changeGame(id: Int, to: GameItem) = update { s -> s.copy(games = s.games.map { if (it.id == id) to else it }) }
+
+    /** Found by audit: a download finishing while its details were open left focus on the game behind. */
+    @Test fun detailsKeepFocusWhenADownloadFinishes() {
+        show()
+        press(listOf(Key.DirectionRight, Key.DirectionRight, Key.DirectionCenter)) // Super Metroid, downloading
+        rule.onNodeWithText("Close").assertIsFocused()
+        changeGame(3, game(3, "Super Metroid", InstallState.INSTALLED))
+        rule.onNodeWithText("Remove from device").assertExists()
+        rule.onNodeWithText("Close").assertIsFocused()
+    }
+
+    @Test fun detailsKeepFocusWhenADownloadFails() {
+        show()
+        press(listOf(Key.DirectionRight, Key.DirectionRight, Key.DirectionCenter)) // Super Metroid, downloading
+        changeGame(3, game(3, "Super Metroid", InstallState.FAILED, detail = "Connection lost"))
+        rule.onNodeWithText("Retry").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("retry:3")
+    }
+
+    /** Found by review: the focused "Cancel download" going away with a failure retrying can't fix left focus on the game behind. */
+    @Test fun detailsKeepFocusWhenTheirSecondButtonGoes() {
+        show()
+        press(listOf(Key.DirectionRight, Key.DirectionRight, Key.DirectionCenter, Key.DirectionRight)) // Super Metroid: details, Cancel download
+        rule.onNodeWithText("Cancel download").assertIsFocused()
+        changeGame(3, game(3, "Super Metroid", InstallState.FAILED, detail = "This card can't hold files over 4 GB (FAT32).").copy(retryable = false))
+        rule.onNodeWithText("Remove from queue").assertIsFocused()
+    }
+
+    /** Found by audit: X on a download that retrying can't fix did nothing, and the details offered Retry. */
+    @Test fun xOnAFailureRetryingCantFixShowsWhy() {
+        state = state.copy(games = games.map {
+            if (it.id == 5) it.copy(stateDetail = "This card can't hold files over 4 GB (FAT32).", retryable = false) else it
+        })
+        show()
+        press(listOf(Key.DirectionDown, Key.ButtonX)) // Final Fantasy VI
+        rule.onNodeWithText("Retrying won't help until this is fixed.").assertExists()
+        rule.onNodeWithText("Retry").assertDoesNotExist()
+        rule.onNodeWithText("Remove from queue").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls.filter { it.startsWith("retry") }).isEmpty()
+        assertThat(calls).contains("cancel:5")
+    }
+
+    /** Found by audit: X on a game RomM no longer has tried to download it, though its details offer only Close. */
+    @Test fun xOnAGameGoneFromRommShowsWhy() {
+        state = state.copy(games = games.map { if (it.id == 2) it.copy(removedOnServer = true) else it })
+        show()
+        press(listOf(Key.DirectionRight, Key.ButtonX)) // EarthBound
+        rule.onNodeWithText("No longer on the RomM server").assertExists()
+        assertThat(calls.filter { it.startsWith("download") }).isEmpty()
     }
 
     /** Found on the Thor: Y only put the ring on the search box, and A was needed to type. */
@@ -235,10 +313,104 @@ class LibraryScreenTest {
         assertThat(calls).contains("download:2")
     }
 
+    /**
+     * Found by audit: B back from the queue or settings put the grid back at the top with focus on
+     * the first game. The screen is rebuilt from its saved state there, as NavHost does.
+     */
+    private fun backFromAnotherScreenReturnsToTheGameLeft(grid: Boolean) {
+        state = state.copy(games = (1..60).map { game(it, "Game $it", InstallState.NOT_INSTALLED) }, gridMode = grid)
+        val screen = StateRestorationTester(rule)
+        screen.setContent { LoomTestTheme { LibraryContent(state, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        repeat(8) { press(Key.DirectionDown) }
+        val left = rule.onNode(isFocused()).fetchSemanticsNode().config[SemanticsProperties.TestTag]
+        assertThat(left).isNotEqualTo("game-1")
+        screen.emulateSavedInstanceStateRestore()
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag(left).assertIsFocused()
+    }
+
+    @Test fun backToTheGridReturnsToTheGameLeft() = backFromAnotherScreenReturnsToTheGameLeft(grid = true)
+
+    @Test fun backToTheListReturnsToTheGameLeft() = backFromAnotherScreenReturnsToTheGameLeft(grid = false)
+
+    /** The id of the focused game. */
+    private fun focusedGame() = rule.onNode(isFocused()).fetchSemanticsNode().config[SemanticsProperties.TestTag].removePrefix("game-").toInt()
+
+    /**
+     * Found by review: when the game left had gone from the list by the time B came back (its
+     * download finished under "Not on device"), nothing had focus. The library leaves composition
+     * while another screen is on top and keeps only its saved state, as in NavHost.
+     */
+    private fun backAfterTheGameLeftHasGoneFocusesTheOneInItsPlace(grid: Boolean) {
+        state = state.copy(games = (1..60).map { game(it, "Game $it", InstallState.NOT_INSTALLED) }, gridMode = grid)
+        var away by mutableStateOf(false)
+        rule.setContent {
+            LoomTestTheme {
+                val saved = rememberSaveableStateHolder()
+                if (!away) saved.SaveableStateProvider("library") { LibraryContent(state, actions) }
+            }
+        }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        repeat(8) { press(Key.DirectionDown) }
+        val left = focusedGame()
+        away = true
+        rule.waitForIdle()
+        state = state.copy(games = state.games.filter { it.id != left })
+        away = false
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("game-${left + 1}").assertIsFocused()
+    }
+
+    @Test fun backToTheGridAfterTheGameLeftHasGone() = backAfterTheGameLeftHasGoneFocusesTheOneInItsPlace(grid = true)
+
+    @Test fun backToTheListAfterTheGameLeftHasGone() = backAfterTheGameLeftHasGoneFocusesTheOneInItsPlace(grid = false)
+
+    /**
+     * Found by review: a focused game leaving the list (its download finishing under "Not on
+     * device") put focus on the top-left card on screen. That is also the usual way back from the
+     * queue: the list shown first is the one from before leaving, and the game goes from it once
+     * focus is back on it.
+     */
+    private fun aFocusedGameLeavingTheListPassesFocusToTheOneInItsPlace(grid: Boolean) {
+        state = state.copy(games = (1..60).map { game(it, "Game $it", InstallState.NOT_INSTALLED) }, gridMode = grid)
+        show()
+        repeat(8) { press(Key.DirectionDown) }
+        val left = focusedGame()
+        update { s -> s.copy(games = s.games.filter { it.id != left }) }
+        rule.onNodeWithTag("game-${left + 1}").assertIsFocused()
+    }
+
+    @Test fun aFocusedGameLeavingTheGrid() = aFocusedGameLeavingTheListPassesFocusToTheOneInItsPlace(grid = true)
+
+    @Test fun aFocusedGameLeavingTheList() = aFocusedGameLeavingTheListPassesFocusToTheOneInItsPlace(grid = false)
+
     @Test fun listModeRenders() {
         state = state.copy(gridMode = false)
         show()
         rule.onNodeWithTag("game-1").assertIsFocused()
+    }
+
+    /** Found by audit: a sync error was cut to one line in the header, and nothing there led to pairing again. */
+    @Test fun aRejectedTokenShowsWhyAndLeadsToPairing() {
+        val error = "RomM rejected Loom's token. Pair again in Settings."
+        state = state.copy(header = state.header.copy(sync = CatalogSyncStatus(false, error = error, needsPairing = true)))
+        show()
+        rule.onNodeWithTag("sync-error").assertTextEquals(error)
+        rule.onNodeWithText("Not paired").assertExists() // all the header has room for
+        rule.onNodeWithTag("game-1").assertIsFocused() // games still come first
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("repair")
+    }
+
+    @Test fun otherSyncErrorsDontOfferPairing() {
+        state = state.copy(header = state.header.copy(sync = CatalogSyncStatus(false, error = "Can't reach the RomM server")))
+        show()
+        rule.onNodeWithTag("sync-error").assertTextEquals("Can't reach the RomM server")
+        rule.onNodeWithText("Sync failed").assertExists()
+        rule.onNodeWithText("Pair again").assertDoesNotExist()
     }
 
     @Test fun emptyLibraryOffersSync() {

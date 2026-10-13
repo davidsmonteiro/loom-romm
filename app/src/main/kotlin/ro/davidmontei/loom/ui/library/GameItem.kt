@@ -21,6 +21,8 @@ data class GameItem(
     val adopted: Boolean,
     val removedOnServer: Boolean,
     val installPath: String?,
+    /** False for a failed download that retrying can't fix (a card that can't hold the file). */
+    val retryable: Boolean = true,
 )
 
 /**
@@ -66,5 +68,6 @@ fun GameRow.toItem(liveBytes: Long? = null): GameItem {
         adopted = installSource == "ADOPTED",
         removedOnServer = removedOnServer,
         installPath = installPath,
+        retryable = failureRetryable ?: true,
     )
 }

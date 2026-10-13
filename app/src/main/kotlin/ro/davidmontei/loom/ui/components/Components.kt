@@ -50,6 +50,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -472,7 +473,9 @@ fun DialogHost(content: @Composable () -> Unit) {
     CompositionLocalProvider(LocalDialogHost provides state) {
         Box(Modifier.fillMaxSize()) {
             content()
-            state.content?.invoke()
+            // Keyed by dialog, so one that replaces another in the same frame (details, then
+            // "Remove from device?") is drawn afresh and puts focus on its own first button.
+            state.content?.let { dialog -> key(dialog) { dialog() } }
         }
     }
 }

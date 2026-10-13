@@ -1,5 +1,8 @@
 package ro.davidmontei.loom.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
@@ -52,9 +55,18 @@ class QueueScreenTest {
         )
     }
 
-    private fun show(state: QueueUiState = sample) {
-        rule.setContent { LoomTestTheme { QueueContent(state, actions) } }
+    private var state by mutableStateOf(sample)
+
+    private fun show(initial: QueueUiState = sample, focusJobId: Long? = null) {
+        state = initial
+        rule.setContent { LoomTestTheme { QueueContent(state, actions, focusJobId) } }
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+    }
+
+    /** Recompose with the new state first, then let delayed focus requests run. */
+    private fun update(change: (QueueUiState) -> QueueUiState) {
+        state = change(state)
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
     }
 
     private fun press(key: Key) { rule.onRoot().performKeyInput { pressKey(key) }; rule.mainClock.advanceTimeBy(100); rule.waitForIdle() }
@@ -75,6 +87,58 @@ class QueueScreenTest {
         rule.onNodeWithTag("done-101").assertIsFocused()
         repeat(11) { press(Key.DirectionDown) }
         rule.onNodeWithTag("done-112").assertIsFocused()
+    }
+
+    /** Found by audit: the first job finishing pulled focus to the new first job, so A paused that one. */
+    @Test fun focusStaysOnItsJobWhenTheFirstOneFinishes() {
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown)
+        rule.onNodeWithTag("job-3").assertIsFocused()
+        update { it.copy(active = it.active.drop(1)) } // Final Fantasy VII is done
+        rule.onNodeWithTag("job-3").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("pause:3")
+    }
+
+    /** Found by audit: closing the cancel question put focus on the first job, so a second X targeted it. */
+    @Test fun keepGivesFocusBackToItsJob() {
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown) // Mario Kart DS
+        press(Key.ButtonX)
+        rule.onNodeWithText("Keep").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithTag("job-3").assertIsFocused()
+    }
+
+    /** Found by audit: a job moving between "In progress" and "Needs attention" lost focus to the first job. */
+    @Test fun aJobChangingSectionKeepsFocus() {
+        show()
+        repeat(3) { press(Key.DirectionDown) } // Chrono Cross, failed
+        rule.onNodeWithTag("job-4").assertIsFocused()
+        update { it.copy(active = it.active + item(4, "Chrono Cross (USA)", JobPhase.QUEUED), failed = emptyList()) } // retried
+        rule.onNodeWithTag("job-4").assertIsFocused()
+    }
+
+    /** Found by audit: opened from a game in the library, the queue focused the first job, not that game's. */
+    @Test fun opensOnTheJobItWasOpenedFor() {
+        show(focusJobId = 3)
+        rule.onNodeWithTag("job-3").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("pause:3")
+    }
+
+    @Test fun theJobItWasOpenedForIsScrolledTo() {
+        val jobs = (1L..20L).map { item(it, "Game $it", JobPhase.QUEUED) }
+        show(QueueUiState(active = jobs, failed = emptyList(), finished = emptyList()), focusJobId = 18)
+        rule.onNodeWithTag("job-18").assertIsFocused()
+    }
+
+    /** Found by audit: X on a job being moved into place asked to cancel it, and then nothing happened. */
+    @Test fun xDoesNotOfferToCancelAJobBeingMovedIntoPlace() {
+        show(sample.copy(active = listOf(item(1, "Final Fantasy VII (USA)", JobPhase.PROMOTING))))
+        rule.onNodeWithTag("job-1").assertIsFocused()
+        press(Key.ButtonX)
+        rule.onNodeWithText("Keep").assertDoesNotExist()
     }
 
     @Test fun xIgnoresFinishedGames() {

@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +66,7 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import kotlinx.coroutines.delay
 import okhttp3.HttpUrl
+import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.catalog.CoverRef
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.storage.engine.formatBytes
@@ -109,12 +111,20 @@ interface LibraryActions {
     fun offload(game: GameItem)
     fun retry(game: GameItem)
     fun cancel(game: GameItem)
-    fun openQueue()
+    /** Opens the queue, on [focusJobId]'s row when given. */
+    fun openQueue(focusJobId: Long? = null)
     fun openSettings()
+    /** Pairs Loom with RomM again, after RomM rejected its token. */
+    fun repair()
 }
 
 @Composable
-fun LibraryScreen(openQueue: () -> Unit, openSettings: () -> Unit, vm: LibraryViewModel = hiltViewModel()) {
+fun LibraryScreen(
+    openQueue: (focusJobId: Long?) -> Unit,
+    openSettings: () -> Unit,
+    onRepair: () -> Unit,
+    vm: LibraryViewModel = hiltViewModel(),
+) {
     val platforms by vm.platforms.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val games by vm.games.collectAsStateWithLifecycle()
@@ -138,8 +148,9 @@ fun LibraryScreen(openQueue: () -> Unit, openSettings: () -> Unit, vm: LibraryVi
             override fun offload(game: GameItem) { vm.offload(game) }
             override fun retry(game: GameItem) { vm.retry(game) }
             override fun cancel(game: GameItem) { vm.cancel(game) }
-            override fun openQueue() = openQueue()
+            override fun openQueue(focusJobId: Long?) = openQueue(focusJobId)
             override fun openSettings() = openSettings()
+            override fun repair() = onRepair()
         }
     }
     LibraryContent(LibraryUiState(platforms, selected, games, filter, query, grid, header, coverBase, message), actions)
@@ -158,16 +169,25 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     var confirmOffload by remember { mutableStateOf<GameItem?>(null) }
     var searchEdits by remember { mutableIntStateOf(0) }
     var searchFocused by remember { mutableStateOf(false) }
-    val firstGame = remember { FocusRequester() }
+    // The game last focused and its place, kept while the queue or settings is on top so B comes
+    // back to it. If it has left the list meanwhile (its download finished under "Not on device"),
+    // the game now in its place is on screen to take over. A new platform, filter, layout or search
+    // starts from the first game again.
+    val listing = arrayOf<Any?>(state.selected?.platform?.id, state.filter, state.gridMode, state.query)
+    var lastGameId by rememberSaveable(*listing) { mutableStateOf<Int?>(null) }
+    var lastGameIndex by rememberSaveable(*listing) { mutableIntStateOf(0) }
+    // Where focus enters the games: the one last focused or the one now in its place, else the first.
+    val entryGame = remember { FocusRequester() }
     val gamesFocus = remember { FocusRequester() }
     val railFocus = remember { FocusRequester() }
 
 
+    // X does what the details offer; where that's nothing to download or retry, the details say why.
     fun toggle(game: GameItem) = when (game.state) {
-        InstallState.NOT_INSTALLED -> actions.download(game)
+        InstallState.NOT_INSTALLED -> if (game.removedOnServer) detailsFor = game else actions.download(game)
         InstallState.INSTALLED -> confirmOffload = game
-        InstallState.FAILED -> actions.retry(game)
-        InstallState.QUEUED, InstallState.DOWNLOADING -> actions.openQueue()
+        InstallState.FAILED -> if (game.retryable) actions.retry(game) else detailsFor = game
+        InstallState.QUEUED, InstallState.DOWNLOADING -> actions.openQueue(game.jobId)
     }
 
     // The library is the root: B never closes Loom (Home does). It clears a search, if there is one.
@@ -176,7 +196,11 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     // Into the games when they first appear and whenever the platform, filter or layout changes,
     // but never while a search is being typed: results that vanish and come back as the query
     // changes must not pull focus out of the field.
-    InitialFocus(firstGame, state.selected?.platform?.id, state.filter, state.gridMode, state.games.isNotEmpty(), unless = { searchFocused })
+    InitialFocus(entryGame, state.selected?.platform?.id, state.filter, state.gridMode, state.games.isNotEmpty(), unless = { searchFocused })
+    // A focused game that leaves the list takes focus with it before the game now in its place can
+    // take over (Compose then picks the top-left card on screen), so that one asks once it can.
+    val focusedLeft = focusedId != null && state.games.none { it.id == focusedId }
+    LaunchedEffect(focusedLeft) { if (focusedLeft) runCatching { entryGame.requestFocus() } }
 
     // Focus coming into the screen from outside (a dialog's button that just went away) lands on
     // the games, and the grid restores the one last focused: the game the dialog was opened from.
@@ -203,15 +227,21 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                         LoomTextField(
                             value = state.query, onValueChange = actions::setQuery, label = null,
                             placeholder = "Search", modifier = Modifier.weight(1f).onFocusChanged { searchFocused = it.hasFocus }, tag = "search", editRequest = searchEdits,
-                            onImeAction = { runCatching { firstGame.requestFocus() } },
+                            onImeAction = { runCatching { entryGame.requestFocus() } },
                         )
                         LibraryFilter.entries.forEach { f ->
                             LoomChip(f.label, state.filter == f, { actions.setFilter(f) })
                         }
                     }
                     state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = LoomColors.Accent) }
-                    Games(state, firstGame, gamesFocus, onFocus = { game, focused -> if (focused) focusedId = game.id else if (focusedId == game.id) focusedId = null },
-                        onOpen = { detailsFor = it }, actions = actions)
+                    SyncError(state.header.sync, actions)
+                    Games(state, entryGame, lastGameId, lastGameIndex, gamesFocus, onFocus = { game, focused ->
+                        if (focused) {
+                            focusedId = game.id
+                            lastGameId = game.id
+                            lastGameIndex = state.games.indexOfFirst { it.id == game.id }.coerceAtLeast(0)
+                        } else if (focusedId == game.id) focusedId = null
+                    }, onOpen = { detailsFor = it }, actions = actions)
                 }
             }
         }
@@ -256,7 +286,8 @@ private fun HeaderActions(state: LibraryUiState, actions: LibraryActions) {
     val status = when {
         sync.running && sync.total != null -> "Syncing ${sync.fetched} of ${sync.total}"
         sync.running -> "Syncing…"
-        sync.error != null -> sync.error
+        sync.needsPairing -> "Not paired"
+        sync.error != null -> "Sync failed" // the reason has more room above the games
         state.header.lastSyncMs != null -> "Synced ${ago(state.header.lastSyncMs)}"
         else -> "Not synced yet"
     }
@@ -266,6 +297,17 @@ private fun HeaderActions(state: LibraryUiState, actions: LibraryActions) {
     IconAction(if (state.gridMode) Icons.AutoMirrored.Outlined.ViewList else Icons.Outlined.GridView, "Grid or list", actions::toggleGrid)
     IconAction(Icons.Outlined.Download, "Queue (${state.header.activeDownloads})", actions::openQueue, badge = state.header.activeDownloads)
     IconAction(Icons.Outlined.Settings, "Settings", actions::openSettings)
+}
+
+/** Why the last sync failed, in full, and the way out when RomM no longer accepts Loom's token. */
+@Composable
+private fun SyncError(sync: CatalogSyncStatus, actions: LibraryActions) {
+    val error = sync.error ?: return
+    Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+        // The button comes first, so Up from the first game lands on it.
+        if (sync.needsPairing) LoomButton("Pair again", onClick = actions::repair)
+        Text(error, style = MaterialTheme.typography.bodyMedium, color = LoomColors.Error, modifier = Modifier.weight(1f).testTag("sync-error"))
+    }
 }
 
 @Composable
@@ -329,7 +371,9 @@ private fun PlatformRail(state: LibraryUiState, actions: LibraryActions, modifie
 @Composable
 private fun Games(
     state: LibraryUiState,
-    firstGame: FocusRequester,
+    entryGame: FocusRequester,
+    lastGameId: Int?,
+    lastGameIndex: Int,
     gamesFocus: FocusRequester,
     onFocus: (GameItem, Boolean) -> Unit,
     onOpen: (GameItem) -> Unit,
@@ -339,9 +383,9 @@ private fun Games(
         Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
             Text("Your library is empty here.", style = MaterialTheme.typography.titleMedium)
             Text("Sync with RomM to see your games.", color = LoomColors.TextMuted)
-            LoomButton("Sync now", onClick = actions::sync, primary = true, modifier = Modifier.focusRequester(firstGame))
+            LoomButton("Sync now", onClick = actions::sync, primary = true, modifier = Modifier.focusRequester(entryGame))
         }
-        InitialFocus(firstGame)
+        InitialFocus(entryGame)
         return
     }
     if (state.games.isEmpty()) {
@@ -355,13 +399,21 @@ private fun Games(
         )
         return
     }
+    val entryId = (state.games.firstOrNull { it.id == lastGameId } ?: state.games[lastGameIndex.coerceAtMost(state.games.lastIndex)]).id
     if (state.gridMode) {
         val gridState = rememberLazyGridState()
-        LaunchedEffect(state.selected?.platform?.id) { gridState.scrollToItem(0) }
+        // Back to the top for a new platform, but not when coming back from another screen: the
+        // saved position still shows the game the user left.
+        var scrolledFor by rememberSaveable { mutableStateOf<Int?>(null) }
+        val platformId = state.selected?.platform?.id
+        LaunchedEffect(platformId) {
+            if (platformId != scrolledFor) gridState.scrollToItem(0)
+            scrolledFor = platformId
+        }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(104.dp),
             state = gridState,
-            modifier = Modifier.fillMaxSize().focusRequester(gamesFocus).focusRestorer(firstGame).testTag("game-grid"),
+            modifier = Modifier.fillMaxSize().focusRequester(gamesFocus).focusRestorer(entryGame).testTag("game-grid"),
             contentPadding = PaddingValues(8.dp),
             horizontalArrangement = Arrangement.spacedBy(Space.l),
             verticalArrangement = Arrangement.spacedBy(Space.l),
@@ -369,20 +421,20 @@ private fun Games(
             items(state.games, key = { it.id }) { game ->
                 GameCard(
                     game, state.coverBase,
-                    modifier = if (game.id == state.games.first().id) Modifier.focusRequester(firstGame) else Modifier,
+                    modifier = if (game.id == entryId) Modifier.focusRequester(entryGame) else Modifier,
                     onFocus = onFocus, onClick = onOpen,
                 )
             }
         }
     } else {
         LazyColumn(
-            Modifier.fillMaxSize().focusRequester(gamesFocus).focusRestorer(firstGame).testTag("game-list"),
+            Modifier.fillMaxSize().focusRequester(gamesFocus).focusRestorer(entryGame).testTag("game-list"),
             contentPadding = PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(Space.s),
         ) {
             items(state.games, key = { it.id }) { game ->
                 GameRowItem(game, state.coverBase,
-                    modifier = if (game.id == state.games.first().id) Modifier.focusRequester(firstGame) else Modifier,
+                    modifier = if (game.id == entryId) Modifier.focusRequester(entryGame) else Modifier,
                     onFocus = onFocus, onClick = onOpen)
             }
         }
@@ -495,7 +547,10 @@ private fun GameDialog(
                 when (game.state) {
                     InstallState.INSTALLED -> add("On this device at ${game.installPath}" + if (game.adopted) " (already there before Loom)" else "")
                     InstallState.QUEUED, InstallState.DOWNLOADING -> add(game.stateDetail ?: "Downloading")
-                    InstallState.FAILED -> add(game.stateDetail ?: "The last download failed")
+                    InstallState.FAILED -> {
+                        add(game.stateDetail ?: "The last download failed")
+                        if (!game.retryable) add("Retrying won't help until this is fixed.")
+                    }
                     InstallState.NOT_INSTALLED -> add(if (game.removedOnServer) "No longer on the RomM server" else "Not on this device")
                 }
             }
@@ -503,25 +558,41 @@ private fun GameDialog(
             game.progress?.let { LoomProgressBar(it) }
         },
         buttons = { first ->
-            val f = Modifier.focusRequester(first)
-            when (game.state) {
-                InstallState.NOT_INSTALLED -> if (!game.removedOnServer) LoomButton("Download", { onDownload(game) }, f, primary = true)
-                    else LoomButton("Close", onDismiss, f)
-                InstallState.INSTALLED -> {
-                    LoomButton("Close", onDismiss, f)
-                    LoomButton("Remove from device", { onOffload(game) }, destructive = true)
-                }
-                InstallState.FAILED -> {
-                    LoomButton("Retry", { onRetry(game) }, f, primary = true)
-                    LoomButton("Remove from queue", { onCancel(game) })
-                }
-                InstallState.QUEUED, InstallState.DOWNLOADING -> {
-                    LoomButton("Close", onDismiss, f)
-                    LoomButton("Cancel download", { onCancel(game) }, destructive = true)
-                }
-            }
+            // Each button is drawn from one place whatever the state, so a download finishing or
+            // failing while the details are open relabels the focused button instead of replacing
+            // it: a new one would leave focus on the game behind the dialog. They are chosen outside
+            // composition, because branches there (each lambda in a composable is remembered) can
+            // still move the buttons to a new place in it.
+            val (main, other) = detailsButtons(game, onDismiss, onDownload, onOffload, onRetry, onCancel)
+            LoomButton(main.label, main.onClick, Modifier.focusRequester(first), primary = main.primary)
+            other?.let { LoomButton(it.label, it.onClick, destructive = it.destructive) }
+            // The second button can go too (a failure retrying can't fix), taking focus with it: back to the first.
+            InitialFocus(first, other == null, delayMs = 0)
         },
     )
+}
+
+private class DialogAction(val label: String, val primary: Boolean = false, val destructive: Boolean = false, val onClick: () -> Unit)
+
+/** The details' first button (which has focus) and optional second one, for the game's state. */
+private fun detailsButtons(
+    game: GameItem,
+    close: () -> Unit,
+    download: (GameItem) -> Unit,
+    offload: (GameItem) -> Unit,
+    retry: (GameItem) -> Unit,
+    cancel: (GameItem) -> Unit,
+): Pair<DialogAction, DialogAction?> {
+    val closeButton = DialogAction("Close", onClick = close)
+    val removeFromQueue = DialogAction("Remove from queue") { cancel(game) }
+    return when (game.state) {
+        InstallState.NOT_INSTALLED -> Pair(if (game.removedOnServer) closeButton else DialogAction("Download", primary = true) { download(game) }, null)
+        InstallState.INSTALLED -> Pair(closeButton, DialogAction("Remove from device", destructive = true) { offload(game) })
+        // Retrying a failure that retrying can't fix is refused, so it isn't offered.
+        InstallState.FAILED -> if (game.retryable) Pair(DialogAction("Retry", primary = true) { retry(game) }, removeFromQueue)
+            else Pair(removeFromQueue, null)
+        InstallState.QUEUED, InstallState.DOWNLOADING -> Pair(closeButton, DialogAction("Cancel download", destructive = true) { cancel(game) })
+    }
 }
 
 private fun ago(epochMs: Long): String {

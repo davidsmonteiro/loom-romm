@@ -3,6 +3,7 @@ package ro.davidmontei.loom.ui.queue
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.indication
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -28,7 +30,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
@@ -81,9 +86,19 @@ data class QueueItem(
     val canPause get() = phase == JobPhase.QUEUED || phase == JobPhase.WAITING || phase == JobPhase.DOWNLOADING ||
         phase == JobPhase.VERIFYING || phase == JobPhase.EXTRACTING
     val failed get() = phase == JobPhase.FAILED
+    /** Moving into place can't be stopped half way. */
+    val canCancel get() = phase != JobPhase.PROMOTING
 }
 
 data class QueueUiState(val active: List<QueueItem>, val failed: List<QueueItem>, val finished: List<RecentInstall>)
+
+/** A row of the jobs list: a section header or a job. */
+private sealed interface JobListRow {
+    val key: Any
+
+    data class Header(val text: String) : JobListRow { override val key get() = text }
+    data class Job(val item: QueueItem) : JobListRow { override val key get() = item.jobId }
+}
 
 interface QueueActions {
     fun pause(jobId: Long)
@@ -130,20 +145,24 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
 }
 
 @Composable
-fun QueueScreen(onBack: () -> Unit, vm: QueueViewModel = hiltViewModel()) {
+fun QueueScreen(focusJobId: Long?, onBack: () -> Unit, vm: QueueViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
-    QueueContent(state, vm)
+    QueueContent(state, vm, focusJobId)
 }
 
 private val queueHints = listOf(ButtonHint("A", "Pause / resume / retry"), ButtonHint("X", "Cancel"), ButtonHint("B", "Back"))
 
+/** [focusJobId]: the job focus starts on (the game the library opened the queue for), else the first. */
 @Composable
-fun QueueContent(state: QueueUiState, actions: QueueActions) {
+fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? = null) {
     // The job X acts on: only while it has focus, and as it is now.
     var focusedId by remember { mutableStateOf<Long?>(null) }
     var confirmCancel by remember { mutableStateOf<QueueItem?>(null) }
+    var listHasFocus by remember { mutableStateOf(false) }
     val first = remember { FocusRequester() }
-    val firstItem = state.active.firstOrNull() ?: state.failed.firstOrNull()
+    val listFocus = remember { FocusRequester() }
+    val listState = rememberLazyListState()
+    val startItem = (state.active + state.failed).firstOrNull { it.jobId == focusJobId } ?: state.active.firstOrNull() ?: state.failed.firstOrNull()
 
     fun trackFocus(item: QueueItem, focused: Boolean) {
         if (focused) focusedId = item.jobId else if (focusedId == item.jobId) focusedId = null
@@ -156,27 +175,48 @@ fun QueueContent(state: QueueUiState, actions: QueueActions) {
         else -> Unit
     }
 
-    Box(Modifier.fillMaxSize().onPadAction { action ->
+    // Focus coming into the screen from outside (the cancel question's button that just went away)
+    // lands on the list, which restores the job last focused: the one X was pressed on.
+    Box(Modifier.fillMaxSize().focusProperties { onEnter = { runCatching { listFocus.requestFocus() } } }.focusGroup().onPadAction { action ->
         when (action) {
-            PadAction.X -> (state.active + state.failed).firstOrNull { it.jobId == focusedId }?.let { confirmCancel = it } != null
+            PadAction.X -> (state.active + state.failed).firstOrNull { it.jobId == focusedId && it.canCancel }?.let { confirmCancel = it } != null
             else -> false
         }
     }) {
         ScreenScaffold(title = "Downloads", hints = queueHints) {
-            if (firstItem == null && state.finished.isEmpty()) {
+            if (startItem == null && state.finished.isEmpty()) {
                 Text("Nothing downloading. Press X on a game in the library to add it here.", color = LoomColors.TextMuted)
                 return@ScreenScaffold
             }
-            // The first job, or the newest finished game when nothing is queued, so the pad can scroll the list.
-            InitialFocus(first, firstItem?.jobId, state.finished.isEmpty())
-            LazyColumn(Modifier.fillMaxSize().testTag("queue-list"), contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                if (state.active.isNotEmpty()) item { SectionHeader("In progress") }
-                items(state.active, key = { it.jobId }) { item ->
-                    JobRow(item, if (item == firstItem) Modifier.focusRequester(first) else Modifier, onFocus = ::trackFocus) { primary(item) }
-                }
-                if (state.failed.isNotEmpty()) item { SectionHeader("Needs attention") }
-                items(state.failed, key = { it.jobId }) { item ->
-                    JobRow(item, if (item == firstItem) Modifier.focusRequester(first) else Modifier, onFocus = ::trackFocus) { primary(item) }
+            // The start job, or the newest finished game when nothing is queued, so the pad can scroll the list.
+            // Only while the list has no focus: the first job finishing mustn't pull it off the row the user is on.
+            InitialFocus(first, startItem?.jobId, state.finished.isEmpty(), unless = { listHasFocus })
+            val jobRows = buildList {
+                if (state.active.isNotEmpty()) add(JobListRow.Header("In progress"))
+                state.active.forEach { add(JobListRow.Job(it)) }
+                if (state.failed.isNotEmpty()) add(JobListRow.Header("Needs attention"))
+                state.failed.forEach { add(JobListRow.Job(it)) }
+            }
+            // A job far down a long queue isn't composed until it is scrolled to, and can't take focus before.
+            LaunchedEffect(focusJobId) {
+                val index = jobRows.indexOfFirst { it is JobListRow.Job && it.item.jobId == focusJobId }
+                if (index >= 0) listState.scrollToItem(index)
+            }
+            LazyColumn(
+                Modifier.fillMaxSize().onFocusChanged { listHasFocus = it.hasFocus }.focusRequester(listFocus).focusRestorer(first)
+                    .testTag("queue-list"),
+                state = listState,
+                contentPadding = PaddingValues(8.dp),
+                verticalArrangement = Arrangement.spacedBy(Space.s),
+            ) {
+                // Headers and jobs in one items(), so a job that fails or is retried keeps its row, and
+                // focus, as it moves between sections.
+                items(jobRows, key = { it.key }) { row ->
+                    when (row) {
+                        is JobListRow.Header -> SectionHeader(row.text)
+                        is JobListRow.Job -> JobRow(row.item, if (row.item == startItem) Modifier.focusRequester(first) else Modifier,
+                            onFocus = ::trackFocus) { primary(row.item) }
+                    }
                 }
                 if (state.finished.isNotEmpty()) item { SectionHeader("Finished") }
                 items(state.finished, key = { "done-${it.romId}-${it.installedAt}" }) { done ->
@@ -184,7 +224,7 @@ fun QueueContent(state: QueueUiState, actions: QueueActions) {
                     val interaction = remember { MutableInteractionSource() }
                     Column(
                         Modifier.fillMaxWidth()
-                            .then(if (firstItem == null && done == state.finished.first()) Modifier.focusRequester(first) else Modifier)
+                            .then(if (startItem == null && done == state.finished.first()) Modifier.focusRequester(first) else Modifier)
                             .background(LoomColors.Surface, RoundedCornerShape(12.dp))
                             .focusable(interactionSource = interaction)
                             .indication(interaction, FocusRingIndication(cornerRadius = 12.dp))

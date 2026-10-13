@@ -125,7 +125,7 @@ In **Settings → Platform folders** you can change each platform's:
 | Start | Open the queue | | |
 | Select | Settings | | |
 
-For Nintendo-layout pads, use Settings → Controls → **Swap A and B**. Touch works too, and the first button press after a tap still acts (it doesn't just bring the focus ring back). Loom runs full screen; swipe from an edge to see the system bars.
+For Nintendo-layout pads, use Settings → Controls → **Swap A and B**. Touch works too, and the first button press after a tap still acts (it doesn't just bring the focus ring back), except X, which only brings focus back so it never downloads a game you didn't pick. Loom runs full screen; swipe from an edge to see the system bars.
 
 ## Scripting (adb, Termux)
 

@@ -118,15 +118,16 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Pad A/B become confirm/back before Compose sees them (see [GamepadKeys]), and a press made
-     * in touch mode waits for focus (see [TouchModePress]).
+     * Pad A/B become confirm/back before Compose sees them, a pad button never falls back to
+     * another key (see [GamepadKeys]), and a press made in touch mode waits for focus (see
+     * [TouchModePress]).
      *
      * Lint flags these because androidx.core re-declares the platform method as
      * library-restricted; it is the public Activity.dispatchKeyEvent.
      */
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        touchModePress.dispatch(GamepadKeys.remapEvent(event, app.state.value?.swapConfirmBack ?: false))
+        GamepadKeys.dispatch(event, app.state.value?.swapConfirmBack ?: false, touchModePress::dispatch)
 
     @SuppressLint("RestrictedApi")
     private fun deliver(key: KeyEvent): Boolean = super.dispatchKeyEvent(key)

@@ -48,6 +48,17 @@ object GamepadKeys {
             event.deviceId, event.scanCode, event.flags, event.source,
         )
     }
+
+    /**
+     * Remaps [event] and hands it to [deliver]. A pad button Loom handles always counts as used:
+     * Android sends a fallback key for one nobody used (B becomes BACK, Y too), so with A and B
+     * swapped, confirm on a row with nothing to press went back. Mode (Home) keeps its fallback.
+     */
+    fun dispatch(event: KeyEvent, swapConfirmBack: Boolean, deliver: (KeyEvent) -> Boolean): Boolean {
+        val used = deliver(remapEvent(event, swapConfirmBack))
+        return used || event.keyCode == KeyEvent.KEYCODE_BUTTON_A || event.keyCode == KeyEvent.KEYCODE_BUTTON_B ||
+            action(event.keyCode) != null
+    }
 }
 
 enum class PadAction { X, Y, L1, R1, START, SELECT }
@@ -57,6 +68,9 @@ enum class PadAction { X, Y, L1, R1, START, SELECT }
  * bring the focus ring back, and a second press would be needed. Instead a press that needs focus
  * leaves touch mode and is delivered [later], once the screen has put focus on its primary
  * element. Its real key-up is dropped, since the replay sends one.
+ *
+ * X is the exception: it downloads or offloads the focused game, and the element focus lands on
+ * is the screen's default, not one the user picked. It only brings focus back, like the D-pad.
  */
 class TouchModePress(
     private val inTouchMode: () -> Boolean,
@@ -71,6 +85,7 @@ class TouchModePress(
         if (key.action == KeyEvent.ACTION_DOWN && key.repeatCount == 0 && inTouchMode()) {
             leaveTouchMode()
             replayedKey = key.keyCode
+            if (key.keyCode == KeyEvent.KEYCODE_BUTTON_X) return true
             later {
                 deliver(key)
                 deliver(KeyEvent.changeAction(key, KeyEvent.ACTION_UP))
