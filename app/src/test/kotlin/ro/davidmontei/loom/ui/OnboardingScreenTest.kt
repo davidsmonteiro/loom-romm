@@ -8,6 +8,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
@@ -105,5 +106,19 @@ class OnboardingScreenTest {
         back()
         assertThat(calls).contains("go:SERVER")
         assertThat(calls).doesNotContain("finish")
+    }
+
+    /** Found by audit: choosing "Enter a pair code" put focus back on "Scan a code", so the next A switched back. */
+    @Test fun choosingAWayToPairFocusesItsField() {
+        show(OnboardingState(step = OnboardingStep.PAIR))
+        rule.onNodeWithText("Scan a code").assertIsFocused()
+        press(Key.DirectionRight)
+        press(Key.DirectionCenter) // Enter a pair code
+        rule.onNodeWithTag("pair-input").assertIsFocused()
+        press(Key.DirectionUp); press(Key.DirectionRight)
+        rule.onNodeWithText("Paste a token").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithTag("pair-input").assertIsFocused()
+        assertThat(calls).containsNoneOf("mode:DEVICE_CODE", "deviceAuth")
     }
 }

@@ -219,9 +219,11 @@ private fun Pair(state: OnboardingState, actions: OnboardingActions, first: Focu
     Row(horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.m)) {
             Title("Pair with RomM")
+            // Choosing a way to pair puts focus on its field, so the next A starts typing (not on the first chip,
+            // where it would switch back).
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                 LoomChip("Scan a code", state.pairMode == PairMode.DEVICE_CODE, { actions.setPairMode(PairMode.DEVICE_CODE) },
-                    Modifier.focusRequester(first))
+                    if (state.pairMode == PairMode.DEVICE_CODE) Modifier.focusRequester(first) else Modifier)
                 LoomChip("Enter a pair code", state.pairMode == PairMode.PAIR_CODE, { actions.setPairMode(PairMode.PAIR_CODE) })
                 LoomChip("Paste a token", state.pairMode == PairMode.PASTE_TOKEN, { actions.setPairMode(PairMode.PASTE_TOKEN) })
             }
@@ -238,13 +240,15 @@ private fun Pair(state: OnboardingState, actions: OnboardingActions, first: Focu
                 PairMode.PAIR_CODE -> {
                     Text("In RomM's web UI, open your profile → API tokens, create a token for Loom and choose “Pair device”. Type the 8-character code it shows (it lasts 60 seconds).",
                         style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
-                    LoomTextField(state.pairInput, actions::setPairInput, "Pair code", placeholder = "ABCD-2345", onImeAction = actions::submitPairInput)
+                    LoomTextField(state.pairInput, actions::setPairInput, "Pair code", Modifier.focusRequester(first), placeholder = "ABCD-2345",
+                        onImeAction = actions::submitPairInput, tag = "pair-input")
                     LoomButton(if (state.pairing) "Pairing…" else "Pair", onClick = actions::submitPairInput, primary = true, enabled = !state.pairing)
                 }
                 PairMode.PASTE_TOKEN -> {
                     Text("Paste a RomM client API token (starts with rmm_), e.g. sent over adb or KDE Connect.",
                         style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
-                    LoomTextField(state.pairInput, actions::setPairInput, "API token", placeholder = "rmm_…", secret = true, onImeAction = actions::submitPairInput)
+                    LoomTextField(state.pairInput, actions::setPairInput, "API token", Modifier.focusRequester(first), placeholder = "rmm_…",
+                        secret = true, onImeAction = actions::submitPairInput, tag = "pair-input")
                     LoomButton(if (state.pairing) "Checking…" else "Use token", onClick = actions::submitPairInput, primary = true, enabled = !state.pairing)
                 }
             }
