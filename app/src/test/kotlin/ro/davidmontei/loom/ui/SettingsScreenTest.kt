@@ -79,7 +79,7 @@ class SettingsScreenTest {
         override fun setConcurrency(n: Int) { calls += "concurrency:$n" }
         override fun setSwap(swap: Boolean) { calls += "swap:$swap" }
         override fun openBatterySettings() { calls += "battery" }
-        override fun licenseText() = "GNU GENERAL PUBLIC LICENSE"
+        override fun licenseText() = (1..120).joinToString("\n\n") { "GNU GENERAL PUBLIC LICENSE, paragraph $it" }
         override fun fontLicense() = "SIL OPEN FONT LICENSE"
     }
 
@@ -95,18 +95,47 @@ class SettingsScreenTest {
         rule.onNodeWithTag("section-SERVER").assertIsFocused()
         repeat(4) { press(Key.DirectionDown) }
         rule.onNodeWithTag("section-CONTROLS").assertIsFocused()
-        press(Key.DirectionCenter)
-        press(Key.DirectionRight)
+        press(Key.DirectionCenter) // opens Controls on its switch
         press(Key.DirectionCenter)
         assertThat(calls).contains("swap:true")
+    }
+
+    /** Found on the Thor: A selected a section but left focus in the list; the next press did nothing new. */
+    @Test fun aOnASectionMovesIntoIt() {
+        show()
+        press(Key.DirectionDown) // Storage
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Change folder").assertIsFocused()
+    }
+
+    /** Found on the Thor: Left from a section's control went to the section level with it, not the open one. */
+    @Test fun leftReturnsToTheOpenSection() {
+        show()
+        press(Key.DirectionDown) // Storage
+        press(Key.DirectionCenter) // Change folder, level with "Platform folders"
+        press(Key.DirectionLeft)
+        rule.onNodeWithTag("section-STORAGE").assertIsFocused()
+    }
+
+    /** Found on the Thor: the licence text scrolled by touch only. */
+    @Test fun licenceTextScrollsWithThePad() {
+        show()
+        repeat(5) { press(Key.DirectionDown) } // About
+        press(Key.DirectionCenter) // into the section: the GPL button
+        press(Key.DirectionCenter) // open the licence; Close has focus
+        press(Key.DirectionUp)
+        rule.onNodeWithTag("license-text", useUnmergedTree = true).assertIsFocused()
+        press(Key.DirectionDown) // scrolls rather than leaving
+        rule.onNodeWithTag("license-text", useUnmergedTree = true).assertIsFocused()
+        repeat(40) { press(Key.DirectionDown) } // to the end, then on to Close
+        rule.onNodeWithText("Close").assertIsFocused()
     }
 
     @Test fun mappingEditorSavesAFolderOverride() {
         show()
         press(Key.DirectionDown); press(Key.DirectionDown)
         rule.onNodeWithTag("section-MAPPING").assertIsFocused()
-        press(Key.DirectionCenter)
-        press(Key.DirectionRight) // Export
+        press(Key.DirectionCenter) // opens the section on its first control, Export
         rule.onNodeWithText("Export").assertIsFocused()
         press(Key.DirectionCenter)
         assertThat(calls).contains("export")

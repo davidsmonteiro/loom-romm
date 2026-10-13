@@ -4,6 +4,9 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.provider.Settings as AndroidSettings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -54,8 +58,9 @@ import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.ROM_FILE_CATEGORIES
 import ro.davidmontei.loom.ui.components.ButtonHint
-import ro.davidmontei.loom.ui.components.InitialFocus
+import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.components.FolderPicker
+import ro.davidmontei.loom.ui.components.InitialFocus
 import ro.davidmontei.loom.ui.components.LoomButton
 import ro.davidmontei.loom.ui.components.LoomChip
 import ro.davidmontei.loom.ui.components.LoomDialog
@@ -66,6 +71,8 @@ import ro.davidmontei.loom.ui.components.ScreenScaffold
 import ro.davidmontei.loom.ui.components.SectionHeader
 import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.StatusBadge
+import ro.davidmontei.loom.ui.components.gameCount
+import ro.davidmontei.loom.ui.components.padScroll
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 
@@ -132,19 +139,30 @@ private val settingsHints = listOf(ButtonHint("A", "Select"), ButtonHint("B", "B
 fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: String? = null) {
     var section by remember { mutableStateOf(SettingsSection.SERVER) }
     val firstSection = remember { FocusRequester() }
+    val sectionFocus = remember { SettingsSection.entries.associateWith { FocusRequester() } }
     // Moving right from the section list lands on the section's first control, not the nearest one.
     val contentFirst = remember { FocusRequester() }
     val first = Modifier.focusRequester(contentFirst)
     InitialFocus(firstSection)
+    // A on a section opens it: focus moves to its first control once it is shown.
+    var opened by remember { mutableIntStateOf(0) }
+    LaunchedEffect(opened) { if (opened > 0) runCatching { contentFirst.requestFocus() } }
 
     ScreenScaffold(title = "Settings", hints = settingsHints) {
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
-            LazyColumn(Modifier.width(230.dp).fillMaxHeight().testTag("settings-sections"), contentPadding = PaddingValues(8.dp),
-                verticalArrangement = Arrangement.spacedBy(Space.s)) {
+            LazyColumn(
+                // Coming back from a section (Left) lands on that section, not whichever is level with the control left behind.
+                Modifier.width(230.dp).fillMaxHeight()
+                    .focusProperties { onEnter = { runCatching { sectionFocus.getValue(section).requestFocus() } } }
+                    .testTag("settings-sections"),
+                contentPadding = PaddingValues(8.dp),
+                verticalArrangement = Arrangement.spacedBy(Space.s),
+            ) {
                 items(SettingsSection.entries) { s ->
                     LoomRow(
-                        title = s.title, selected = s == section, onClick = { section = s },
-                        modifier = (if (s == SettingsSection.SERVER) Modifier.focusRequester(firstSection) else Modifier).testTag("section-${s.name}"),
+                        title = s.title, selected = s == section, dense = true, onClick = { section = s; opened++ },
+                        modifier = (if (s == SettingsSection.SERVER) Modifier.focusRequester(firstSection) else Modifier)
+                            .focusRequester(sectionFocus.getValue(s)).testTag("section-${s.name}"),
                     )
                 }
             }
@@ -182,11 +200,13 @@ private fun ServerSection(state: SettingsUiState, actions: SettingsActions, modi
         state.settings?.serverVersion?.let { "RomM $it (Loom is built against RomM ${state.contractVersion})" } ?: "Not connected",
         color = LoomColors.TextMuted,
     )
-    LoomTextField(address, { address = it }, "Address", keyboardType = KeyboardType.Uri, modifier = first,
-        onImeAction = { actions.updateAddress(address) },
-        supporting = "A local, Tailscale or public address all work; Loom checks it answers as RomM before saving. " +
-            "Downloads in the queue continue from the new address.")
-    LoomButton("Save address", onClick = { actions.updateAddress(address) })
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.Bottom) {
+        LoomTextField(address, { address = it }, "Address", keyboardType = KeyboardType.Uri, modifier = first.weight(1f),
+            onImeAction = { actions.updateAddress(address) })
+        LoomButton("Save", onClick = { actions.updateAddress(address) })
+    }
+    Text("Local, Tailscale or public: Loom checks it answers as RomM before saving, and queued downloads continue from it.",
+        style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted)
 
     SectionHeader("Pairing")
     val creds = state.credentials
@@ -233,10 +253,16 @@ private fun StorageSection(state: SettingsUiState, actions: SettingsActions, mod
     val used = state.mapping.filter { it.platform.installedCount > 0 }
     if (used.isEmpty()) Text("No games on the device yet.", color = LoomColors.TextMuted)
     used.sortedByDescending { it.platform.installedBytes }.forEach { row ->
-        Row(Modifier.fillMaxWidth().background(LoomColors.Surface, RoundedCornerShape(10.dp)).padding(Space.m),
-            horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+        // Focusable only so the pad can scroll a long list; there is nothing to press.
+        val interaction = remember { MutableInteractionSource() }
+        Row(
+            Modifier.fillMaxWidth().background(LoomColors.Surface, RoundedCornerShape(10.dp))
+                .focusable(interactionSource = interaction).indication(interaction, FocusRingIndication(cornerRadius = 10.dp))
+                .padding(horizontal = Space.m, vertical = Space.s),
+            horizontalArrangement = Arrangement.spacedBy(Space.m),
+        ) {
             Text(row.platform.platform.displayName, modifier = Modifier.weight(1f))
-            Text("${row.platform.installedCount} games", color = LoomColors.TextMuted, style = MaterialTheme.typography.bodyMedium.tabular())
+            Text(gameCount(row.platform.installedCount), color = LoomColors.TextMuted, style = MaterialTheme.typography.bodyMedium.tabular())
             Text(formatBytes(row.platform.installedBytes), color = LoomColors.Installed, style = MaterialTheme.typography.bodyMedium.tabular())
         }
     }
@@ -363,8 +389,9 @@ private fun AboutSection(state: SettingsUiState, actions: SettingsActions, modif
     showing?.let { (title, text) ->
         LoomDialog(title = title, onDismiss = { showing = null },
             body = {
-                Box(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
-                    Text(text, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), color = LoomColors.TextMuted)
+                Box(Modifier.heightIn(max = 260.dp).padScroll(rememberScrollState()).testTag("license-text")) {
+                    // The licence files are wrapped at ~72 columns; rejoined, each paragraph flows to the dialog's width.
+                    Text(text.replace(Regex("(?<!\n)\n(?!\n)"), " "), style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted)
                 }
             },
             buttons = { f -> LoomButton("Close", { showing = null }, Modifier.focusRequester(f)) })

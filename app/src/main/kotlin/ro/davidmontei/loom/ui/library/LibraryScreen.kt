@@ -69,6 +69,7 @@ import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.ui.components.ButtonHint
 import ro.davidmontei.loom.ui.components.InitialFocus
+import ro.davidmontei.loom.ui.components.gameCount
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.components.LoomButton
 import ro.davidmontei.loom.ui.components.LoomChip
@@ -307,7 +308,7 @@ private fun PlatformRail(state: LibraryUiState, actions: LibraryActions, modifie
                     color = if (selected) LoomColors.Text else LoomColors.TextMuted)
                 Text(
                     if (p.installedCount > 0) "${p.installedCount} of ${p.localRomCount} · ${formatBytes(p.installedBytes)}"
-                    else "${p.localRomCount} games",
+                    else gameCount(p.localRomCount),
                     style = MaterialTheme.typography.labelMedium.tabular(),
                     color = if (p.installedCount > 0) LoomColors.Installed else LoomColors.TextFaint,
                 )

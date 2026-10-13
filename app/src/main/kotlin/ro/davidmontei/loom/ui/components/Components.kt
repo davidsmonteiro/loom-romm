@@ -3,10 +3,14 @@ package ro.davidmontei.loom.ui.components
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -55,6 +60,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -83,6 +89,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 
@@ -175,12 +182,14 @@ fun LoomRow(
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null,
     selected: Boolean = false,
+    /** Shorter, for lists that must fit the screen (Settings' sections). */
+    dense: Boolean = false,
 ) {
     val shape = RoundedCornerShape(14.dp)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 64.dp)
+            .heightIn(min = if (dense) 48.dp else 64.dp)
             .background(if (selected) LoomColors.SurfaceHighest else LoomColors.SurfaceRaised, shape)
             .then(
                 if (onClick != null) Modifier.clickable(
@@ -189,7 +198,7 @@ fun LoomRow(
                     onClick = onClick,
                 ) else Modifier,
             )
-            .padding(horizontal = Space.l, vertical = Space.m),
+            .padding(horizontal = Space.l, vertical = if (dense) Space.s else Space.m),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Space.m),
     ) {
@@ -354,6 +363,30 @@ private object KeepScreenVisible : PlatformTextInputInterceptor {
                 }
         })
 }
+
+/**
+ * Long text the pad can read: it takes focus, and Up/Down scroll it a page at a time until it
+ * reaches an end, where they move focus on as usual. Use in place of `verticalScroll`.
+ */
+fun Modifier.padScroll(state: ScrollState): Modifier = composed {
+    val scope = rememberCoroutineScope()
+    val interaction = remember { MutableInteractionSource() }
+    this
+        .onPreviewKeyEvent { event ->
+            val page = state.viewportSize * 0.8f
+            val forward = event.key == Key.DirectionDown && state.canScrollForward
+            val backward = event.key == Key.DirectionUp && state.canScrollBackward
+            if (!forward && !backward) return@onPreviewKeyEvent false
+            if (event.type == KeyEventType.KeyDown) scope.launch { state.animateScrollBy(if (forward) page else -page) }
+            true
+        }
+        .focusable(interactionSource = interaction)
+        .indication(interaction, FocusRingIndication(cornerRadius = 8.dp))
+        .verticalScroll(state)
+}
+
+/** "1 game", "84 games". */
+fun gameCount(n: Int): String = if (n == 1) "1 game" else "$n games"
 
 /** A thin determinate bar in the accent colour (sage once complete). */
 @Composable
