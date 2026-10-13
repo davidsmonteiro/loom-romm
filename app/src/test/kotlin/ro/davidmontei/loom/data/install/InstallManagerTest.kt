@@ -176,6 +176,45 @@ class InstallManagerTest {
         assertThat(db.catalogDao().install(53)!!.relPath).isEqualTo("n3ds/Pokemon Y (Europe).3ds")
     }
 
+    /** Both 3DS platforms go in n3ds, as the shipped mapping has it. */
+    private suspend fun twoPlatformsInOneFolder() = db.catalogDao().upsertPlatforms(listOf(
+        PlatformEntity(5, "3ds", "3ds", "3DS", "Nintendo 3DS", 2, "t"),
+        PlatformEntity(6, "new-nintendo-3ds", "new-nintendo-3ds", "New 3DS", "New Nintendo 3DS", 2, "t"),
+    ))
+
+    private suspend fun fileRom(id: Int, platformId: Int, fileName: String, size: Long) = db.catalogDao().writePage(
+        listOf(rom(id, platformId, fileName, size)),
+        listOf(RomFileEntity(id * 10, id, fileName, "roms/x", size, true, null, null, null, null, null)),
+    )
+
+    /**
+     * Matching by name alone waits for every platform's games matched by name and size, not just
+     * its own platform's: the .3ds is the New 3DS game, not what Loom unpacked from the 3DS zip.
+     */
+    @Test fun byNameAFileAGameOfAnotherPlatformMatchesExactlyIsNotTaken() = runBlocking<Unit> {
+        twoPlatformsInOneFolder()
+        archiveRom(50, 5, "Zelda (Europe).zip", null)
+        fileRom(60, 6, "Zelda (Europe).3ds", 2048)
+        put("n3ds/Zelda (Europe).3ds", 2048)
+
+        assertThat(manager.reconcile().adopted).isEqualTo(1)
+        assertThat(db.catalogDao().install(60)!!.relPath).isEqualTo("n3ds/Zelda (Europe).3ds")
+        assertThat(db.catalogDao().install(60)!!.verifiedBy).isEqualTo(VerifiedBy.SIZE)
+        assertThat(db.catalogDao().install(50)).isNull()
+    }
+
+    @Test fun byNameAFileAnotherGameHasDoesNotMakeTheMatchAmbiguous() = runBlocking<Unit> {
+        twoPlatformsInOneFolder()
+        archiveRom(51, 5, "Kirby (Europe).zip", null)
+        fileRom(61, 6, "Kirby (Europe).3ds", 2048)
+        put("n3ds/Kirby (Europe).3ds", 2048) // the New 3DS game
+        put("n3ds/Kirby (Europe).cia", 2048) // so the only one left for the 3DS zip
+
+        assertThat(manager.reconcile().adopted).isEqualTo(2)
+        assertThat(db.catalogDao().install(61)!!.relPath).isEqualTo("n3ds/Kirby (Europe).3ds")
+        assertThat(db.catalogDao().install(51)!!.relPath).isEqualTo("n3ds/Kirby (Europe).cia")
+    }
+
     /**
      * An emulator may keep saves, save states, cheats, patches and covers next to the game, named
      * after it. None of them is what Loom unpacked: too small to be the game, or never a game.

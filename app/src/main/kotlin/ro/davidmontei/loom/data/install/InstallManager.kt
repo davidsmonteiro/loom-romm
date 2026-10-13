@@ -86,8 +86,8 @@ class InstallManager(
      * card never "uninstalls" anything. Each system folder is listed once (not one stat per ROM).
      *
      * An archive Loom unpacks but RomM lists nothing inside can't be predicted by name and size:
-     * it's looked for by name alone, after every other ROM of the platform, and adopted only when
-     * one entry alone fits.
+     * it's looked for by name alone, after every other ROM of every platform (platforms can share a
+     * folder), and adopted only when one entry alone fits.
      */
     suspend fun reconcile(): ReconcileResult = withContext(Dispatchers.IO) {
         var forgotten = 0
@@ -107,6 +107,7 @@ class InstallManager(
         val mapper = mapping.currentMapper()
         val installed = catalog.installedRomIds().toSet()
         val listings = mutableMapOf<String, Map<String, File>>()
+        val byNameOnly = mutableListOf<Triple<RomEntity, RomFileEntity, String>>()
         var adopted = 0
         for (platform in catalog.platforms()) {
             val resolved = mapper.resolve(platform.slug, platform.fsSlug)
@@ -115,7 +116,6 @@ class InstallManager(
                 File(root, folder).listFiles().orEmpty().associateBy { NameSanitizer.key(it.name) }
             }
             if (listing.isEmpty()) continue
-            val byNameOnly = mutableListOf<Pair<RomEntity, RomFileEntity>>()
             for (rom in catalog.romsOf(platform.id)) {
                 if (rom.id in installed) continue
                 val files = catalog.filesOf(rom.id)
@@ -126,19 +126,23 @@ class InstallManager(
                     val (entry, size) = match
                     if (adopt(rom, entry, folder, volume.id, romsRoot, if (size == null) VerifiedBy.NAME else VerifiedBy.SIZE)) adopted++
                 } else {
-                    archiveWithoutMembers(files, resolved)?.let { byNameOnly += rom to it }
+                    archiveWithoutMembers(files, resolved)?.let { byNameOnly += Triple(rom, it, folder) }
                 }
             }
-            if (byNameOnly.isEmpty()) continue
-            val byStem = byStem(listing.values)
-            for ((rom, archive) in byNameOnly) {
-                val stem = entryStem(rom)
-                val archiveKey = NameSanitizer.key(NameSanitizer.sanitize(archive.fileName))
-                // Two or more ("Game.3ds" and "Game.cia") and Loom can't tell which it made: neither.
-                val entry = byStem[NameSanitizer.key(stem)].orEmpty()
-                    .filter { NameSanitizer.key(it.name) != archiveKey && couldBeUnpackedFrom(it, archive) }.singleOrNull()
-                if (entry != null && adopt(rom, entry, folder, volume.id, romsRoot, VerifiedBy.NAME)) adopted++
+        }
+
+        val stems = mutableMapOf<String, Map<String, List<File>>>()
+        for ((rom, archive, folder) in byNameOnly) {
+            val byStem = stems.getOrPut(folder) { byStem(listings.getValue(folder).values) }
+            val archiveKey = NameSanitizer.key(NameSanitizer.sanitize(archive.fileName))
+            val candidates = byStem[NameSanitizer.key(entryStem(rom))].orEmpty().filter { entry ->
+                NameSanitizer.key(entry.name) != archiveKey && couldBeUnpackedFrom(entry, archive) &&
+                    catalog.installAtPath(volume.id, NameSanitizer.key("$folder/${entry.name}")) == null
             }
+            // A file another game already has isn't this one's. Two or more left ("Game.3ds" and
+            // "Game.cia") and Loom can't tell which it made: neither.
+            val entry = candidates.singleOrNull()
+            if (entry != null && adopt(rom, entry, folder, volume.id, romsRoot, VerifiedBy.NAME)) adopted++
         }
         ReconcileResult(forgotten, adopted)
     }
