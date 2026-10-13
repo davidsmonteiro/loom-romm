@@ -203,6 +203,24 @@ class SaveZipperTest {
         assertThat(SaveZipper.unzip(zip, path("restore"), setOf("data"), maxEntries = 3)).hasSize(2)
     }
 
+    /**
+     * The SD card ignores case: `main` and `MAIN` would land on one file, and the restored save
+     * would differ from the archive RomM hashed with both entries.
+     */
+    @Test fun unzipRefusesNamesTheCardCantTellApart() {
+        val cases = listOf(
+            listOf("data/00000001/main", "data/00000001/MAIN"),
+            listOf("data/main", "data/MAIN/x"),
+            listOf("data/main", "data/main/x"),
+        )
+        for ((i, names) in cases.withIndex()) {
+            val zip = zipOf(path("case$i.zip"), *names.map { it to byteArrayOf(i.toByte()) }.toTypedArray())
+            val dest = path("restore$i")
+            assertThrows(names.toString(), SaveArchiveException::class.java) { SaveZipper.unzip(zip, dest, setOf("data")) }
+            assertWithMessage("$names leaves no folder behind").that(Files.exists(dest)).isFalse()
+        }
+    }
+
     /** A damaged entry is caught by its CRC while unpacking, before anything is restored. */
     @Test fun unzipRefusesADamagedEntry() {
         val zip = path("stored.zip")

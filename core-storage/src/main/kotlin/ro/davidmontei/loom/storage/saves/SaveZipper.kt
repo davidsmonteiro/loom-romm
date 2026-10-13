@@ -12,6 +12,7 @@ import java.nio.file.Path
 import java.security.DigestInputStream
 import java.security.MessageDigest
 import java.time.LocalDateTime
+import java.util.Locale
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -119,9 +120,14 @@ object SaveZipper {
      * archives also carry `extdata/`. Returns the names written.
      *
      * The whole archive is refused, and [dest] removed, if any entry is absolute, climbs out with
-     * "..", uses "\" or empty segments, is a symlink or appears twice; if an entry fails its CRC
-     * or is larger than [maxEntryBytes]; if the archive holds more than [maxEntries] entries or
-     * unpacks to more than [maxTotalBytes]; and when nothing under [roots] is left to restore.
+     * "..", uses "\" or empty segments, or is a symlink; if two entries name the same file, even
+     * only in a different case (the SD card ignores case), or one names a file another uses as a
+     * folder; if an entry fails its CRC or is larger than [maxEntryBytes]; if the archive holds
+     * more than [maxEntries] entries or unpacks to more than [maxTotalBytes]; and when nothing
+     * under [roots] is left to restore.
+     *
+     * Check what was written with [SaveHasher.hashUnit] over [dest]'s roots, not with the
+     * archive's own hash: that is what the restored save will be.
      */
     fun unzip(
         zip: Path,
@@ -139,10 +145,16 @@ object SaveZipper {
                 val all = archive.entries.toList()
                 if (all.size > maxEntries) throw SaveArchiveException("Archive holds ${all.size} entries; a save unit has at most $maxEntries")
                 val seen = HashSet<String>()
+                val folders = HashSet<String>()
                 for (entry in all) {
                     checkName(entry.name)
                     if (entry.isUnixSymlink) throw SaveArchiveException("Archive holds a symlink: ${entry.name}")
-                    if (!seen.add(entry.name.removeSuffix("/"))) throw SaveArchiveException("Archive names ${entry.name} twice")
+                    val key = caseKey(entry.name)
+                    if (!seen.add(key)) throw SaveArchiveException("Archive names ${entry.name} twice")
+                    key.indices.filter { key[it] == '/' }.forEach { folders += key.substring(0, it) }
+                }
+                all.firstOrNull { !it.isDirectory && caseKey(it.name) in folders }?.let {
+                    throw SaveArchiveException("Archive names ${it.name} both as a file and as a folder")
                 }
                 var left = maxTotalBytes
                 for (entry in all) {
@@ -175,6 +187,9 @@ object SaveZipper {
             Regex("^[A-Za-z]:").containsMatchIn(name) || segments.any { it.isEmpty() || it == "." || it == ".." }
         if (unsafe) throw SaveArchiveException("Unsafe entry name: $name")
     }
+
+    /** An entry's name as a case-insensitive file system sees it. */
+    private fun caseKey(name: String): String = name.removeSuffix("/").lowercase(Locale.ROOT)
 
     private class Copied(val bytes: Long, val crc: Long)
 
