@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -147,13 +148,20 @@ private val settingsHints = listOf(ButtonHint("A", "Select"), ButtonHint("B", "B
 
 @Composable
 fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: String? = null) {
-    var section by remember { mutableStateOf(SettingsSection.SERVER) }
+    // Saveable: "Pair again" opens pairing on top, and Settings comes back from saved state.
+    var section by rememberSaveable { mutableStateOf(SettingsSection.SERVER) }
+    var backFromPairing by rememberSaveable { mutableStateOf(false) }
+    val sectionActions = remember(actions) {
+        object : SettingsActions by actions {
+            override fun repair() { backFromPairing = true; actions.repair() }
+        }
+    }
     val firstSection = remember { FocusRequester() }
     val sectionFocus = remember { SettingsSection.entries.associateWith { FocusRequester() } }
     // Moving right from the section list lands on the section's first control, not the nearest one.
     val contentFirst = remember { FocusRequester() }
     val first = Modifier.focusRequester(contentFirst)
-    InitialFocus(firstSection)
+    InitialFocus(firstSection, unless = { backFromPairing })
     // A on a section opens it: focus moves to its first control once it is shown.
     var opened by remember { mutableIntStateOf(0) }
     LaunchedEffect(opened) { if (opened > 0) runCatching { contentFirst.requestFocus() } }
@@ -189,7 +197,7 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
             ) {
                 message?.let { Text(it, color = LoomColors.Accent, style = MaterialTheme.typography.bodyMedium) }
                 when (section) {
-                    SettingsSection.SERVER -> ServerSection(state, actions, first)
+                    SettingsSection.SERVER -> ServerSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
                     SettingsSection.STORAGE -> StorageSection(state, actions, first)
                     SettingsSection.MAPPING -> MappingSection(state, actions, first)
                     SettingsSection.DOWNLOADS -> DownloadsSection(state, actions, first)
@@ -238,7 +246,13 @@ private fun SectionTop(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun ServerSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
+private fun ServerSection(
+    state: SettingsUiState,
+    actions: SettingsActions,
+    modifier: Modifier = Modifier,
+    backFromPairing: Boolean = false,
+    onBackFromPairing: () -> Unit = {},
+) {
     val first = modifier
     val server = state.settings?.server
     var address by remember(server) { mutableStateOf(server?.url?.toString().orEmpty()) }
@@ -250,6 +264,15 @@ private fun ServerSection(state: SettingsUiState, actions: SettingsActions, modi
     // Signing out removes its own button: focus goes to Pair again, the next thing to do.
     ReturnFocusOnClose(confirmSignOut) { if (signedOut) pairAgainFocus else signOutFocus }
     ReturnFocusOnClose(confirmPairAgain) { pairAgainFocus }
+    // Back from pairing again (B, or a new token that works), Settings is composed afresh: focus where
+    // the user left, on Pair again. Read only on arrival, so setting the flag on the way out does nothing.
+    LaunchedEffect(Unit) {
+        if (backFromPairing) {
+            delay(50) // as InitialFocus: the button has to be laid out first
+            runCatching { pairAgainFocus.requestFocus() }
+            onBackFromPairing()
+        }
+    }
     SectionHeader("Server")
     Text(
         state.settings?.serverVersion?.let { "RomM $it (Loom is built against RomM ${state.contractVersion})" } ?: "Not connected",

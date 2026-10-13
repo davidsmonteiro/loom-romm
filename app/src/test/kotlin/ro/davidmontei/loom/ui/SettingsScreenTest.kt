@@ -14,6 +14,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -362,5 +363,20 @@ class SettingsScreenTest {
         press(Key.DirectionCenter)
         press(Key.DirectionRight); press(Key.DirectionCenter) // Pair again, in the dialog
         assertThat(calls).contains("repair")
+    }
+
+    /** Found by review: back from pairing again, Settings came back with focus on its first section, not on Pair again. */
+    @Test fun backFromPairingAgainFocusesPairAgain() {
+        val restore = StateRestorationTester(rule)
+        restore.setContent { LoomTestTheme { SettingsContent(state, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        press(Key.DirectionCenter) // Server & pairing: the address
+        press(Key.DirectionDown); press(Key.DirectionLeft); press(Key.DirectionLeft) // Pair again
+        press(Key.DirectionCenter); press(Key.DirectionRight); press(Key.DirectionCenter) // confirmed
+        assertThat(calls).contains("repair")
+        // Pairing opens on top and Settings leaves composition; coming back recreates it from saved state.
+        restore.emulateSavedInstanceStateRestore()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText("Pair again").assertIsFocused()
     }
 }
