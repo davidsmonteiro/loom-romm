@@ -95,7 +95,7 @@ class CatalogSyncerTest {
         put("items", JsonArray(items)); put("total", total); put("limit", 250); put("offset", 0)
     }.toString()
 
-    @Test fun fullSyncWritesCatalogAndWatermark() = runBlocking {
+    @Test fun fullSyncWritesCatalogAndWatermark() = runBlocking<Unit> {
         server.enqueue(heartbeat())
         server.enqueue(json(JsonArray(listOf(platform(1, "snes"))).toString()))
         server.enqueue(json(page(listOf(
@@ -126,7 +126,7 @@ class CatalogSyncerTest {
         assertThat(romsRequest.queryParameter("with_files")).isEqualTo("true")
     }
 
-    @Test fun incrementalSyncUsesOverlapAndAppliesDeletions() = runBlocking {
+    @Test fun incrementalSyncUsesOverlapAndAppliesDeletions() = runBlocking<Unit> {
         val dao = db.catalogDao()
         settings.setCatalogSynced("2026-10-07T09:30:00.000000+00:00", 0)
         dao.upsertPlatforms(listOf(platform(1, "snes"), platform(2, "gba")).map { p ->
@@ -156,7 +156,7 @@ class CatalogSyncerTest {
         assertThat(settings.snapshot().catalogWatermark).isEqualTo("2026-10-08T10:00:00.000000+00:00")
     }
 
-    @Test fun fullSyncIgnoresWatermark() = runBlocking {
+    @Test fun fullSyncIgnoresWatermark() = runBlocking<Unit> {
         settings.setCatalogSynced("2026-10-07T09:30:00.000000+00:00", 0)
         server.enqueue(heartbeat())
         server.enqueue(json("[]"))

@@ -39,7 +39,7 @@ class StoresTest {
         File(tmp.root, "$name.preferences_pb")
     }
 
-    @Test fun credentialsRoundTripEncryptedAndClear() = runBlocking {
+    @Test fun credentialsRoundTripEncryptedAndClear() = runBlocking<Unit> {
         val prefsStore = prefs("credentials")
         val cipher = FakeCipher()
         val store = CredentialStore(prefsStore, cipher, scope)
@@ -60,7 +60,7 @@ class StoresTest {
         assertThat(store.current.filter { it == null }.first()).isNull()
     }
 
-    @Test fun undecryptableTokenReadsAsUnpaired() = runBlocking {
+    @Test fun undecryptableTokenReadsAsUnpaired() = runBlocking<Unit> {
         val prefsStore = prefs("credentials")
         val cipher = FakeCipher()
         CredentialStore(prefsStore, cipher, scope).apply {
@@ -74,7 +74,7 @@ class StoresTest {
         assertThat(reopened.current.value).isNull()
     }
 
-    @Test fun settingsDefaultsAndUpdates() = runBlocking {
+    @Test fun settingsDefaultsAndUpdates() = runBlocking<Unit> {
         val store = SettingsStore(prefs("settings"))
         val initial = store.snapshot()
         assertThat(initial.server).isNull()
@@ -94,7 +94,7 @@ class StoresTest {
         assertThat(after.serverVersion).isEqualTo("5.3.1")
     }
 
-    @Test fun deviceIdentifierIsStable() = runBlocking {
+    @Test fun deviceIdentifierIsStable() = runBlocking<Unit> {
         val store = SettingsStore(prefs("settings"))
         val first = store.deviceIdentifier()
         assertThat(first).startsWith("loom-")

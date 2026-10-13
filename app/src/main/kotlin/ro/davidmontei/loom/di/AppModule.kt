@@ -17,6 +17,7 @@ import okhttp3.OkHttpClient
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.KeystoreTokenCipher
 import ro.davidmontei.loom.data.auth.TokenCipher
+import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.romm.ServerAddressSelector
@@ -45,6 +46,9 @@ object AppModule {
 
     @Provides @Singleton
     fun settingsStore(@SettingsPrefs prefs: DataStore<Preferences>) = SettingsStore(prefs)
+
+    @Provides @Singleton
+    fun mappingRepository(@SettingsPrefs prefs: DataStore<Preferences>) = MappingRepository(prefs)
 
     @Provides @Singleton
     fun tokenCipher(): TokenCipher = KeystoreTokenCipher()
