@@ -1,10 +1,14 @@
 package ro.davidmontei.loom.ui
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsFocused
@@ -14,6 +18,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -315,5 +320,31 @@ class SettingsScreenTest {
         rule.onNodeWithText("Cancel").assertIsFocused()
         val editor = rule.onNode(hasText("Files to download")).fetchSemanticsNode()
         assertThat(editor.config[SemanticsProperties.VerticalScrollAxisRange].maxValue()).isEqualTo(0f)
+    }
+
+    /**
+     * After a tap on a section the pad's first A (replayed once focus is back) belongs to that section, not
+     * to Server & pairing: focus entering the section list goes to the open section. Robolectric can't enter
+     * touch mode, so the test switches Compose's own input mode, which InitialFocus and focusability read.
+     */
+    @Test fun afterATapThePadStartsOnTheOpenSection() {
+        var mode by mutableStateOf(InputMode.Keyboard)
+        val inputModes = object : InputModeManager {
+            override val inputMode get() = mode
+            override fun requestInputMode(inputMode: InputMode): Boolean { mode = inputMode; return true }
+        }
+        rule.setContent {
+            LoomTestTheme { CompositionLocalProvider(LocalInputModeManager provides inputModes) { SettingsContent(state, actions) } }
+        }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        mode = InputMode.Touch
+        rule.onNodeWithTag("section-CONTROLS").performClick()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+        mode = InputMode.Keyboard // a pad press leaves touch mode
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+        rule.onNodeWithTag("section-CONTROLS").assertIsFocused()
+        press(Key.DirectionCenter) // the replayed A opens it…
+        press(Key.DirectionCenter) // …and the next acts on it
+        assertThat(calls).contains("swap:true")
     }
 }
