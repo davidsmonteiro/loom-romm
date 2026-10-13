@@ -38,7 +38,9 @@ sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Release builds are minified with R8. To sign them, create a `keystore.properties` file in the repo root; it's gitignored. Without it, the release APK is built unsigned.
+Release builds are minified with R8. To sign them, create a `keystore.properties` file in the repo root; it's gitignored. Without it, the release APK is signed with your debug key, so you can install it over a debug build to test the minified app without losing pairing or data.
+
+Android only updates an app signed with the same key. Moving from a debug-signed install to one signed with your own key therefore means uninstalling first. That wipes Loom's data: you pair again (then revoke the old client token in RomM's web UI) and Loom picks up the games already on the card when it syncs.
 
 ```properties
 storeFile=/path/to/loom.jks

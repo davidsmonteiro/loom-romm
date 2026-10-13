@@ -60,7 +60,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
+            // Without keystore.properties the minified build is signed with the debug key, so it installs
+            // over a debug build in place (keeping pairing and data) for testing R8 on the device.
+            signingConfig = signingConfigs.getByName(if (hasReleaseSigning) "release" else "debug")
         }
     }
 
