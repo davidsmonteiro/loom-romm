@@ -32,6 +32,9 @@ import java.io.File
  * Browses folders with the D-pad (the system picker is touch-first and returns SAF URIs Loom
  * doesn't need with all-files access). Shows how many of the folders inside look like Cocoon
  * system folders, so picking the right ROMs root is easy to confirm.
+ *
+ * With [focusOnOpen] false the screen around it keeps focus (onboarding puts it on its suggested
+ * folder) until the user moves within the picker.
  */
 @Composable
 fun FolderPicker(
@@ -40,14 +43,17 @@ fun FolderPicker(
     knownSystemFolders: Set<String>,
     onPick: (File) -> Unit,
     modifier: Modifier = Modifier,
+    focusOnOpen: Boolean = true,
 ) {
     var current by remember { mutableStateOf(initial?.takeIf { it.isDirectory }) }
+    var focusable by remember { mutableStateOf(focusOnOpen) }
+    fun open(dir: File?) { current = dir; focusable = true }
     val firstFocus = remember { FocusRequester() }
     val children = remember(current) {
         current?.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }.orEmpty().sortedBy { it.name.lowercase() }
     }
     val systems = children.count { it.name.lowercase() in knownSystemFolders }
-    InitialFocus(firstFocus, current)
+    if (focusable) InitialFocus(firstFocus, current)
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.m)) {
         Text(current?.path ?: "Choose a storage", style = MaterialTheme.typography.titleSmall, color = LoomColors.TextMuted)
@@ -62,7 +68,7 @@ fun FolderPicker(
                 LoomButton("Use this folder", onClick = { onPick(current!!) }, primary = true, modifier = Modifier.focusRequester(firstFocus))
                 LoomButton("Up", onClick = {
                     val parent = current!!.parentFile
-                    current = if (parent == null || volumes.any { it.root == current }) null else parent
+                    open(if (parent == null || volumes.any { it.root == current }) null else parent)
                 })
             }
         }
@@ -73,7 +79,7 @@ fun FolderPicker(
                     LoomRow(
                         title = v.label,
                         subtitle = v.root.path,
-                        onClick = { current = v.root },
+                        onClick = { open(v.root) },
                         leading = { Icon(if (v.removable) Icons.Outlined.SdCard else Icons.Outlined.PhoneAndroid, null, tint = LoomColors.TextMuted) },
                         modifier = if (v == volumes.first()) Modifier.focusRequester(firstFocus) else Modifier,
                     )
@@ -82,7 +88,7 @@ fun FolderPicker(
                 items(children, key = { it.path }) { dir ->
                     LoomRow(
                         title = dir.name,
-                        onClick = { current = dir },
+                        onClick = { open(dir) },
                         leading = { Icon(Icons.Outlined.Folder, null, tint = if (dir.name.lowercase() in knownSystemFolders) LoomColors.Installed else LoomColors.TextMuted) },
                     )
                 }

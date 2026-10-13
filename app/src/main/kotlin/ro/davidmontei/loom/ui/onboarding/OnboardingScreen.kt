@@ -242,6 +242,7 @@ private fun RomsRoot(state: OnboardingState, vm: OnboardingViewModel, first: Foc
         knownSystemFolders = vm.knownSystemFolders,
         onPick = vm::pickRoot,
         modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+        focusOnOpen = suggested == null,
     )
 }
 
