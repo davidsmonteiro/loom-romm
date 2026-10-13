@@ -5,7 +5,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -273,6 +276,27 @@ class LibraryScreenTest {
         press(Key.DirectionCenter)
         assertThat(calls).contains("download:2")
     }
+
+    /**
+     * Found by audit: B back from the queue or settings put the grid back at the top with focus on
+     * the first game. The screen is rebuilt from its saved state there, as NavHost does.
+     */
+    private fun backFromAnotherScreenReturnsToTheGameLeft(grid: Boolean) {
+        state = state.copy(games = (1..60).map { game(it, "Game $it", InstallState.NOT_INSTALLED) }, gridMode = grid)
+        val screen = StateRestorationTester(rule)
+        screen.setContent { LoomTestTheme { LibraryContent(state, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        repeat(8) { press(Key.DirectionDown) }
+        val left = rule.onNode(isFocused()).fetchSemanticsNode().config[SemanticsProperties.TestTag]
+        assertThat(left).isNotEqualTo("game-1")
+        screen.emulateSavedInstanceStateRestore()
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag(left).assertIsFocused()
+    }
+
+    @Test fun backToTheGridReturnsToTheGameLeft() = backFromAnotherScreenReturnsToTheGameLeft(grid = true)
+
+    @Test fun backToTheListReturnsToTheGameLeft() = backFromAnotherScreenReturnsToTheGameLeft(grid = false)
 
     @Test fun listModeRenders() {
         state = state.copy(gridMode = false)

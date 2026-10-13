@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -159,7 +160,11 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     var confirmOffload by remember { mutableStateOf<GameItem?>(null) }
     var searchEdits by remember { mutableIntStateOf(0) }
     var searchFocused by remember { mutableStateOf(false) }
-    val firstGame = remember { FocusRequester() }
+    // The game last focused, kept while the queue or settings is on top so B comes back to it. A new
+    // platform, filter, layout or search starts from the first game again.
+    var lastGameId by rememberSaveable(state.selected?.platform?.id, state.filter, state.gridMode, state.query) { mutableStateOf<Int?>(null) }
+    // Where focus enters the games: the one last focused, else the first.
+    val entryGame = remember { FocusRequester() }
     val gamesFocus = remember { FocusRequester() }
     val railFocus = remember { FocusRequester() }
 
@@ -177,7 +182,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     // Into the games when they first appear and whenever the platform, filter or layout changes,
     // but never while a search is being typed: results that vanish and come back as the query
     // changes must not pull focus out of the field.
-    InitialFocus(firstGame, state.selected?.platform?.id, state.filter, state.gridMode, state.games.isNotEmpty(), unless = { searchFocused })
+    InitialFocus(entryGame, state.selected?.platform?.id, state.filter, state.gridMode, state.games.isNotEmpty(), unless = { searchFocused })
 
     // Focus coming into the screen from outside (a dialog's button that just went away) lands on
     // the games, and the grid restores the one last focused: the game the dialog was opened from.
@@ -204,15 +209,16 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                         LoomTextField(
                             value = state.query, onValueChange = actions::setQuery, label = null,
                             placeholder = "Search", modifier = Modifier.weight(1f).onFocusChanged { searchFocused = it.hasFocus }, tag = "search", editRequest = searchEdits,
-                            onImeAction = { runCatching { firstGame.requestFocus() } },
+                            onImeAction = { runCatching { entryGame.requestFocus() } },
                         )
                         LibraryFilter.entries.forEach { f ->
                             LoomChip(f.label, state.filter == f, { actions.setFilter(f) })
                         }
                     }
                     state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = LoomColors.Accent) }
-                    Games(state, firstGame, gamesFocus, onFocus = { game, focused -> if (focused) focusedId = game.id else if (focusedId == game.id) focusedId = null },
-                        onOpen = { detailsFor = it }, actions = actions)
+                    Games(state, entryGame, lastGameId, gamesFocus, onFocus = { game, focused ->
+                        if (focused) { focusedId = game.id; lastGameId = game.id } else if (focusedId == game.id) focusedId = null
+                    }, onOpen = { detailsFor = it }, actions = actions)
                 }
             }
         }
@@ -330,7 +336,8 @@ private fun PlatformRail(state: LibraryUiState, actions: LibraryActions, modifie
 @Composable
 private fun Games(
     state: LibraryUiState,
-    firstGame: FocusRequester,
+    entryGame: FocusRequester,
+    lastGameId: Int?,
     gamesFocus: FocusRequester,
     onFocus: (GameItem, Boolean) -> Unit,
     onOpen: (GameItem) -> Unit,
@@ -340,9 +347,9 @@ private fun Games(
         Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
             Text("Your library is empty here.", style = MaterialTheme.typography.titleMedium)
             Text("Sync with RomM to see your games.", color = LoomColors.TextMuted)
-            LoomButton("Sync now", onClick = actions::sync, primary = true, modifier = Modifier.focusRequester(firstGame))
+            LoomButton("Sync now", onClick = actions::sync, primary = true, modifier = Modifier.focusRequester(entryGame))
         }
-        InitialFocus(firstGame)
+        InitialFocus(entryGame)
         return
     }
     if (state.games.isEmpty()) {
@@ -356,13 +363,21 @@ private fun Games(
         )
         return
     }
+    val entryId = state.games.firstOrNull { it.id == lastGameId }?.id ?: state.games.first().id
     if (state.gridMode) {
         val gridState = rememberLazyGridState()
-        LaunchedEffect(state.selected?.platform?.id) { gridState.scrollToItem(0) }
+        // Back to the top for a new platform, but not when coming back from another screen: the
+        // saved position still shows the game the user left.
+        var scrolledFor by rememberSaveable { mutableStateOf<Int?>(null) }
+        val platformId = state.selected?.platform?.id
+        LaunchedEffect(platformId) {
+            if (platformId != scrolledFor) gridState.scrollToItem(0)
+            scrolledFor = platformId
+        }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(104.dp),
             state = gridState,
-            modifier = Modifier.fillMaxSize().focusRequester(gamesFocus).focusRestorer(firstGame).testTag("game-grid"),
+            modifier = Modifier.fillMaxSize().focusRequester(gamesFocus).focusRestorer(entryGame).testTag("game-grid"),
             contentPadding = PaddingValues(8.dp),
             horizontalArrangement = Arrangement.spacedBy(Space.l),
             verticalArrangement = Arrangement.spacedBy(Space.l),
@@ -370,20 +385,20 @@ private fun Games(
             items(state.games, key = { it.id }) { game ->
                 GameCard(
                     game, state.coverBase,
-                    modifier = if (game.id == state.games.first().id) Modifier.focusRequester(firstGame) else Modifier,
+                    modifier = if (game.id == entryId) Modifier.focusRequester(entryGame) else Modifier,
                     onFocus = onFocus, onClick = onOpen,
                 )
             }
         }
     } else {
         LazyColumn(
-            Modifier.fillMaxSize().focusRequester(gamesFocus).focusRestorer(firstGame).testTag("game-list"),
+            Modifier.fillMaxSize().focusRequester(gamesFocus).focusRestorer(entryGame).testTag("game-list"),
             contentPadding = PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(Space.s),
         ) {
             items(state.games, key = { it.id }) { game ->
                 GameRowItem(game, state.coverBase,
-                    modifier = if (game.id == state.games.first().id) Modifier.focusRequester(firstGame) else Modifier,
+                    modifier = if (game.id == entryId) Modifier.focusRequester(entryGame) else Modifier,
                     onFocus = onFocus, onClick = onOpen)
             }
         }
