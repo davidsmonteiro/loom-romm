@@ -17,6 +17,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -31,6 +34,7 @@ import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.ui.components.DialogHost
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.input.GamepadKeys
+import ro.davidmontei.loom.ui.input.TouchModePress
 import ro.davidmontei.loom.ui.nav.LoomNavHost
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.LoomTheme
@@ -51,14 +55,24 @@ class MainActivity : ComponentActivity() {
     companion object {
         /** Opens straight to the download queue (notification taps, the "Downloads" shortcut). */
         const val ACTION_OPEN_QUEUE = "ro.davidmontei.loom.action.OPEN_QUEUE"
+
+        /** Long enough for [ro.davidmontei.loom.ui.components.InitialFocus] to place focus after touch mode ends. */
+        private const val FOCUS_SETTLE_MS = 120L
     }
 
     private val app: AppViewModel by viewModels()
     private var openQueue by mutableStateOf(false)
+    private val touchModePress = TouchModePress(
+        inTouchMode = { window.decorView.isInTouchMode },
+        leaveTouchMode = ::leaveTouchMode,
+        later = { window.decorView.postDelayed(it, FOCUS_SETTLE_MS) },
+        deliver = ::deliver,
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        hideSystemBars()
         openQueue = intent?.action == ACTION_OPEN_QUEUE
         setContent {
             LoomTheme {
@@ -80,12 +94,40 @@ class MainActivity : ComponentActivity() {
         if (intent.action == ACTION_OPEN_QUEUE) openQueue = true
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            hideSystemBars() // permission dialogs and other apps can bring them back
+            leaveTouchMode()
+        }
+    }
+
+    /** Full screen, like the games it installs. A swipe from the edge shows the bars for a moment. */
+    private fun hideSystemBars() = WindowCompat.getInsetsController(window, window.decorView).run {
+        systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        hide(WindowInsetsCompat.Type.systemBars())
+    }
+
     /**
-     * Pad A/B become confirm/back before Compose sees them (see [GamepadKeys]). Lint flags this
-     * override because androidx.core re-declares the platform method as library-restricted; it is
-     * the public Activity.dispatchKeyEvent.
+     * In touch mode Compose focuses nothing, so a pad press would only switch modes and otherwise
+     * do nothing. Loom is pad-first, so it leaves touch mode as soon as it can; the screen's
+     * InitialFocus then puts focus on its primary element.
+     */
+    private fun leaveTouchMode() {
+        if (window.decorView.isInTouchMode) window.decorView.requestFocusFromTouch()
+    }
+
+    /**
+     * Pad A/B become confirm/back before Compose sees them (see [GamepadKeys]), and a press made
+     * in touch mode waits for focus (see [TouchModePress]).
+     *
+     * Lint flags these because androidx.core re-declares the platform method as
+     * library-restricted; it is the public Activity.dispatchKeyEvent.
      */
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        super.dispatchKeyEvent(GamepadKeys.remapEvent(event, app.state.value?.swapConfirmBack ?: false))
+        touchModePress.dispatch(GamepadKeys.remapEvent(event, app.state.value?.swapConfirmBack ?: false))
+
+    @SuppressLint("RestrictedApi")
+    private fun deliver(key: KeyEvent): Boolean = super.dispatchKeyEvent(key)
 }

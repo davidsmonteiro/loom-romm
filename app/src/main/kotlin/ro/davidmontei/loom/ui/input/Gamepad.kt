@@ -34,6 +34,12 @@ object GamepadKeys {
         else -> null
     }
 
+    /**
+     * Keys (after [remap]) that act on the focused element or its screen, so they do nothing in
+     * touch mode. Back works without focus; the D-pad leaves touch mode on its own.
+     */
+    fun needsFocus(keyCode: Int): Boolean = keyCode == KeyEvent.KEYCODE_DPAD_CENTER || action(keyCode) != null
+
     fun remapEvent(event: KeyEvent, swapConfirmBack: Boolean): KeyEvent {
         val code = remap(event.keyCode, swapConfirmBack)
         if (code == event.keyCode) return event
@@ -45,6 +51,39 @@ object GamepadKeys {
 }
 
 enum class PadAction { X, Y, L1, R1, START, SELECT }
+
+/**
+ * After a tap the window is in touch mode, where Compose focuses nothing: pressing A would only
+ * bring the focus ring back, and a second press would be needed. Instead a press that needs focus
+ * leaves touch mode and is delivered [later], once the screen has put focus on its primary
+ * element. Its real key-up is dropped, since the replay sends one.
+ */
+class TouchModePress(
+    private val inTouchMode: () -> Boolean,
+    private val leaveTouchMode: () -> Unit,
+    private val later: (Runnable) -> Unit,
+    private val deliver: (KeyEvent) -> Boolean,
+) {
+    private var replayedKey: Int? = null
+
+    fun dispatch(key: KeyEvent): Boolean {
+        if (!GamepadKeys.needsFocus(key.keyCode)) return deliver(key)
+        if (key.action == KeyEvent.ACTION_DOWN && key.repeatCount == 0 && inTouchMode()) {
+            leaveTouchMode()
+            replayedKey = key.keyCode
+            later {
+                deliver(key)
+                deliver(KeyEvent.changeAction(key, KeyEvent.ACTION_UP))
+            }
+            return true
+        }
+        if (key.action == KeyEvent.ACTION_UP && key.keyCode == replayedKey) {
+            replayedKey = null
+            return true
+        }
+        return deliver(key)
+    }
+}
 
 /**
  * Handles X / Y / L1 / R1 / Start / Select for a screen. Attach to the screen's root: key events
