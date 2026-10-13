@@ -33,6 +33,7 @@ import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.romm.ROMM_CONTRACT_VERSION
 import ro.davidmontei.loom.romm.RommException
+import ro.davidmontei.loom.romm.RommUrls
 import ro.davidmontei.loom.romm.pairing.RommConnector
 import ro.davidmontei.loom.storage.mapping.InvalidMappingException
 import ro.davidmontei.loom.storage.mapping.MappingJson
@@ -116,8 +117,8 @@ class SettingsViewModel @Inject constructor(
     fun updateAddresses(primary: String, fallback: String) = viewModelScope.launch {
         try {
             val p = connector.probe(primary)
-            val f = fallback.takeIf { it.isNotBlank() }?.let { connector.probe(it) }
-            store.setServer(ServerConfig(p.baseUrl, f?.baseUrl), p.version)
+            val f = fallback.takeIf { it.isNotBlank() }?.let { runCatching { connector.probe(it) }.getOrNull()?.baseUrl ?: RommUrls.candidates(it).firstOrNull() }
+            store.setServer(ServerConfig(p.baseUrl, f?.takeIf { it != p.baseUrl }), p.version)
             server.onNetworkChanged()
             _messages.send("Saved. RomM ${p.version} answers at ${p.baseUrl}")
         } catch (e: RommException) {

@@ -12,6 +12,7 @@ import ro.davidmontei.loom.romm.dto.DeviceAuthInitRequest
 import ro.davidmontei.loom.romm.dto.DeviceAuthInitResponse
 import ro.davidmontei.loom.romm.dto.UserDto
 import ro.davidmontei.loom.romm.rommCall
+import java.util.concurrent.TimeUnit
 
 /**
  * Scopes Loom asks for. Assets and devices are for Phase 2 save sync, requested now so the user
@@ -65,6 +66,13 @@ class UnsupportedServerException(val version: String) :
  */
 class RommConnector(private val client: OkHttpClient) {
 
+    /** Probing an address the user typed should fail fast, not sit on a 60 s read timeout. */
+    private val probeClient = client.newBuilder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(6, TimeUnit.SECONDS)
+        .callTimeout(8, TimeUnit.SECONDS)
+        .build()
+
     /**
      * Tries each candidate from [input] (see [RommUrls.candidates]) and returns the first that
      * answers the heartbeat as RomM. Throws the last failure if none do, or
@@ -76,7 +84,7 @@ class RommConnector(private val client: OkHttpClient) {
         var last: Exception? = null
         for (base in candidates) {
             try {
-                val version = rommCall { RommServiceFactory.create(base, client).heartbeat() }.system.version
+                val version = rommCall { RommServiceFactory.create(base, probeClient).heartbeat() }.system.version
                 val parsed = RommVersion.parse(version)
                 if (parsed != null && parsed < MIN_SUPPORTED_ROMM) throw UnsupportedServerException(version)
                 return ServerProbe(base, version, parsed)

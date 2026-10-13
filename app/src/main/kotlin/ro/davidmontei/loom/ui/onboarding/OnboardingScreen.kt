@@ -131,9 +131,18 @@ private fun Server(state: OnboardingState, vm: OnboardingViewModel, first: Focus
     state.serverError?.let { Text(it, color = LoomColors.Error, style = MaterialTheme.typography.bodyMedium) }
     state.serverSummary?.let { Text(it, color = LoomColors.Installed, style = MaterialTheme.typography.bodyMedium) }
     state.insecureWarning?.let { Text(it, color = LoomColors.Accent, style = MaterialTheme.typography.bodyMedium) }
+    val continueFocus = remember { FocusRequester() }
+    val checkFocus = remember { FocusRequester() }
+    // After a check, focus goes where the next press should: Continue on success, Check on failure.
+    LaunchedEffect(state.serverSummary, state.serverError) {
+        if (state.serverSummary != null) runCatching { continueFocus.requestFocus() }
+        else if (state.serverError != null) runCatching { checkFocus.requestFocus() }
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-        LoomButton(if (state.probing) "Checking…" else "Check address", onClick = vm::connect, enabled = !state.probing)
-        LoomButton("Continue", onClick = { vm.go(OnboardingStep.PAIR) }, primary = true, enabled = state.serverSummary != null)
+        LoomButton(if (state.probing) "Checking…" else "Check address", onClick = vm::connect, enabled = !state.probing,
+            modifier = Modifier.focusRequester(checkFocus))
+        LoomButton("Continue", onClick = { vm.go(OnboardingStep.PAIR) }, primary = true, enabled = state.serverSummary != null,
+            modifier = Modifier.focusRequester(continueFocus))
     }
 }
 

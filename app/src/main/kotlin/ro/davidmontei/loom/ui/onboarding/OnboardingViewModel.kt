@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -115,16 +116,27 @@ class OnboardingViewModel @Inject constructor(
         _state.update { it.copy(probing = true, serverError = null, serverSummary = null, insecureWarning = null) }
         viewModelScope.launch {
             try {
+                // The second address is optional: probed alongside the first, and kept even when it
+                // doesn't answer from here (it may well answer from elsewhere).
+                val fallbackProbe = s.fallbackInput.takeIf { it.isNotBlank() }?.let { input ->
+                    async { runCatching { connector.probe(input) } }
+                }
                 val primary = connector.probe(s.primaryInput)
-                val fallback = s.fallbackInput.takeIf { it.isNotBlank() }?.let { connector.probe(it) }
-                val config = ServerConfig(primary.baseUrl, fallback?.baseUrl?.takeIf { it != primary.baseUrl })
+                val fallbackResult = fallbackProbe?.await()
+                val fallbackUrl = fallbackResult?.getOrNull()?.baseUrl
+                    ?: s.fallbackInput.takeIf { it.isNotBlank() }?.let { RommUrls.candidates(it).firstOrNull() }
+                val config = ServerConfig(primary.baseUrl, fallbackUrl?.takeIf { it != primary.baseUrl })
                 settings.setServer(config, primary.version)
                 val insecure = config.addresses.firstOrNull { it.scheme == "http" && !RommUrls.isPrivateHost(it.host) }
+                val second = when {
+                    fallbackResult == null -> ""
+                    fallbackResult.isSuccess -> "\nSecond address: RomM ${fallbackResult.getOrThrow().version} at ${fallbackResult.getOrThrow().baseUrl}"
+                    else -> "\nSecond address ${fallbackUrl ?: s.fallbackInput} didn't answer from here; Loom keeps it as a fallback."
+                }
                 _state.update {
                     it.copy(
                         probing = false, base = primary.baseUrl,
-                        serverSummary = "RomM ${primary.version} at ${primary.baseUrl}" +
-                            (fallback?.let { f -> "\nSecond address: RomM ${f.version} at ${f.baseUrl}" } ?: ""),
+                        serverSummary = "RomM ${primary.version} at ${primary.baseUrl}$second",
                         insecureWarning = insecure?.let { u -> "${u.host} is a public address over plain HTTP: your token would travel unencrypted. Use https:// if you can." },
                     )
                 }
