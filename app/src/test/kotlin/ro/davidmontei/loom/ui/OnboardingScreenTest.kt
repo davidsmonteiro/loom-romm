@@ -1,5 +1,8 @@
 package ro.davidmontei.loom.ui
 
+import android.Manifest
+import android.app.NotificationManager
+import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,6 +21,7 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import ro.davidmontei.loom.ui.onboarding.OnboardingActions
 import ro.davidmontei.loom.ui.onboarding.OnboardingContent
@@ -150,5 +154,22 @@ class OnboardingScreenTest {
         rule.onNodeWithText("Continue").assertIsFocused()
         press(Key.DirectionCenter)
         assertThat(calls).contains("go:PAIR")
+    }
+
+    /** Found by audit: after "Don't allow", focus stayed on "Allow notifications", which Android stops answering after two refusals. */
+    @Suppress("DEPRECATION") // how ComponentActivity hears the permission dialog's answer
+    @Test fun refusingNotificationsMovesFocusOn() {
+        shadowOf(rule.activity.getSystemService(NotificationManager::class.java)).setNotificationsEnabled(false)
+        show(OnboardingState(step = OnboardingStep.BACKGROUND))
+        rule.onNodeWithText("Allow notifications").assertIsFocused()
+        press(Key.DirectionCenter)
+        val request = shadowOf(rule.activity).lastRequestedPermission
+        assertThat(request.requestedPermissions).asList().contains(Manifest.permission.POST_NOTIFICATIONS)
+        rule.runOnUiThread {
+            rule.activity.onRequestPermissionsResult(request.requestCode, request.requestedPermissions, intArrayOf(PackageManager.PERMISSION_DENIED))
+        }
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+        rule.onNodeWithText("Allow background downloads").assertIsFocused()
+        rule.onNodeWithText("Allow notifications").assertExists() // still there, for another try
     }
 }

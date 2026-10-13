@@ -346,31 +346,38 @@ private fun Background(actions: OnboardingActions, first: FocusRequester) {
     fun unrestricted() = power.isIgnoringBatteryOptimizations(context.packageName)
     var notifications by remember { mutableStateOf(notificationsOn()) }
     var background by remember { mutableStateOf(unrestricted()) }
-    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { notifications = notificationsOn() }
+    // Refused notifications count as answered, so focus moves on: Android stops asking after two refusals, and
+    // the button (kept for another try) would then do nothing.
+    var notificationsRefused by remember { mutableStateOf(false) }
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        notifications = notificationsOn()
+        if (!granted) notificationsRefused = true
+    }
     LifecycleResumeEffect(Unit) {
         notifications = notificationsOn()
         background = unrestricted()
         onPauseOrDispose { }
     }
+    val notificationsAnswered = notifications || notificationsRefused
     // A keeps moving forward: focus waits on the first thing still to allow, then on Continue.
-    InitialFocus(first, notifications, background)
+    InitialFocus(first, notificationsAnswered, background)
     Title(
         "Downloads in the background",
         "Downloads keep going with the screen off. Android shows a notification while they run, and may stop " +
             "them if Loom is battery-optimised. Allowing both makes big downloads reliable.",
     )
-    Allowance(notifications, "Notifications are on.", "Allow notifications", if (!notifications) Modifier.focusRequester(first) else Modifier) {
+    Allowance(notifications, "Notifications are on.", "Allow notifications", if (!notificationsAnswered) Modifier.focusRequester(first) else Modifier) {
         // Before Android 13 notifications need no runtime permission.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
     Allowance(background, "Background downloads are allowed.", "Allow background downloads",
-        if (notifications && !background) Modifier.focusRequester(first) else Modifier) {
+        if (notificationsAnswered && !background) Modifier.focusRequester(first) else Modifier) {
         runCatching {
             context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri()))
         }
     }
     LoomButton("Continue", onClick = { actions.go(OnboardingStep.SYNC) }, primary = true,
-        modifier = if (notifications && background) Modifier.focusRequester(first) else Modifier)
+        modifier = if (notificationsAnswered && background) Modifier.focusRequester(first) else Modifier)
 }
 
 /** One thing to allow: a button until it's allowed, then a line saying so. */
