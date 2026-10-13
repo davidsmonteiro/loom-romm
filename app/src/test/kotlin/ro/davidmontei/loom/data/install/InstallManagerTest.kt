@@ -89,9 +89,9 @@ class InstallManagerTest {
     private fun put(rel: String, size: Int): File = File(romsRoot, rel).apply { parentFile!!.mkdirs(); writeBytes(ByteArray(size)) }
 
     /** A ROM that is one archive, with the members RomM lists for it (null when it lists none). */
-    private suspend fun archiveRom(id: Int, platformId: Int, fileName: String, members: String?) = db.catalogDao().writePage(
-        listOf(rom(id, platformId, fileName, 900)),
-        listOf(RomFileEntity(id * 10, id, fileName, "roms/x", 900, true, null, null, null, null, members)),
+    private suspend fun archiveRom(id: Int, platformId: Int, fileName: String, members: String?, size: Long = 900) = db.catalogDao().writePage(
+        listOf(rom(id, platformId, fileName, size)),
+        listOf(RomFileEntity(id * 10, id, fileName, "roms/x", size, true, null, null, null, null, members)),
     )
 
     private fun members(vararg named: Pair<String, Int>) =
@@ -147,6 +147,7 @@ class InstallManagerTest {
         archiveRom(52, 1, "Super Mario World (USA).zip", null) // SNES keeps archives: Loom never made this .sfc
         put("n3ds/Pokemon X (Europe) (En,Ja,Fr,De,Es,It,Ko).3ds", 2048)
         put("psx/Gran Turismo (USA)/Gran Turismo (USA).cue", 10)
+        put("psx/Gran Turismo (USA)/Gran Turismo (USA).bin", 1024)
         put("snes/Super Mario World (USA).sfc", 512)
 
         assertThat(manager.reconcile().adopted).isEqualTo(2)
@@ -167,12 +168,45 @@ class InstallManagerTest {
         archiveRom(53, 5, "Pokemon Y (Europe).zip", null)
         put("n3ds/Pokemon X (Europe).3ds", 2048)
         put("n3ds/Pokemon X (Europe).cia", 1024) // which one did Loom make?
-        put("n3ds/Pokemon Y (Europe).zip", 5) // the archive itself (another copy) isn't what it was unpacked to
+        put("n3ds/Pokemon Y (Europe).zip", 700) // the archive itself (another dump) isn't what it was unpacked to
         put("n3ds/Pokemon Y (Europe).3ds", 2048)
 
         assertThat(manager.reconcile().adopted).isEqualTo(1)
         assertThat(db.catalogDao().install(50)).isNull()
         assertThat(db.catalogDao().install(53)!!.relPath).isEqualTo("n3ds/Pokemon Y (Europe).3ds")
+    }
+
+    /**
+     * An emulator may keep saves, save states, cheats, patches and covers next to the game, named
+     * after it. None of them is what Loom unpacked: too small to be the game, or never a game.
+     */
+    @Test fun byNameTheGameIsAdoptedNotTheFilesBesideIt() = runBlocking<Unit> {
+        archiveRom(31, 3, "Pokemon White (Europe).zip", null, size = 4096)
+        put("nds/Pokemon White (Europe).nds", 8192)
+        put("nds/Pokemon White (Europe).sav", 512)
+        put("nds/Pokemon White (Europe).ips", 256) // a patch: no telling from its name, but far too small
+        put("nds/Pokemon White (Europe).ml1", 4096) // a save state the size of the game
+        put("nds/Pokemon White (Europe).png", 4096) // a cover
+
+        assertThat(manager.reconcile().adopted).isEqualTo(1)
+        assertThat(db.catalogDao().install(31)!!.relPath).isEqualTo("nds/Pokemon White (Europe).nds")
+    }
+
+    /**
+     * When the game is deleted outside Loom, its save stays. It mustn't be taken for the game, shown
+     * "On device", and deleted by Remove.
+     */
+    @Test fun byNameASaveLeftAloneIsNotAdopted() = runBlocking<Unit> {
+        archiveRom(32, 3, "Pokemon Black (Europe).zip", null, size = 4096)
+        val save = put("nds/Pokemon Black (Europe).sav", 512)
+        val dao = db.catalogDao()
+        dao.upsertInstall(InstallEntity(32, "9C33-6BBD", romsRoot.path, "nds/Pokemon Black (Europe).nds",
+            "nds/pokemon black (europe).nds", 3, InstallKind.FILE, 8192, VerifiedBy.SHA1, InstallSource.LOOM, null, 1))
+
+        assertThat(manager.reconcile()).isEqualTo(ReconcileResult(forgotten = 1, adopted = 0))
+        assertThat(dao.install(32)).isNull()
+        assertThat(manager.offload(32)).isEqualTo(OffloadResult.NotInstalled)
+        assertThat(save.exists()).isTrue()
     }
 
     @Test fun forgetsInstallsDeletedInAFileManagerButNotWhenTheCardIsOut() = runBlocking<Unit> {

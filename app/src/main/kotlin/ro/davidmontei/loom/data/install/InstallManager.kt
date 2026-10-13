@@ -135,7 +135,8 @@ class InstallManager(
                 val stem = entryStem(rom)
                 val archiveKey = NameSanitizer.key(NameSanitizer.sanitize(archive.fileName))
                 // Two or more ("Game.3ds" and "Game.cia") and Loom can't tell which it made: neither.
-                val entry = byStem[NameSanitizer.key(stem)].orEmpty().filter { NameSanitizer.key(it.name) != archiveKey }.singleOrNull()
+                val entry = byStem[NameSanitizer.key(stem)].orEmpty()
+                    .filter { NameSanitizer.key(it.name) != archiveKey && couldBeUnpackedFrom(it, archive) }.singleOrNull()
                 if (entry != null && adopt(rom, entry, folder, volume.id, romsRoot, VerifiedBy.NAME)) adopted++
             }
         }
@@ -167,6 +168,17 @@ class InstallManager(
         if (platform.archive != ArchivePolicy.EXTRACT) return null
         val archive = gameFiles(files).singleOrNull() ?: return null
         return archive.takeIf { Discs.ext(it.fileName) in DownloadPlanner.EXTRACTABLE && archiveMembers(it).isEmpty() }
+    }
+
+    /**
+     * Whether [entry] could be what Loom unpacked from [archive]. Unpacking never leaves a game much
+     * smaller than its archive, so a save, a patch or a cover named after the game doesn't count;
+     * nor do documents, or saves, save states and cheats, whatever their size.
+     */
+    private fun couldBeUnpackedFrom(entry: File, archive: RomFileEntity): Boolean {
+        if (entry.isFile && (Discs.isDocument(entry.name) || EMULATOR_FILE.matches(Discs.ext(entry.name)))) return false
+        val size = if (entry.isDirectory) entry.walkBottomUp().filter { it.isFile }.sumOf { it.length() } else entry.length()
+        return size * 2 >= archive.sizeBytes
     }
 
     /**
@@ -236,4 +248,9 @@ class InstallManager(
 
     private fun archiveMembers(file: RomFileEntity): List<ArchiveMemberDto> =
         file.archiveMembersJson?.let { runCatching { RommJson.decodeFromString(ARCHIVE_MEMBERS, it) }.getOrNull() }.orEmpty()
+
+    private companion object {
+        /** Extensions of saves, save states and cheats an emulator may keep next to a game, named after it. */
+        val EMULATOR_FILE = Regex("""sav|srm|dsv|cht|state\d*|ml\d|ss\d""")
+    }
 }
