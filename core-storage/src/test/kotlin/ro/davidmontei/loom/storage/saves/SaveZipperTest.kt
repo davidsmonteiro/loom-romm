@@ -178,12 +178,29 @@ class SaveZipperTest {
         assertThat(Files.exists(path("restore"))).isFalse()
     }
 
-    /** A compression bomb stops at the cap instead of filling the card. */
+    /** One entry over the per-entry cap is refused as soon as it passes it. */
     @Test fun unzipRefusesAnEntryLargerThanASaveCanBe() {
         val zip = zipOf(path("big.zip"), "data/main" to ByteArray(100))
         assertThrows(SaveArchiveException::class.java) { SaveZipper.unzip(zip, path("restore"), setOf("data"), maxEntryBytes = 99) }
         assertThat(Files.exists(path("restore"))).isFalse()
         assertThat(SaveZipper.unzip(zip, path("restore"), setOf("data"), maxEntryBytes = 100)).containsExactly("data/main")
+    }
+
+    /** Many entries just under the per-entry cap stop at the unit's budget instead of filling the card. */
+    @Test fun unzipStopsAtTheUnitsBudget() {
+        val zip = zipOf(path("bomb.zip"), "data/a" to ByteArray(100), "data/b" to ByteArray(100), "data/c" to ByteArray(100))
+        assertThrows(SaveArchiveException::class.java) {
+            SaveZipper.unzip(zip, path("restore"), setOf("data"), maxEntryBytes = 100, maxTotalBytes = 200)
+        }
+        assertThat(Files.exists(path("restore"))).isFalse()
+        assertThat(SaveZipper.unzip(zip, path("restore"), setOf("data"), maxEntryBytes = 100, maxTotalBytes = 300)).hasSize(3)
+    }
+
+    @Test fun unzipRefusesAnArchiveWithTooManyEntries() {
+        val zip = zipOf(path("many.zip"), "data/a" to byteArrayOf(1), "data/b" to byteArrayOf(2), "extdata/c" to byteArrayOf(3))
+        assertThrows(SaveArchiveException::class.java) { SaveZipper.unzip(zip, path("restore"), setOf("data"), maxEntries = 2) }
+        assertThat(Files.exists(path("restore"))).isFalse()
+        assertThat(SaveZipper.unzip(zip, path("restore"), setOf("data"), maxEntries = 3)).hasSize(2)
     }
 
     /** A damaged entry is caught by its CRC while unpacking, before anything is restored. */
