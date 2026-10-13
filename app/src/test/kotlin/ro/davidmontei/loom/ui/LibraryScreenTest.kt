@@ -192,6 +192,16 @@ class LibraryScreenTest {
         assertThat(calls.filter { it.startsWith("download") || it.startsWith("offload") }).isEmpty()
     }
 
+    /** Found on the Thor: closing a dialog left focus on the platform rail, not the game. */
+    @Test fun closingADialogGivesFocusBackToItsGame() {
+        show()
+        press(listOf(Key.DirectionRight, Key.DirectionCenter, Key.DirectionCenter)) // EarthBound: details, Download
+        rule.onNodeWithTag("game-2").assertIsFocused()
+        press(listOf(Key.DirectionLeft, Key.ButtonX)) // Chrono Trigger: asks before offloading
+        press(Key.DirectionCenter) // "Keep it"
+        rule.onNodeWithTag("game-1").assertIsFocused()
+    }
+
     @Test fun aOpensDetailsWithTheRightPrimaryAction() {
         show()
         press(listOf(Key.DirectionRight, Key.DirectionCenter)) // EarthBound

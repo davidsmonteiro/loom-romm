@@ -48,6 +48,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -156,7 +157,9 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     var searchEdits by remember { mutableIntStateOf(0) }
     var searchFocused by remember { mutableStateOf(false) }
     val firstGame = remember { FocusRequester() }
+    val gamesFocus = remember { FocusRequester() }
     val railFocus = remember { FocusRequester() }
+
 
     fun toggle(game: GameItem) = when (game.state) {
         InstallState.NOT_INSTALLED -> actions.download(game)
@@ -170,7 +173,10 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     // changes must not pull focus out of the field.
     InitialFocus(firstGame, state.selected?.platform?.id, state.filter, state.gridMode, state.games.isNotEmpty(), unless = { searchFocused })
 
-    Box(Modifier.fillMaxSize().onPadAction { action ->
+    // Focus coming into the screen from outside (a dialog's button that just went away) lands on
+    // the games, and the grid restores the one last focused: the game the dialog was opened from.
+    // Without this Compose enters the first group on screen, the platform rail.
+    Box(Modifier.fillMaxSize().focusProperties { onEnter = { runCatching { gamesFocus.requestFocus() } } }.focusGroup().onPadAction { action ->
         when (action) {
             PadAction.X -> state.games.firstOrNull { it.id == focusedId }?.let(::toggle) != null
             PadAction.Y -> { searchEdits++; true }
@@ -199,7 +205,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                         }
                     }
                     state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = LoomColors.Accent) }
-                    Games(state, firstGame, onFocus = { game, focused -> if (focused) focusedId = game.id else if (focusedId == game.id) focusedId = null },
+                    Games(state, firstGame, gamesFocus, onFocus = { game, focused -> if (focused) focusedId = game.id else if (focusedId == game.id) focusedId = null },
                         onOpen = { detailsFor = it }, actions = actions)
                 }
             }
@@ -319,6 +325,7 @@ private fun PlatformRail(state: LibraryUiState, actions: LibraryActions, modifie
 private fun Games(
     state: LibraryUiState,
     firstGame: FocusRequester,
+    gamesFocus: FocusRequester,
     onFocus: (GameItem, Boolean) -> Unit,
     onOpen: (GameItem) -> Unit,
     actions: LibraryActions,
@@ -349,7 +356,7 @@ private fun Games(
         LazyVerticalGrid(
             columns = GridCells.Adaptive(104.dp),
             state = gridState,
-            modifier = Modifier.fillMaxSize().focusRestorer(firstGame).testTag("game-grid"),
+            modifier = Modifier.fillMaxSize().focusRequester(gamesFocus).focusRestorer(firstGame).testTag("game-grid"),
             contentPadding = PaddingValues(8.dp),
             horizontalArrangement = Arrangement.spacedBy(Space.l),
             verticalArrangement = Arrangement.spacedBy(Space.l),
@@ -364,7 +371,7 @@ private fun Games(
         }
     } else {
         LazyColumn(
-            Modifier.fillMaxSize().focusRestorer(firstGame).testTag("game-list"),
+            Modifier.fillMaxSize().focusRequester(gamesFocus).focusRestorer(firstGame).testTag("game-list"),
             contentPadding = PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(Space.s),
         ) {
