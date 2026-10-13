@@ -37,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -147,10 +148,11 @@ private val libraryHints = listOf(
 
 @Composable
 fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
-    var focusedGame by remember { mutableStateOf<GameItem?>(null) }
+    // The game X acts on: only while it has focus, and in its current state.
+    var focusedId by remember { mutableStateOf<Int?>(null) }
     var detailsFor by remember { mutableStateOf<GameItem?>(null) }
     var confirmOffload by remember { mutableStateOf<GameItem?>(null) }
-    val searchFocus = remember { FocusRequester() }
+    var searchEdits by remember { mutableIntStateOf(0) }
     val firstGame = remember { FocusRequester() }
     val railFocus = remember { FocusRequester() }
 
@@ -163,8 +165,8 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
 
     Box(Modifier.fillMaxSize().onPadAction { action ->
         when (action) {
-            PadAction.X -> focusedGame?.let(::toggle) != null
-            PadAction.Y -> { runCatching { searchFocus.requestFocus() }; true }
+            PadAction.X -> state.games.firstOrNull { it.id == focusedId }?.let(::toggle) != null
+            PadAction.Y -> { searchEdits++; true }
             PadAction.L1 -> { actions.cyclePlatform(-1); true }
             PadAction.R1 -> { actions.cyclePlatform(+1); true }
             PadAction.START -> { actions.openQueue(); true }
@@ -182,7 +184,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                     Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                         LoomTextField(
                             value = state.query, onValueChange = actions::setQuery, label = null,
-                            placeholder = "Search", modifier = Modifier.weight(1f).focusRequester(searchFocus), tag = "search",
+                            placeholder = "Search", modifier = Modifier.weight(1f), tag = "search", editRequest = searchEdits,
                             onImeAction = { runCatching { firstGame.requestFocus() } },
                         )
                         LibraryFilter.entries.forEach { f ->
@@ -190,7 +192,8 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                         }
                     }
                     state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = LoomColors.Accent) }
-                    Games(state, firstGame, onFocus = { focusedGame = it }, onOpen = { detailsFor = it }, actions = actions)
+                    Games(state, firstGame, onFocus = { game, focused -> if (focused) focusedId = game.id else if (focusedId == game.id) focusedId = null },
+                        onOpen = { detailsFor = it }, actions = actions)
                 }
             }
         }
@@ -309,7 +312,7 @@ private fun PlatformRail(state: LibraryUiState, actions: LibraryActions, modifie
 private fun Games(
     state: LibraryUiState,
     firstGame: FocusRequester,
-    onFocus: (GameItem) -> Unit,
+    onFocus: (GameItem, Boolean) -> Unit,
     onOpen: (GameItem) -> Unit,
     actions: LibraryActions,
 ) {
@@ -371,10 +374,10 @@ private fun Games(
 }
 
 @Composable
-private fun GameCard(game: GameItem, coverBase: HttpUrl?, modifier: Modifier, onFocus: (GameItem) -> Unit, onClick: (GameItem) -> Unit) {
+private fun GameCard(game: GameItem, coverBase: HttpUrl?, modifier: Modifier, onFocus: (GameItem, Boolean) -> Unit, onClick: (GameItem) -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    LaunchedEffect(focused) { if (focused) onFocus(game) }
+    LaunchedEffect(focused) { onFocus(game, focused) }
     val scale by animateFloatAsState(if (focused) 1.04f else 1f, label = "card-scale")
     Column(
         modifier
@@ -393,10 +396,10 @@ private fun GameCard(game: GameItem, coverBase: HttpUrl?, modifier: Modifier, on
 }
 
 @Composable
-private fun GameRowItem(game: GameItem, coverBase: HttpUrl?, modifier: Modifier, onFocus: (GameItem) -> Unit, onClick: (GameItem) -> Unit) {
+private fun GameRowItem(game: GameItem, coverBase: HttpUrl?, modifier: Modifier, onFocus: (GameItem, Boolean) -> Unit, onClick: (GameItem) -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    LaunchedEffect(focused) { if (focused) onFocus(game) }
+    LaunchedEffect(focused) { onFocus(game, focused) }
     val shape = RoundedCornerShape(12.dp)
     Row(
         modifier.fillMaxWidth().background(if (focused) LoomColors.SurfaceHighest else LoomColors.Surface, shape)

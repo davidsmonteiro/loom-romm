@@ -1,5 +1,7 @@
 package ro.davidmontei.loom.ui.components
 
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,27 +17,27 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicSecureTextField
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldDecorator
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -43,32 +45,37 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.input.InputMode
-import androidx.compose.ui.platform.LocalInputModeManager
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.InterceptPlatformTextInput
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.PlatformTextInputInterceptor
+import androidx.compose.ui.platform.PlatformTextInputMethodRequest
+import androidx.compose.ui.platform.PlatformTextInputSession
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -226,6 +233,7 @@ fun LoomTextField(
     supporting: String? = null,
     isError: Boolean = false,
     tag: String? = null,
+    editRequest: Int = 0,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -242,6 +250,8 @@ fun LoomTextField(
     val frameFocused by frameInteraction.collectIsFocusedAsState()
     val innerFocused by innerInteraction.collectIsFocusedAsState()
     LaunchedEffect(editing) { if (editing) runCatching { inner.requestFocus() } }
+    // A screen's own shortcut (Y for search) goes straight to typing: each new request starts editing.
+    LaunchedEffect(editRequest) { if (editRequest > 0) editing = true }
 
     // Mirror the caller's value into the field only while nobody is typing in it, so a value
     // echoed back from a ViewModel can never overwrite keystrokes still arriving.
@@ -258,9 +268,10 @@ fun LoomTextField(
             submitted = true
             editing = false
             keyboard?.hide()
-            onImeAction()
-            // "Next" with no handler of its own moves on; otherwise the frame keeps focus.
+            // "Next" moves on; otherwise focus returns to the frame. Then the screen's own action
+            // runs, so one that moves focus (search to its first result) has the last word.
             if (imeAction == ImeAction.Next) focusManager.moveFocus(FocusDirection.Down) else runCatching { frame.requestFocus() }
+            onImeAction()
         }
     }
     LaunchedEffect(innerFocused) { if (innerFocused) submitted = false else editing = false }
@@ -305,25 +316,43 @@ fun LoomTextField(
                 .padding(horizontal = Space.l, vertical = 12.dp)
                 .then(if (tag != null) Modifier.testTag(tag) else Modifier),
         ) {
-            if (secret) {
-                BasicSecureTextField(
-                    state = state, modifier = fieldModifier, textStyle = textStyle, keyboardOptions = options,
-                    onKeyboardAction = { submit() }, interactionSource = innerInteraction,
-                    cursorBrush = SolidColor(LoomColors.Accent), decorator = decorator,
-                )
-            } else {
-                BasicTextField(
-                    state = state, modifier = fieldModifier, textStyle = textStyle, keyboardOptions = options,
-                    onKeyboardAction = { submit() },
-                    lineLimits = if (singleLine) TextFieldLineLimits.SingleLine else TextFieldLineLimits.Default,
-                    interactionSource = innerInteraction, cursorBrush = SolidColor(LoomColors.Accent), decorator = decorator,
-                )
+            InterceptPlatformTextInput(KeepScreenVisible) {
+                if (secret) {
+                    BasicSecureTextField(
+                        state = state, modifier = fieldModifier, textStyle = textStyle, keyboardOptions = options,
+                        onKeyboardAction = { submit() }, interactionSource = innerInteraction,
+                        cursorBrush = SolidColor(LoomColors.Accent), decorator = decorator,
+                    )
+                } else {
+                    BasicTextField(
+                        state = state, modifier = fieldModifier, textStyle = textStyle, keyboardOptions = options,
+                        onKeyboardAction = { submit() },
+                        lineLimits = if (singleLine) TextFieldLineLimits.SingleLine else TextFieldLineLimits.Default,
+                        interactionSource = innerInteraction, cursorBrush = SolidColor(LoomColors.Accent), decorator = decorator,
+                    )
+                }
             }
         }
         if (supporting != null) {
             Text(supporting, style = MaterialTheme.typography.bodySmall, color = if (isError) LoomColors.Error else LoomColors.TextMuted)
         }
     }
+}
+
+/**
+ * In landscape, keyboards default to full-screen editing, which covers the whole app with a bare
+ * text box. Loom keeps its screen visible above the keyboard, so you see the search results or the
+ * form you are filling in.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+private object KeepScreenVisible : PlatformTextInputInterceptor {
+    override suspend fun interceptStartInputMethod(request: PlatformTextInputMethodRequest, nextHandler: PlatformTextInputSession): Nothing =
+        nextHandler.startInputMethod(object : PlatformTextInputMethodRequest {
+            override fun createInputConnection(outAttributes: EditorInfo): InputConnection =
+                request.createInputConnection(outAttributes).also {
+                    outAttributes.imeOptions = outAttributes.imeOptions or EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN
+                }
+        })
 }
 
 /** A thin determinate bar in the accent colour (sage once complete). */

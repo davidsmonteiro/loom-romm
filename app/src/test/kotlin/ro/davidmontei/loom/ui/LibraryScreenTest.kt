@@ -6,11 +6,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.pressKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
@@ -137,11 +139,30 @@ class LibraryScreenTest {
         assertThat(calls).contains("offload:1")
     }
 
-    @Test fun yJumpsToSearch() {
+    /** Found on the Thor: Y only put the ring on the search box, and A was needed to type. */
+    @Test fun yStartsTypingASearch() {
         show()
         press(Key.ButtonY)
-        rule.onNodeWithTag("search").assertIsFocused()
+        rule.onNode(hasSetTextAction()).assertIsFocused() // the field itself, so the keyboard is up
         assertThat(calls).doesNotContain("download:1")
+    }
+
+    /** Found on the Thor: Enter in the search box left focus there instead of on the results. */
+    @Test fun enterInSearchGoesToTheFirstResult() {
+        show()
+        press(Key.ButtonY)
+        rule.onNode(hasSetTextAction()).performTextInput("Chrono")
+        press(Key.Enter)
+        rule.onNodeWithTag("game-1").assertIsFocused()
+    }
+
+    /** Found on the Thor: with the search box focused, X downloaded the game focused before it. */
+    @Test fun xOnlyActsOnTheFocusedGame() {
+        show()
+        press(Key.DirectionUp) // from Chrono Trigger to the search row
+        press(Key.ButtonX)
+        rule.onNodeWithText("Remove Chrono Trigger from this device?").assertDoesNotExist()
+        assertThat(calls.filter { it.startsWith("download") || it.startsWith("offload") }).isEmpty()
     }
 
     @Test fun aOpensDetailsWithTheRightPrimaryAction() {
