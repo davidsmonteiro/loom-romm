@@ -1,5 +1,6 @@
 package ro.davidmontei.loom.ui
 
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -8,7 +9,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
@@ -29,12 +30,14 @@ import java.io.File
 @OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
 class FolderPickerTest {
-    @get:Rule val rule = createComposeRule()
+    @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
     @get:Rule val tmp = TemporaryFolder()
     private val picked = mutableListOf<File>()
 
+    private lateinit var sd: File
+
     private fun show(focusOnOpen: Boolean) {
-        val sd = tmp.newFolder("6365-3230")
+        sd = tmp.newFolder("6365-3230")
         File(sd, "ROMs/snes").mkdirs()
         val volume = VolumeInfo(id = "6365-3230", root = sd, label = "SD card", removable = true)
         rule.setContent {
@@ -56,6 +59,12 @@ class FolderPickerTest {
         repeat(12) { rule.mainClock.advanceTimeBy(16); rule.waitForIdle() }
     }
 
+    /** What the activity does with B (BACK) once nothing in Compose has used it. */
+    private fun back() {
+        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        repeat(12) { rule.mainClock.advanceTimeBy(16); rule.waitForIdle() }
+    }
+
     @Test fun theScreensSuggestionKeepsFocus() {
         show(focusOnOpen = false)
         rule.onNodeWithText("Use suggested").assertIsFocused()
@@ -74,5 +83,21 @@ class FolderPickerTest {
     @Test fun onItsOwnThePickerTakesFocus() {
         show(focusOnOpen = true)
         rule.onNodeWithText("Use this folder").assertIsFocused()
+    }
+
+    /** Found by audit: B left the whole screen instead of undoing the A that opened a folder. */
+    @Test fun bGoesBackUpThroughTheFoldersOpened() {
+        show(focusOnOpen = true)
+        press(Key.DirectionDown) // ROMs
+        press(Key.DirectionCenter)
+        press(Key.DirectionDown) // snes
+        press(Key.DirectionCenter)
+        rule.onNodeWithText(File(sd, "ROMs/snes").path).assertExists()
+        back()
+        rule.onNodeWithText("snes").assertIsFocused() // the folder just left, so A goes back into it
+        back()
+        rule.onNodeWithText("ROMs").assertIsFocused()
+        rule.onNodeWithText(sd.path).assertExists()
+        assertThat(picked).isEmpty()
     }
 }

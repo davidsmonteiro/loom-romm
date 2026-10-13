@@ -481,17 +481,21 @@ fun DialogHost(content: @Composable () -> Unit) {
  * A dialog drawn in the activity's own window (Compose's Dialog opens a separate window, which
  * would bypass the activity's gamepad remapping). Rendered by the nearest [DialogHost] above
  * everything else; focus is trapped inside; B closes it.
+ *
+ * [maxWidth] can be raised (to [Dp.Unspecified]: the screen's width) for a form that would
+ * otherwise not fit the screen's height.
  */
 @Composable
 fun LoomDialog(
     title: String,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    maxWidth: Dp = 680.dp,
     body: @Composable ColumnScope.() -> Unit = {},
     buttons: @Composable RowScope.(firstFocus: FocusRequester) -> Unit,
 ) {
     val host = LocalDialogHost.current
-    val surface: @Composable () -> Unit = { DialogSurface(title, onDismiss, modifier, body, buttons) }
+    val surface: @Composable () -> Unit = { DialogSurface(title, onDismiss, modifier, maxWidth, body, buttons) }
     if (host == null) {
         surface()
         return
@@ -509,6 +513,7 @@ private fun DialogSurface(
     title: String,
     onDismiss: () -> Unit,
     modifier: Modifier,
+    maxWidth: Dp,
     body: @Composable ColumnScope.() -> Unit,
     buttons: @Composable RowScope.(firstFocus: FocusRequester) -> Unit,
 ) {
@@ -522,7 +527,7 @@ private fun DialogSurface(
     ) {
         Column(
             modifier
-                .widthIn(max = 680.dp)
+                .widthIn(max = maxWidth)
                 .padding(Space.xl)
                 .background(LoomColors.Surface, RoundedCornerShape(16.dp))
                 .border(1.dp, LoomColors.Outline, RoundedCornerShape(16.dp))

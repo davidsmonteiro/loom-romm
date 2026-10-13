@@ -1,8 +1,10 @@
 package ro.davidmontei.loom.ui.onboarding
 
 import android.os.Build
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.navigation.toRoute
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +31,7 @@ import ro.davidmontei.loom.romm.pairing.PairedCredentials
 import ro.davidmontei.loom.romm.pairing.RommConnector
 import ro.davidmontei.loom.romm.pairing.UnsupportedServerException
 import ro.davidmontei.loom.storage.mapping.MappingJson
+import ro.davidmontei.loom.ui.nav.OnboardingRoute
 import java.io.File
 import javax.inject.Inject
 
@@ -69,6 +72,8 @@ data class OnboardingState(
     val suggestedRoot: File? = null,
     val romsRoot: String? = null,
     val sync: CatalogSyncStatus? = null,
+    /** Pairing again (from Settings): only the pairing step, and the current token stays until a new one works. */
+    val pairAgain: Boolean = false,
 )
 
 @HiltViewModel
@@ -78,10 +83,13 @@ class OnboardingViewModel @Inject constructor(
     private val credentials: CredentialStore,
     private val volumes: StorageVolumes,
     private val sync: CatalogSyncScheduler,
+    savedState: SavedStateHandle,
 ) : ViewModel() {
-    private val _state = MutableStateFlow(OnboardingState())
+    private val pairAgain = savedState.toRoute<OnboardingRoute>().pairAgain
+    private val _state = MutableStateFlow(OnboardingState(step = if (pairAgain) OnboardingStep.PAIR else OnboardingStep.WELCOME, pairAgain = pairAgain))
     val state: StateFlow<OnboardingState> = _state.asStateFlow()
     private var pollJob: Job? = null
+    private var probeJob: Job? = null
 
     /** Folder names Cocoon uses, to recognise a ROMs root in the folder picker. */
     val knownSystemFolders: Set<String> by lazy {
@@ -93,10 +101,10 @@ class OnboardingViewModel @Inject constructor(
             val s = settings.snapshot()
             val creds = credentials.current.value
             _state.update {
-                it.copy(addressInput = s.server?.url?.toString().orEmpty(), base = s.server?.url, romsRoot = s.romsRoot, pairedAs = creds?.username)
+                it.copy(addressInput = s.server?.url?.toString().orEmpty(), base = s.server?.url, romsRoot = s.romsRoot,
+                    pairedAs = creds?.username.takeUnless { pairAgain })
             }
-            // Re-pairing from Settings forgets the token first, so this lands on the code.
-            go(resumeStep(s.server != null, creds != null, volumes.hasAllFilesAccess(), s.romsRoot != null))
+            go(if (pairAgain) OnboardingStep.PAIR else resumeStep(s.server != null, creds != null, volumes.hasAllFilesAccess(), s.romsRoot != null))
         }
         viewModelScope.launch { sync.status.collect { st -> _state.update { it.copy(sync = st) } } }
     }
@@ -112,14 +120,23 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
-    fun setAddress(text: String) = _state.update { it.copy(addressInput = text, serverError = null, serverSummary = null) }
+    /**
+     * A check belongs to the address it checked. The same text keeps it (the field reports its text again when
+     * the step reappears); a changed one drops it, and stops a check still running so its late result can't
+     * land on the new text, or hold up checking it.
+     */
+    fun setAddress(text: String) {
+        if (text == _state.value.addressInput) return
+        probeJob?.cancel()
+        _state.update { it.copy(addressInput = text, probing = false, serverError = null, serverSummary = null, insecureWarning = null) }
+    }
 
     /** Finds RomM at the typed address (and the optional second one), then moves on to pairing. */
     fun connect() {
         val s = _state.value
         if (s.probing) return
         _state.update { it.copy(probing = true, serverError = null, serverSummary = null, insecureWarning = null) }
-        viewModelScope.launch {
+        probeJob = viewModelScope.launch {
             try {
                 val probe = connector.probe(s.addressInput)
                 settings.setServer(ServerConfig(probe.baseUrl), probe.version)
@@ -183,6 +200,7 @@ class OnboardingViewModel @Inject constructor(
 
     fun submitPairInput() {
         val s = _state.value
+        if (s.pairing) return // already checking this one (the button stays enabled, and Enter can submit too)
         val base = s.base ?: return
         _state.update { it.copy(pairing = true, pairError = null) }
         viewModelScope.launch {
@@ -203,10 +221,13 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
+    /** The new token replaces the old one only here, once RomM has accepted it. */
     private suspend fun paired(creds: PairedCredentials) {
         credentials.save(creds)
         _state.update { it.copy(pairing = false, pairedAs = creds.username, session = null) }
-        go(resumeStep(hasServer = true, paired = true, volumes.hasAllFilesAccess(), _state.value.romsRoot != null))
+        // Pairing again ends here (the screen closes); a sync that needed the new token runs again.
+        if (pairAgain) sync.enqueue()
+        else go(resumeStep(hasServer = true, paired = true, volumes.hasAllFilesAccess(), _state.value.romsRoot != null))
     }
 
     fun refreshStorage() {

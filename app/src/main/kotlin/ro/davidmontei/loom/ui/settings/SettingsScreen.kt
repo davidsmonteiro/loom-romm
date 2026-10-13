@@ -3,6 +3,7 @@ package ro.davidmontei.loom.ui.settings
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.provider.Settings as AndroidSettings
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.indication
@@ -10,6 +11,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -21,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -32,22 +36,28 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import ro.davidmontei.loom.data.download.VolumeInfo
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.mapping.ArchivePolicy
@@ -108,7 +118,7 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
     val actions = remember(vm) {
         object : SettingsActions {
             override fun updateAddress(address: String) { vm.updateAddress(address) }
-            override fun repair() { vm.repair(onRepair) }
+            override fun repair() = onRepair()
             override fun signOut() { vm.signOut() }
             override fun fullResync() = vm.fullResync()
             override fun setRomsRoot(dir: java.io.File) { vm.setRomsRoot(dir) }
@@ -147,6 +157,9 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
     // A on a section opens it: focus moves to its first control once it is shown.
     var opened by remember { mutableIntStateOf(0) }
     LaunchedEffect(opened) { if (opened > 0) runCatching { contentFirst.requestFocus() } }
+    // B inside a section undoes that A, back to the section in the list (as Left does); from there it leaves Settings.
+    var contentHasFocus by remember { mutableStateOf(false) }
+    BackHandler(enabled = contentHasFocus) { runCatching { sectionFocus.getValue(section).requestFocus() } }
 
     ScreenScaffold(title = "Settings", hints = settingsHints) {
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
@@ -167,8 +180,10 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
                 }
             }
             Column(
+                // Only a move (Right) is redirected: focus given back to a control after a dialog closes stays on it.
                 Modifier.weight(1f).fillMaxHeight()
-                    .focusProperties { onEnter = { runCatching { contentFirst.requestFocus() } } }
+                    .onFocusChanged { contentHasFocus = it.hasFocus }
+                    .focusProperties { onEnter = { if (requestedFocusDirection != FocusDirection.Enter) runCatching { contentFirst.requestFocus() } } }
                     .verticalScroll(rememberScrollState()).padding(8.dp).testTag("settings-content"),
                 verticalArrangement = Arrangement.spacedBy(Space.m),
             ) {
@@ -189,12 +204,52 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
     }
 }
 
+/**
+ * Puts focus back on what opened a dialog (or the folder browser) once it has closed. The focused
+ * button leaves with it, and Compose would start again from the top-left: the section list.
+ */
+@Composable
+private fun ReturnFocusOnClose(open: Boolean, opener: () -> FocusRequester?) {
+    var wasOpen by remember { mutableStateOf(false) }
+    val target by rememberUpdatedState(opener)
+    LaunchedEffect(open) {
+        if (open) wasOpen = true
+        else if (wasOpen) {
+            delay(50) // until the dialog has gone: its focus trap refuses requests made from inside it
+            runCatching { target()?.requestFocus() }
+        }
+    }
+}
+
+/**
+ * A section's heading and explanation together with its first controls. Focus arriving on those
+ * controls shows the whole block: moving focus only scrolls as far as the control itself, and with
+ * nothing focusable above it the text could never be brought back with the pad.
+ */
+@Composable
+private fun SectionTop(content: @Composable ColumnScope.() -> Unit) {
+    val top = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
+    Column(
+        Modifier.bringIntoViewRequester(top).onFocusChanged { if (it.hasFocus) scope.launch { top.bringIntoView() } },
+        verticalArrangement = Arrangement.spacedBy(Space.m),
+        content = content,
+    )
+}
+
 @Composable
 private fun ServerSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
     val first = modifier
     val server = state.settings?.server
     var address by remember(server) { mutableStateOf(server?.url?.toString().orEmpty()) }
     var confirmSignOut by remember { mutableStateOf(false) }
+    var confirmPairAgain by remember { mutableStateOf(false) }
+    var signedOut by remember { mutableStateOf(false) }
+    val pairAgainFocus = remember { FocusRequester() }
+    val signOutFocus = remember { FocusRequester() }
+    // Signing out removes its own button: focus goes to Pair again, the next thing to do.
+    ReturnFocusOnClose(confirmSignOut) { if (signedOut) pairAgainFocus else signOutFocus }
+    ReturnFocusOnClose(confirmPairAgain) { pairAgainFocus }
     SectionHeader("Server")
     Text(
         state.settings?.serverVersion?.let { "RomM $it (Loom is built against RomM ${state.contractVersion})" } ?: "Not connected",
@@ -216,16 +271,27 @@ private fun ServerSection(state: SettingsUiState, actions: SettingsActions, modi
         color = if (creds != null) LoomColors.Installed else LoomColors.Error,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-        LoomButton("Pair again", onClick = actions::repair)
+        LoomButton("Pair again", onClick = { if (creds != null) confirmPairAgain = true else actions.repair() },
+            modifier = Modifier.focusRequester(pairAgainFocus))
         LoomButton("Full resync", onClick = actions::fullResync)
-        if (creds != null) LoomButton("Sign out", onClick = { confirmSignOut = true }, destructive = true)
+        if (creds != null) {
+            LoomButton("Sign out", onClick = { confirmSignOut = true }, destructive = true, modifier = Modifier.focusRequester(signOutFocus))
+        }
+    }
+    if (confirmPairAgain) {
+        LoomDialog(title = "Pair with RomM again?", onDismiss = { confirmPairAgain = false },
+            body = { Text("Loom keeps its current token until RomM accepts a new one. B on the pairing screen comes back here.", color = LoomColors.TextMuted) },
+            buttons = { f ->
+                LoomButton("Cancel", { confirmPairAgain = false }, Modifier.focusRequester(f))
+                LoomButton("Pair again", { confirmPairAgain = false; actions.repair() }, primary = true)
+            })
     }
     if (confirmSignOut) {
         LoomDialog(title = "Sign out of RomM?", onDismiss = { confirmSignOut = false },
             body = { Text("Loom forgets its token. Your library and installed games stay; downloads pause until you pair again.", color = LoomColors.TextMuted) },
             buttons = { f ->
                 LoomButton("Stay signed in", { confirmSignOut = false }, Modifier.focusRequester(f))
-                LoomButton("Sign out", { actions.signOut(); confirmSignOut = false }, primary = true, destructive = true)
+                LoomButton("Sign out", { actions.signOut(); signedOut = true; confirmSignOut = false }, primary = true, destructive = true)
             })
     }
 }
@@ -234,20 +300,31 @@ private fun ServerSection(state: SettingsUiState, actions: SettingsActions, modi
 private fun StorageSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
     val first = modifier
     var picking by remember { mutableStateOf(false) }
+    val changeFolder = remember { FocusRequester() }
+    ReturnFocusOnClose(picking) { changeFolder }
+    // B on the browser (once it has no folder left to go back up from) or its toggle closes it.
+    var toggleFocused by remember { mutableStateOf(false) }
+    var pickerFocused by remember { mutableStateOf(false) }
+    BackHandler(enabled = picking && (toggleFocused || pickerFocused)) { picking = false }
     val s = state.storage
-    SectionHeader("ROMs folder")
-    Text(s.romsRoot ?: "Not set", style = MaterialTheme.typography.titleSmall)
-    if (s.freeBytes != null && s.totalBytes != null) {
-        Text("${s.volumeLabel ?: "Storage"}: ${formatBytes(s.freeBytes)} free of ${formatBytes(s.totalBytes)}",
-            style = MaterialTheme.typography.bodyMedium.tabular(), color = LoomColors.TextMuted)
+    SectionTop {
+        SectionHeader("ROMs folder")
+        Text(s.romsRoot ?: "Not set", style = MaterialTheme.typography.titleSmall)
+        if (s.freeBytes != null && s.totalBytes != null) {
+            Text("${s.volumeLabel ?: "Storage"}: ${formatBytes(s.freeBytes)} free of ${formatBytes(s.totalBytes)}",
+                style = MaterialTheme.typography.bodyMedium.tabular(), color = LoomColors.TextMuted)
+        }
+        if (!state.allFilesAccess) Text("All files access is off: Loom can't write games. Turn it on in Android settings.", color = LoomColors.Error)
+        LoomButton(if (picking) "Close folder browser" else "Change folder", onClick = { picking = !picking },
+            modifier = first.focusRequester(changeFolder).onFocusChanged { toggleFocused = it.isFocused })
     }
-    if (!state.allFilesAccess) Text("All files access is off: Loom can't write games. Turn it on in Android settings.", color = LoomColors.Error)
-    LoomButton(if (picking) "Close folder browser" else "Change folder", onClick = { picking = !picking }, modifier = first)
     if (picking) {
         Text("Games already installed stay where they are; Loom looks for games it knows in the new folder.", color = LoomColors.TextMuted,
             style = MaterialTheme.typography.bodySmall)
-        FolderPicker(actions.volumes(), s.romsRoot?.let { java.io.File(it) }?.parentFile, actions.cocoonFolders.toSet(),
-            onPick = { actions.setRomsRoot(it); picking = false }, modifier = Modifier.heightIn(max = 360.dp))
+        val romsRoot = s.romsRoot?.let { java.io.File(it) }
+        FolderPicker(actions.volumes(), romsRoot?.parentFile, actions.cocoonFolders.toSet(), focusOn = romsRoot,
+            onPick = { actions.setRomsRoot(it); picking = false },
+            modifier = Modifier.heightIn(max = 360.dp).onFocusChanged { pickerFocused = it.hasFocus })
     }
     SectionHeader("Used by Loom, per platform")
     val used = state.mapping.filter { it.platform.installedCount > 0 }
@@ -272,22 +349,31 @@ private fun StorageSection(state: SettingsUiState, actions: SettingsActions, mod
 private fun MappingSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
     val first = modifier
     var editing by remember { mutableStateOf<MappingRow?>(null) }
-    SectionHeader("Where each platform's games go")
-    Text("Folder names must match the system folders Cocoon scans. Platforms marked “check” use the server's folder name because Loom has no default for them.",
-        color = LoomColors.TextMuted, style = MaterialTheme.typography.bodySmall)
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-        LoomButton("Export", onClick = actions::exportMapping, modifier = first)
-        LoomButton("Import", onClick = actions::importMapping)
+    // Each platform's row, so closing the editor puts focus back on the row it was opened from.
+    val ids = state.mapping.map { it.platform.platform.id }
+    val rowFocus = remember(ids) { ids.associateWith { FocusRequester() } }
+    var editedId by remember { mutableStateOf<Int?>(null) }
+    ReturnFocusOnClose(editing != null) { editedId?.let(rowFocus::get) }
+    SectionTop {
+        SectionHeader("Where each platform's games go")
+        Text("Folder names must match the system folders Cocoon scans. Platforms marked “check” use the server's folder name because Loom has no default for them.",
+            color = LoomColors.TextMuted, style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+            LoomButton("Export", onClick = actions::exportMapping, modifier = first)
+            LoomButton("Import", onClick = actions::importMapping)
+        }
     }
     Text("File: ${actions.exportPath}", style = MaterialTheme.typography.labelMedium, color = LoomColors.TextFaint)
     if (state.mapping.isEmpty()) Text("Sync the library to see your platforms here.", color = LoomColors.TextMuted)
     state.mapping.forEach { row ->
         val r = row.resolved
+        val id = row.platform.platform.id
         LoomRow(
             title = row.platform.platform.displayName,
             subtitle = "→ ${r.folder}/ · archives: ${if (r.archive == ArchivePolicy.EXTRACT) "unpack" else "keep"} · " +
                 "files: ${r.include.sorted().joinToString()}",
-            onClick = { editing = row },
+            onClick = { editing = row; editedId = id },
+            modifier = Modifier.focusRequester(rowFocus.getValue(id)),
             trailing = {
                 when (r.source) {
                     MappingSource.USER -> StatusBadge("Changed", color = LoomColors.AccentMuted, onColor = LoomColors.Text)
@@ -310,33 +396,50 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
     var multiDisc by remember { mutableStateOf(r.multiDisc) }
     var include by remember { mutableStateOf(r.include) }
     val folderProblem = FolderNames.validate(folder)
+    // As wide as the screen, with the choices beside the folder field and RomM's names beside the
+    // buttons: stacked, the form was taller than the screen and its top scrolled out of the pad's reach.
     LoomDialog(
         title = row.platform.platform.displayName,
         onDismiss = onClose,
+        maxWidth = Dp.Unspecified,
         body = {
-            Text("RomM slug ${row.platform.platform.slug} · server folder ${row.platform.platform.fsSlug}",
-                style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = LoomColors.TextFaint)
-            LoomTextField(folder, { folder = it.trim() }, "Folder in your ROMs folder", isError = folderProblem != null,
-                supporting = folderProblem ?: actions.cocoonFolders.filter { it.startsWith(folder.take(1)) && it != folder }.take(8)
-                    .takeIf { it.isNotEmpty() && folder.isNotEmpty() }?.joinToString(prefix = "Other Cocoon folders: "))
-            Text("Archives (.zip, .7z)", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                LoomChip("Keep as is", archive == ArchivePolicy.KEEP, { archive = ArchivePolicy.KEEP })
-                LoomChip("Unpack", archive == ArchivePolicy.EXTRACT, { archive = ArchivePolicy.EXTRACT })
-            }
-            Text("Multi-disc games", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                LoomChip("Game.m3u folder", multiDisc == MultiDiscLayout.M3U_DIR, { multiDisc = MultiDiscLayout.M3U_DIR })
-                LoomChip("Plain folder", multiDisc == MultiDiscLayout.FOLDER, { multiDisc = MultiDiscLayout.FOLDER })
-            }
-            Text("Files to download", style = MaterialTheme.typography.labelLarge)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                ROM_FILE_CATEGORIES.forEach { c ->
-                    LoomChip(c, c in include, { include = if (c in include) include - c else include + c })
+            Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
+                    LoomTextField(folder, { folder = it.trim() }, "Folder in your ROMs folder", isError = folderProblem != null,
+                        supporting = folderProblem ?: actions.cocoonFolders.filter { it.startsWith(folder.take(1)) && it != folder }.take(8)
+                            .takeIf { it.isNotEmpty() && folder.isNotEmpty() }?.joinToString(prefix = "Other Cocoon folders: "),
+                        modifier = Modifier.weight(1f))
+                    Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                            Text("Archives (.zip, .7z)", style = MaterialTheme.typography.labelLarge)
+                            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                                LoomChip("Keep as is", archive == ArchivePolicy.KEEP, { archive = ArchivePolicy.KEEP })
+                                LoomChip("Unpack", archive == ArchivePolicy.EXTRACT, { archive = ArchivePolicy.EXTRACT })
+                            }
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                            Text("Multi-disc games", style = MaterialTheme.typography.labelLarge)
+                            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                                LoomChip("Game.m3u folder", multiDisc == MultiDiscLayout.M3U_DIR, { multiDisc = MultiDiscLayout.M3U_DIR })
+                                LoomChip("Plain folder", multiDisc == MultiDiscLayout.FOLDER, { multiDisc = MultiDiscLayout.FOLDER })
+                            }
+                        }
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                    Text("Files to download", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                        ROM_FILE_CATEGORIES.forEach { c ->
+                            LoomChip(c, c in include, { include = if (c in include) include - c else include + c })
+                        }
+                    }
                 }
             }
         },
         buttons = { f ->
+            Text("RomM slug ${row.platform.platform.slug} · server folder ${row.platform.platform.fsSlug}",
+                Modifier.weight(1f).align(Alignment.CenterVertically),
+                style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = LoomColors.TextFaint)
             if (row.override != null) LoomButton("Reset", { actions.resetOverride(match); onClose() })
             LoomButton("Cancel", onClose, Modifier.focusRequester(f))
             LoomButton("Save", enabled = folderProblem == null && include.isNotEmpty(), primary = true, onClick = {
@@ -350,10 +453,19 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
 @Composable
 private fun DownloadsSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
     val first = modifier
+    val firstChip = remember { FocusRequester() }
+    // Allowing background downloads replaces the focused button with a line of text; focus stays in the section.
+    // (Read while composing: by the time the effect runs, the button has gone and reported losing focus.)
+    var allowFocused by remember { mutableStateOf(false) }
+    val allowHadFocus = allowFocused
+    LaunchedEffect(state.batteryUnrestricted) {
+        if (state.batteryUnrestricted && allowHadFocus) { delay(50); runCatching { firstChip.requestFocus() } }
+    }
     SectionHeader("At the same time")
     Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
         (1..3).forEach { n ->
-            LoomChip("$n", state.settings?.maxConcurrentDownloads == n, { actions.setConcurrency(n) }, if (n == 1) first else Modifier)
+            LoomChip("$n", state.settings?.maxConcurrentDownloads == n, { actions.setConcurrency(n) },
+                if (n == 1) first.focusRequester(firstChip) else Modifier)
         }
     }
     Text("One at a time is usually fastest over one connection; two or three can help with many small games.",
@@ -364,7 +476,8 @@ private fun DownloadsSection(state: SettingsUiState, actions: SettingsActions, m
     } else {
         Text("Loom is battery-optimised. Android may stop downloads in the background and not restart them until you open Loom.",
             color = LoomColors.TextMuted)
-        LoomButton("Allow background downloads", onClick = actions::openBatterySettings)
+        LoomButton("Allow background downloads", onClick = actions::openBatterySettings,
+            modifier = Modifier.onFocusChanged { allowFocused = it.isFocused })
     }
 }
 
@@ -372,6 +485,10 @@ private fun DownloadsSection(state: SettingsUiState, actions: SettingsActions, m
 private fun AboutSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
     val first = modifier
     var showing by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val gplFocus = remember { FocusRequester() }
+    val fontFocus = remember { FocusRequester() }
+    var opener by remember { mutableStateOf(gplFocus) }
+    ReturnFocusOnClose(showing != null) { opener }
     SectionHeader("Loom ${state.appVersion}")
     Text("Puts games from your RomM server into the folders Cocoon scans. Free software under the GNU GPL v3.0.",
         color = LoomColors.TextMuted)
@@ -383,8 +500,10 @@ private fun AboutSection(state: SettingsUiState, actions: SettingsActions, modif
         "AndroidX, Jetpack Compose, Kotlin, OkHttp, Retrofit, Coil, Dagger/Hilt, Apache Commons Compress, XZ for Java, ZXing (Apache 2.0).",
         style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted)
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-        LoomButton("GNU GPL v3.0", onClick = { showing = "GNU General Public License v3.0" to actions.licenseText() }, modifier = first)
-        LoomButton("Inter font licence", onClick = { showing = "SIL Open Font License 1.1" to actions.fontLicense() })
+        LoomButton("GNU GPL v3.0", onClick = { showing = "GNU General Public License v3.0" to actions.licenseText(); opener = gplFocus },
+            modifier = first.focusRequester(gplFocus))
+        LoomButton("Inter font licence", onClick = { showing = "SIL Open Font License 1.1" to actions.fontLicense(); opener = fontFocus },
+            modifier = Modifier.focusRequester(fontFocus))
     }
     showing?.let { (title, text) ->
         LoomDialog(title = title, onDismiss = { showing = null },

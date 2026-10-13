@@ -1,12 +1,24 @@
 package ro.davidmontei.loom.ui
 
+import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsFocused
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -14,6 +26,7 @@ import com.google.common.truth.Truth.assertThat
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import ro.davidmontei.loom.data.auth.Credentials
@@ -37,8 +50,10 @@ import java.io.File
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = THOR_TOP_SCREEN)
 class SettingsScreenTest {
-    @get:Rule val rule = createComposeRule()
+    @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
+    @get:Rule val tmp = TemporaryFolder()
     private val calls = mutableListOf<String>()
+    private var state by mutableStateOf(sample)
 
     companion object {
         private val mapper = PlatformMapper(MappingJson.shippedDefaults())
@@ -84,11 +99,27 @@ class SettingsScreenTest {
     }
 
     private fun show() {
-        rule.setContent { LoomTestTheme { SettingsContent(sample, actions) } }
+        rule.setContent { LoomTestTheme { SettingsContent(state, actions) } }
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
     }
 
-    private fun press(key: Key) { rule.onRoot().performKeyInput { pressKey(key) }; rule.mainClock.advanceTimeBy(100); rule.waitForIdle() }
+    /** Lets the press recompose first, so delayed focus requests it starts have run when it returns. */
+    private fun press(key: Key) {
+        rule.onRoot().performKeyInput { pressKey(key) }
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+    }
+
+    /** What the activity does with B (BACK) once nothing in Compose has used it. */
+    private fun back() {
+        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+    }
+
+    /** Recompose with the new state first, then let delayed focus requests run. */
+    private fun update(change: (SettingsUiState) -> SettingsUiState) {
+        state = change(state)
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+    }
 
     @Test fun sectionsAreReachableAndOpenWithA() {
         show()
@@ -115,6 +146,17 @@ class SettingsScreenTest {
         press(Key.DirectionCenter) // Change folder, level with "Platform folders"
         press(Key.DirectionLeft)
         rule.onNodeWithTag("section-STORAGE").assertIsFocused()
+    }
+
+    /** Found by audit: B inside a section left Settings instead of going back to the section list. */
+    @Test fun bInsideASectionReturnsToTheSectionList() {
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown) // Platform folders
+        press(Key.DirectionCenter) // Export
+        press(Key.DirectionDown); press(Key.DirectionDown) // a platform row
+        back()
+        rule.onNodeWithTag("section-MAPPING").assertIsFocused()
+        assertThat(rule.activity.isFinishing).isFalse()
     }
 
     /** Found on the Thor: the licence text scrolled by touch only. */
@@ -144,5 +186,181 @@ class SettingsScreenTest {
         rule.onNodeWithText("Cancel").assertIsFocused() // editor opens on the safe choice
         press(Key.DirectionRight); press(Key.DirectionCenter) // Save
         assertThat(calls).contains("save:psx:psx")
+    }
+
+    /** Found by audit: closing a dialog left focus on the section list, not on what opened it. */
+    @Test fun closingTheFolderEditorGivesFocusBackToItsRow() {
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown) // Platform folders
+        press(Key.DirectionCenter) // Export
+        press(Key.DirectionDown); press(Key.DirectionDown) // Super Nintendo, the second platform
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Cancel").assertIsFocused()
+        back()
+        rule.onNodeWithText("Super Nintendo").assertIsFocused()
+        press(Key.DirectionCenter)
+        press(Key.DirectionCenter) // Cancel
+        rule.onNodeWithText("Super Nintendo").assertIsFocused()
+    }
+
+    @Test fun closingTheLicenceGivesFocusBackToItsButton() {
+        show()
+        repeat(5) { press(Key.DirectionDown) } // About
+        press(Key.DirectionCenter) // GNU GPL v3.0
+        press(Key.DirectionRight)
+        press(Key.DirectionCenter) // Inter font licence; Close has focus
+        rule.onNodeWithText("Close").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Inter font licence").assertIsFocused()
+    }
+
+    @Test fun stayingSignedInGivesFocusBackToSignOut() {
+        show()
+        press(Key.DirectionCenter) // Server & pairing: the address
+        press(Key.DirectionDown) // the pairing buttons, on the one nearest the address's centre
+        rule.onNodeWithText("Sign out").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Stay signed in").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Sign out").assertIsFocused()
+        assertThat(calls).doesNotContain("signout")
+    }
+
+    @Test fun allowingBackgroundDownloadsKeepsFocusInTheSection() {
+        show()
+        repeat(3) { press(Key.DirectionDown) } // Downloads
+        press(Key.DirectionCenter) // the first concurrency chip
+        press(Key.DirectionDown)
+        rule.onNodeWithText("Allow background downloads").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("battery")
+        update { it.copy(batteryUnrestricted = true) } // back from Android's dialog, allowed
+        rule.onNodeWithText("1").assertIsFocused()
+    }
+
+    @Test fun pickingAFolderGivesFocusBackToChangeFolder() {
+        show()
+        press(Key.DirectionDown) // Storage
+        press(Key.DirectionCenter) // Change folder
+        press(Key.DirectionCenter) // the browser opens; the SD card isn't there in tests, so it lists volumes
+        rule.onNodeWithText("SD card").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Use this folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("root:/storage/9C33-6BBD")
+        rule.onNodeWithText("Change folder").assertIsFocused()
+    }
+
+    /** Found by audit: B in the folder browser left Settings instead of going up a folder or closing it. */
+    @Test fun bGoesUpAFolderThenClosesTheBrowser() {
+        show()
+        press(Key.DirectionDown) // Storage
+        press(Key.DirectionCenter) // Change folder
+        press(Key.DirectionCenter) // the browser lists volumes
+        press(Key.DirectionCenter) // into the SD card
+        rule.onNodeWithText("Use this folder").assertIsFocused()
+        back()
+        rule.onNodeWithText("SD card").assertIsFocused()
+        back()
+        rule.onNodeWithText("Change folder").assertIsFocused()
+        back()
+        rule.onNodeWithTag("section-STORAGE").assertIsFocused()
+        assertThat(calls.filter { it.startsWith("root:") }).isEmpty()
+    }
+
+    /** Found by audit: the browser opened at the card's root on "Use this folder", so A, A made the root the ROMs folder. */
+    @Test fun changeFolderStartsOnTheCurrentRomsFolder() {
+        val card = tmp.newFolder("9C33-6BBD")
+        listOf("Android", "DCIM", "Download", "Music", "Pictures", "ROMs/snes").forEach { File(card, it).mkdirs() }
+        val roms = File(card, "ROMs")
+        state = sample.copy(storage = sample.storage.copy(romsRoot = roms.path))
+        show()
+        press(Key.DirectionDown) // Storage
+        press(Key.DirectionCenter) // Change folder
+        press(Key.DirectionCenter) // the browser opens beside the ROMs folder
+        rule.onNodeWithText("ROMs").assertIsFocused()
+        press(Key.DirectionCenter) // A goes into it
+        rule.onNodeWithText("snes").assertExists()
+        assertThat(calls.filter { it.startsWith("root:") }).isEmpty()
+    }
+
+    /** The top of the settings pane: anything above it has scrolled out of view. */
+    private fun paneTop() = rule.onNodeWithTag("settings-sections").getBoundsInRoot().top
+
+    /** Found by audit: back on a section's first control, the text above it stayed scrolled out of view. */
+    @Test fun aSectionsFirstControlsShowItsHeading() {
+        state = sample.copy(mapping = sample.mapping + sample.mapping.map { it.copy(platform = it.platform.copy(
+            platform = it.platform.platform.copy(id = it.platform.platform.id + 10, displayName = it.platform.platform.displayName + " 2"))) })
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown) // Platform folders
+        press(Key.DirectionCenter) // Export
+        repeat(8) { press(Key.DirectionDown) } // down the platforms, scrolling the pane
+        repeat(8) { press(Key.DirectionUp) } // to Export / Import
+        assertThat(rule.onNodeWithText("WHERE EACH PLATFORM'S GAMES GO").getBoundsInRoot().top).isAtLeast(paneTop())
+    }
+
+    @Test fun theFolderBrowsersToggleShowsTheRomsFolder() {
+        show()
+        press(Key.DirectionDown) // Storage
+        press(Key.DirectionCenter) // Change folder
+        press(Key.DirectionCenter) // open the browser, on the SD card
+        repeat(2) { press(Key.DirectionDown) } // down the games on the device, scrolling the pane
+        repeat(3) { press(Key.DirectionUp) }
+        rule.onNodeWithText("Close folder browser").assertIsFocused()
+        assertThat(rule.onNodeWithText("ROMS FOLDER").getBoundsInRoot().top).isAtLeast(paneTop())
+    }
+
+    /** Found by audit: the editor was taller than the screen; its title and the folder's label scrolled out of reach. */
+    @Test fun theFolderEditorFitsTheScreen() {
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown) // Platform folders
+        press(Key.DirectionCenter) // Export
+        press(Key.DirectionDown) // PlayStation
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Cancel").assertIsFocused()
+        val editor = rule.onNode(hasText("Files to download")).fetchSemanticsNode()
+        assertThat(editor.config[SemanticsProperties.VerticalScrollAxisRange].maxValue()).isEqualTo(0f)
+    }
+
+    /**
+     * After a tap on a section the pad's first A (replayed once focus is back) belongs to that section, not
+     * to Server & pairing: focus entering the section list goes to the open section. Robolectric can't enter
+     * touch mode, so the test switches Compose's own input mode, which InitialFocus and focusability read.
+     */
+    @Test fun afterATapThePadStartsOnTheOpenSection() {
+        var mode by mutableStateOf(InputMode.Keyboard)
+        val inputModes = object : InputModeManager {
+            override val inputMode get() = mode
+            override fun requestInputMode(inputMode: InputMode): Boolean { mode = inputMode; return true }
+        }
+        rule.setContent {
+            LoomTestTheme { CompositionLocalProvider(LocalInputModeManager provides inputModes) { SettingsContent(state, actions) } }
+        }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        mode = InputMode.Touch
+        rule.onNodeWithTag("section-CONTROLS").performClick()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+        mode = InputMode.Keyboard // a pad press leaves touch mode
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+        rule.onNodeWithTag("section-CONTROLS").assertIsFocused()
+        press(Key.DirectionCenter) // the replayed A opens it…
+        press(Key.DirectionCenter) // …and the next acts on it
+        assertThat(calls).contains("swap:true")
+    }
+
+    /** Found by audit: Pair again threw the working token away at once, without asking. */
+    @Test fun pairAgainAsksFirst() {
+        show()
+        press(Key.DirectionCenter) // Server & pairing: the address
+        press(Key.DirectionDown); press(Key.DirectionLeft); press(Key.DirectionLeft) // the first pairing button
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Cancel").assertIsFocused() // the dialog opens on the safe choice
+        press(Key.DirectionCenter)
+        assertThat(calls).doesNotContain("repair")
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionCenter)
+        press(Key.DirectionRight); press(Key.DirectionCenter) // Pair again, in the dialog
+        assertThat(calls).contains("repair")
     }
 }
