@@ -47,6 +47,7 @@ import ro.davidmontei.loom.storage.mapping.PlatformMapper
 import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.ROM_FILE_CATEGORIES
+import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.ui.settings.MappingRow
 import ro.davidmontei.loom.ui.settings.SettingsActions
 import ro.davidmontei.loom.ui.settings.SettingsContent
@@ -64,9 +65,16 @@ class SettingsScreenTest {
 
     companion object {
         private val mapper = PlatformMapper(MappingJson.shippedDefaults())
-        private fun row(id: Int, name: String, slug: String, fsSlug: String, installed: Int = 0, bytes: Long = 0) =
+        fun row(id: Int, name: String, slug: String, fsSlug: String, installed: Int = 0, bytes: Long = 0) =
             MappingRow(PlatformSummary(PlatformEntity(id, slug, fsSlug, name, name, 100, "t"), 100, installed, bytes),
                 mapper.resolve(slug, fsSlug), null)
+
+        /** A platform whose folder the user chose, so the shipped mapping no longer names it. */
+        fun chosenRow(id: Int, name: String, slug: String, fsSlug: String, folder: String): MappingRow {
+            val chosen = PlatformMappingEntry(PlatformMatch(fsSlug = fsSlug), folder = folder)
+            return row(id, name, slug, fsSlug).copy(resolved = PlatformMapper(MappingJson.shippedDefaults(), listOf(chosen)).resolve(slug, fsSlug),
+                override = chosen)
+        }
 
         val noop: SettingsActions get() = Recording(mutableListOf())
 
@@ -98,6 +106,9 @@ class SettingsScreenTest {
         override fun importMapping() { calls += "import" }
         override val exportPath = "/storage/emulated/0/Download/loom-mapping.json"
         override val cocoonFolders = listOf("psx", "snes", "gc")
+        /** The ROMs folder's system folders; null when Loom can't look. */
+        var onCard: List<SystemFolder>? = null
+        override suspend fun foldersOnCard(names: List<String>) = onCard?.filter { f -> names.any { it.equals(f.name, ignoreCase = true) } }
         override fun setConcurrency(n: Int) { calls += "concurrency:$n" }
         override fun setSwap(swap: Boolean) { calls += "swap:$swap" }
         override fun openBatterySettings() { calls += "battery" }
@@ -204,6 +215,28 @@ class SettingsScreenTest {
         rule.waitForIdle()
         rule.onNodeWithText("Save", useUnmergedTree = true).performClick()
         assertThat(calls).contains("save:psx:ps1")
+    }
+
+    /**
+     * Found on the Thor: under Arcade's folder ("arcade") the hint listed Cocoon folders that only start with
+     * the same letter (amiga, amstradcpc…). It lists arcade's own other folders, and what the card holds of
+     * each. Only a platform without any falls back to Cocoon's folders.
+     */
+    @Test fun theFolderHintListsThePlatformsOwnFolders() {
+        state = sample.copy(mapping = listOf(chosenRow(5, "Arcade", "arcade", "arcade", "arcade"), row(6, "PlayStation 2", "ps2", "ps2")))
+        actions.onCard = listOf(SystemFolder("arcade", 3), SystemFolder("MAME", 52), SystemFolder("fbneo", 0), SystemFolder("ps2", 9))
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionCenter) // Platform folders: Export
+        press(Key.DirectionDown); press(Key.DirectionCenter) // Arcade
+        rule.onNodeWithText("Other folders for Arcade: MAME (52 games), fbneo (no games), fba (not on the card)", useUnmergedTree = true)
+            .assertExists()
+        rule.onAllNodes(hasSetTextAction(), useUnmergedTree = true)[0].performTextReplacement("mame")
+        rule.waitForIdle()
+        rule.onNodeWithText("Other folders for Arcade: arcade (3 games), fbneo (no games), fba (not on the card)", useUnmergedTree = true)
+            .assertExists()
+        back()
+        press(Key.DirectionDown); press(Key.DirectionCenter) // PlayStation 2: no other folders of its own
+        rule.onNodeWithText("Other Cocoon folders: psx", useUnmergedTree = true).assertExists()
     }
 
     /** Found by audit: closing a dialog left focus on the section list, not on what opened it. */

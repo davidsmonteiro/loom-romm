@@ -18,8 +18,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
-import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.ui.library.FolderQuestion
 import ro.davidmontei.loom.ui.library.GameItem
@@ -79,17 +77,36 @@ class FitsTheScreenTest {
         rule.saveScreenshot("onboarding-server-http-warning")
     }
 
-    /** Found by audit: the platform folder editor was taller than the screen. */
+    /**
+     * Found by audit: the platform folder editor was taller than the screen. With Reset, and the longest hint
+     * under the field for a platform without other folders of its own: eight Cocoon folders.
+     */
     @Test fun thePlatformFolderEditorFits() {
-        val psx = SettingsScreenTest.sample.mapping.first()
-        val state = SettingsScreenTest.sample.copy(mapping = listOf(psx.copy(override = PlatformMappingEntry(PlatformMatch(slug = "psx"), folder = "psx"))))
+        val state = SettingsScreenTest.sample.copy(mapping = listOf(SettingsScreenTest.chosenRow(1, "PlayStation 2", "ps2", "ps2", "ps2")))
         val cocoon = listOf("psx", "ps2", "ps3", "psp", "pspminis", "pico8", "pokemini", "pc88", "pc98", "pcfx")
         val actions = object : SettingsActions by SettingsScreenTest.noop { override val cocoonFolders = cocoon }
         rule.setContent { LoomTestTheme { SettingsContent(state, actions) } }
         rule.onNodeWithTag("section-MAPPING").performClick()
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
-        rule.onNodeWithText("PlayStation").performClick() // with Reset, and the other Cocoon folders under the field
+        rule.onNodeWithText("PlayStation 2").performClick()
+        rule.onNodeWithText("Other Cocoon folders: psx, ps3, psp, pspminis, pico8, pokemini, pc88, pc98", useUnmergedTree = true).assertExists()
         assertThat(overflow("Files to download")).isEqualTo(0f)
+    }
+
+    /** The editor with arcade's other folders under the field, and what the card holds of each. */
+    @Test fun thePlatformFolderEditorFitsWithThePlatformsOwnFolders() {
+        val state = SettingsScreenTest.sample.copy(mapping = listOf(SettingsScreenTest.chosenRow(1, "Arcade", "arcade", "arcade", "arcade")))
+        val actions = object : SettingsActions by SettingsScreenTest.noop {
+            override suspend fun foldersOnCard(names: List<String>) = listOf(SystemFolder("mame", 1234), SystemFolder("fbneo", 0))
+        }
+        rule.setContent { LoomTestTheme { SettingsContent(state, actions) } }
+        rule.onNodeWithTag("section-MAPPING").performClick()
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithText("Arcade").performClick()
+        rule.onNodeWithText("Other folders for Arcade: mame (1234 games), fbneo (no games), fba (not on the card)", useUnmergedTree = true)
+            .assertExists()
+        assertThat(overflow("Files to download")).isEqualTo(0f)
+        rule.saveScreenshot("settings-mapping-editor-arcade")
     }
 
     /** The question at a platform's first download, with its few options and with every folder of the Thor's ES-DE template. */

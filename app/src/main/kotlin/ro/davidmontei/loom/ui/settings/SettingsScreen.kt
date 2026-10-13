@@ -35,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -73,6 +74,7 @@ import ro.davidmontei.loom.storage.mapping.MultiDiscLayout
 import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.ROM_FILE_CATEGORIES
+import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.ui.components.ButtonHint
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.components.FolderPicker
@@ -106,6 +108,8 @@ interface SettingsActions {
     fun importMapping()
     val exportPath: String
     val cocoonFolders: List<String>
+    /** Which of [names] are folders on the card, with their game counts; null when Loom can't look. Off the main thread. */
+    suspend fun foldersOnCard(names: List<String>): List<SystemFolder>?
     fun setConcurrency(n: Int)
     fun setSwap(swap: Boolean)
     fun openBatterySettings()
@@ -135,6 +139,7 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
             override fun importMapping() { vm.importMapping() }
             override val exportPath get() = vm.exportPath
             override val cocoonFolders get() = vm.cocoonFolders
+            override suspend fun foldersOnCard(names: List<String>) = vm.foldersOnCard(names)
             override fun setConcurrency(n: Int) { vm.setConcurrency(n) }
             override fun setSwap(swap: Boolean) { vm.setSwap(swap) }
             override fun openBatterySettings() {
@@ -425,9 +430,11 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
     var multiDisc by remember { mutableStateOf(r.multiDisc) }
     var include by remember { mutableStateOf(r.include) }
     val folderProblem = FolderNames.validate(folder)
+    // What the card holds of the platform's usual folders, looked up off the main thread: names alone until then.
+    val onCard by produceState<List<SystemFolder>?>(null, r.usualFolders) { value = actions.foldersOnCard(r.usualFolders) }
     // The choices on the right reach lower than the folder field, so the pad's nearest-control rule
     // skipped the field: Left from "Game.m3u folder" went down to the file chips, Up from those under
-    // the field went to the right column, and Down from the field went there too. All are pointed.
+    // the field went to the right column, and Down from the field went there too. Those moves are set here.
     val folderFocus = remember { FocusRequester() }
     val firstFile = remember { FocusRequester() }
     val layout = remember { EditorLayout() }
@@ -441,8 +448,7 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
             Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
                     LoomTextField(folder, { folder = it.trim() }, "Folder in your ROMs folder", isError = folderProblem != null,
-                        supporting = folderProblem ?: actions.cocoonFolders.filter { it.startsWith(folder.take(1)) && it != folder }.take(8)
-                            .takeIf { it.isNotEmpty() && folder.isNotEmpty() }?.joinToString(prefix = "Other Cocoon folders: "),
+                        supporting = folderProblem ?: folderHint(row.platform.platform.displayName, folder, r.usualFolders, onCard, actions.cocoonFolders),
                         modifier = Modifier.weight(1f).focusRequester(folderFocus).focusProperties { down = firstFile }, tag = "folder-field")
                     Column(Modifier.onPlaced { layout.rightColumn = it }, verticalArrangement = Arrangement.spacedBy(Space.s)) {
                         Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
@@ -490,6 +496,29 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
             })
         },
     )
+}
+
+/**
+ * The hint under the folder field: the platform's other usual folders (arcade's mame, fbneo, fba…),
+ * with what the card holds of each once that's known. Only a platform without any gets Cocoon's
+ * folders that start like the one typed.
+ */
+private fun folderHint(platform: String, typed: String, usual: List<String>, onCard: List<SystemFolder>?, cocoonFolders: List<String>): String? {
+    val others = usual.filter { FolderNames.key(it) != FolderNames.key(typed) }
+    if (others.isEmpty()) {
+        return cocoonFolders.filter { it.startsWith(typed.take(1)) && it != typed }.take(8)
+            .takeIf { it.isNotEmpty() && typed.isNotEmpty() }?.joinToString(prefix = "Other Cocoon folders: ")
+    }
+    val found = onCard?.associateBy { FolderNames.key(it.name) }
+    return others.joinToString(prefix = "Other folders for $platform: ") { name ->
+        val folder = found?.get(FolderNames.key(name))
+        when {
+            found == null -> name
+            folder == null -> "$name (not on the card)"
+            folder.games == 0 -> "${folder.name} (no games)"
+            else -> "${folder.name} (${gameCount(folder.games)})"
+        }
+    }
 }
 
 /** Where the folder editor's right column and file chips were placed; read when the pad moves, not while drawing. */

@@ -26,6 +26,7 @@ import ro.davidmontei.loom.data.db.CatalogDao
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.install.InstallManager
+import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.Settings
@@ -39,6 +40,7 @@ import ro.davidmontei.loom.storage.mapping.MappingJson
 import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.ResolvedPlatform
+import ro.davidmontei.loom.storage.mapping.SystemFolder
 import java.io.File
 import javax.inject.Inject
 
@@ -70,6 +72,7 @@ class SettingsViewModel @Inject constructor(
     private val credentials: CredentialStore,
     private val catalog: CatalogDao,
     private val mapping: MappingRepository,
+    private val folders: FolderChooser,
     private val volumes: StorageVolumes,
     private val installs: InstallManager,
     private val sync: CatalogSyncScheduler,
@@ -181,6 +184,9 @@ class SettingsViewModel @Inject constructor(
     val cocoonFolders: List<String> by lazy {
         MappingJson.shippedDefaults().platforms.mapNotNull { it.folder }.distinct().sorted()
     }
+
+    /** Which of a platform's usual folders are on the card, and how many games each holds; null when Loom can't look. */
+    suspend fun foldersOnCard(names: List<String>): List<SystemFolder>? = folders.onCard(names)
 
     // --- downloads & controls ---
 

@@ -102,6 +102,11 @@ data class ResolvedPlatform(
     val folderChosen: Boolean = false,
     /** Folder names this platform's games may already live under on the card: [folder] first, then its aliases. */
     val candidates: List<String> = listOf(folder),
+    /**
+     * Every folder name this platform's games usually go in, whatever the user chose: [candidates],
+     * then the shipped mapping's folder and aliases. Offered when the user picks a folder.
+     */
+    val usualFolders: List<String> = candidates,
 ) {
     /** True when a RomM file with [category] should be downloaded. */
     fun includes(category: String?): Boolean =
@@ -147,6 +152,7 @@ class PlatformMapper(
             else -> MappingSource.SERVER_FOLDER // a folder Loom found doesn't make it a known one: still "Check"
         }
         val d = defaults.defaults
+        val candidates = candidates(chain, fsSlug)
         return ResolvedPlatform(
             folder = folder,
             archive = chain.firstNotNullOfOrNull { it.archive } ?: d.archive,
@@ -155,11 +161,22 @@ class PlatformMapper(
             saveDir = chain.firstNotNullOfOrNull { it.saveDir },
             source = source,
             folderChosen = folderEntry != null && folderEntry in overrides,
-            // Aliases belong to the row that names the folder (or rows above it): the MAME, NAOMI and
-            // FBNeo server folders mustn't inherit the generic arcade row's arcade/fbneo/fba.
-            candidates = (listOf(folder) + chain.take(chain.indexOf(folderEntry) + 1).firstNotNullOfOrNull { it.aliases }.orEmpty())
-                .distinctBy { FolderNames.key(it) },
+            candidates = candidates,
+            // A folder the user picked has no aliases of its own: the shipped ones still say where else the games go.
+            usualFolders = (candidates + candidates(chain.filterNot { it in overrides }, fsSlug)).distinctBy { FolderNames.key(it) },
         )
+    }
+
+    /**
+     * The folder the first row in [chain] naming one gives, then its aliases. Aliases belong to the row
+     * that names the folder (or rows above it): the MAME, NAOMI and FBNeo server folders mustn't
+     * inherit the generic arcade row's arcade/fbneo/fba.
+     */
+    private fun candidates(chain: List<PlatformMappingEntry>, fsSlug: String): List<String> {
+        val folderEntry = chain.firstOrNull { it.folder != null }
+        val folder = folderEntry?.folder ?: FolderNames.fromServer(fsSlug)
+        return (listOf(folder) + chain.take(chain.indexOf(folderEntry) + 1).firstNotNullOfOrNull { it.aliases }.orEmpty())
+            .distinctBy { FolderNames.key(it) }
     }
 
     /** The file a user would export: defaults with their overrides folded in. */
