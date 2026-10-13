@@ -1,9 +1,13 @@
 package ro.davidmontei.loom.ui
 
+import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -37,8 +41,9 @@ import java.io.File
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = THOR_TOP_SCREEN)
 class SettingsScreenTest {
-    @get:Rule val rule = createComposeRule()
+    @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
     private val calls = mutableListOf<String>()
+    private var state by mutableStateOf(sample)
 
     companion object {
         private val mapper = PlatformMapper(MappingJson.shippedDefaults())
@@ -84,11 +89,27 @@ class SettingsScreenTest {
     }
 
     private fun show() {
-        rule.setContent { LoomTestTheme { SettingsContent(sample, actions) } }
+        rule.setContent { LoomTestTheme { SettingsContent(state, actions) } }
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
     }
 
-    private fun press(key: Key) { rule.onRoot().performKeyInput { pressKey(key) }; rule.mainClock.advanceTimeBy(100); rule.waitForIdle() }
+    /** Lets the press recompose first, so delayed focus requests it starts have run when it returns. */
+    private fun press(key: Key) {
+        rule.onRoot().performKeyInput { pressKey(key) }
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+    }
+
+    /** What the activity does with B (BACK) once nothing in Compose has used it. */
+    private fun back() {
+        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+    }
+
+    /** Recompose with the new state first, then let delayed focus requests run. */
+    private fun update(change: (SettingsUiState) -> SettingsUiState) {
+        state = change(state)
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+    }
 
     @Test fun sectionsAreReachableAndOpenWithA() {
         show()
@@ -144,5 +165,68 @@ class SettingsScreenTest {
         rule.onNodeWithText("Cancel").assertIsFocused() // editor opens on the safe choice
         press(Key.DirectionRight); press(Key.DirectionCenter) // Save
         assertThat(calls).contains("save:psx:psx")
+    }
+
+    /** Found by audit: closing a dialog left focus on the section list, not on what opened it. */
+    @Test fun closingTheFolderEditorGivesFocusBackToItsRow() {
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown) // Platform folders
+        press(Key.DirectionCenter) // Export
+        press(Key.DirectionDown); press(Key.DirectionDown) // Super Nintendo, the second platform
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Cancel").assertIsFocused()
+        back()
+        rule.onNodeWithText("Super Nintendo").assertIsFocused()
+        press(Key.DirectionCenter)
+        press(Key.DirectionCenter) // Cancel
+        rule.onNodeWithText("Super Nintendo").assertIsFocused()
+    }
+
+    @Test fun closingTheLicenceGivesFocusBackToItsButton() {
+        show()
+        repeat(5) { press(Key.DirectionDown) } // About
+        press(Key.DirectionCenter) // GNU GPL v3.0
+        press(Key.DirectionRight)
+        press(Key.DirectionCenter) // Inter font licence; Close has focus
+        rule.onNodeWithText("Close").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Inter font licence").assertIsFocused()
+    }
+
+    @Test fun stayingSignedInGivesFocusBackToSignOut() {
+        show()
+        press(Key.DirectionCenter) // Server & pairing: the address
+        press(Key.DirectionDown) // the pairing buttons, on the one nearest the address's centre
+        rule.onNodeWithText("Sign out").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Stay signed in").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Sign out").assertIsFocused()
+        assertThat(calls).doesNotContain("signout")
+    }
+
+    @Test fun allowingBackgroundDownloadsKeepsFocusInTheSection() {
+        show()
+        repeat(3) { press(Key.DirectionDown) } // Downloads
+        press(Key.DirectionCenter) // the first concurrency chip
+        press(Key.DirectionDown)
+        rule.onNodeWithText("Allow background downloads").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("battery")
+        update { it.copy(batteryUnrestricted = true) } // back from Android's dialog, allowed
+        rule.onNodeWithText("1").assertIsFocused()
+    }
+
+    @Test fun pickingAFolderGivesFocusBackToChangeFolder() {
+        show()
+        press(Key.DirectionDown) // Storage
+        press(Key.DirectionCenter) // Change folder
+        press(Key.DirectionCenter) // the browser opens; the SD card isn't there in tests, so it lists volumes
+        rule.onNodeWithText("SD card").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Use this folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("root:/storage/9C33-6BBD")
+        rule.onNodeWithText("Change folder").assertIsFocused()
     }
 }
