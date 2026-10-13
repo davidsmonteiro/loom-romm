@@ -1,0 +1,403 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "508e73f3282bc6d359fbf52ca80fe40f",
+    "entities": [
+      {
+        "tableName": "platforms",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `slug` TEXT NOT NULL, `fs_slug` TEXT NOT NULL, `name` TEXT NOT NULL, `display_name` TEXT NOT NULL, `rom_count` INTEGER NOT NULL, `updated_at` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "slug",
+            "columnName": "slug",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fsSlug",
+            "columnName": "fs_slug",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "display_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "romCount",
+            "columnName": "rom_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "roms",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `platform_id` INTEGER NOT NULL, `platform_slug` TEXT NOT NULL, `platform_fs_slug` TEXT NOT NULL, `title` TEXT NOT NULL, `search_key` TEXT NOT NULL, `sort_key` TEXT NOT NULL, `fs_name` TEXT NOT NULL, `fs_name_no_ext` TEXT NOT NULL, `fs_extension` TEXT NOT NULL, `size_bytes` INTEGER NOT NULL, `has_simple_single_file` INTEGER NOT NULL, `has_nested_single_file` INTEGER NOT NULL, `has_multiple_files` INTEGER NOT NULL, `cover_small` TEXT, `cover_large` TEXT, `regions` TEXT NOT NULL, `updated_at` TEXT NOT NULL, `missing_from_fs` INTEGER NOT NULL, `removed_on_server` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "platformId",
+            "columnName": "platform_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "platformSlug",
+            "columnName": "platform_slug",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "platformFsSlug",
+            "columnName": "platform_fs_slug",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "searchKey",
+            "columnName": "search_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortKey",
+            "columnName": "sort_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fsName",
+            "columnName": "fs_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fsNameNoExt",
+            "columnName": "fs_name_no_ext",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fsExtension",
+            "columnName": "fs_extension",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "size_bytes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hasSimpleSingleFile",
+            "columnName": "has_simple_single_file",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hasNestedSingleFile",
+            "columnName": "has_nested_single_file",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hasMultipleFiles",
+            "columnName": "has_multiple_files",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coverSmall",
+            "columnName": "cover_small",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "coverLarge",
+            "columnName": "cover_large",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "regions",
+            "columnName": "regions",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "missingFromFs",
+            "columnName": "missing_from_fs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "removedOnServer",
+            "columnName": "removed_on_server",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_roms_platform_id",
+            "unique": false,
+            "columnNames": [
+              "platform_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_roms_platform_id` ON `${TABLE_NAME}` (`platform_id`)"
+          },
+          {
+            "name": "index_roms_sort_key",
+            "unique": false,
+            "columnNames": [
+              "sort_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_roms_sort_key` ON `${TABLE_NAME}` (`sort_key`)"
+          }
+        ]
+      },
+      {
+        "tableName": "rom_files",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `rom_id` INTEGER NOT NULL, `file_name` TEXT NOT NULL, `file_path` TEXT NOT NULL, `size_bytes` INTEGER NOT NULL, `is_top_level` INTEGER NOT NULL, `crc` TEXT, `md5` TEXT, `sha1` TEXT, `category` TEXT, `archive_members_json` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`rom_id`) REFERENCES `roms`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "romId",
+            "columnName": "rom_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fileName",
+            "columnName": "file_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "filePath",
+            "columnName": "file_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "size_bytes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isTopLevel",
+            "columnName": "is_top_level",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "crc",
+            "columnName": "crc",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "md5",
+            "columnName": "md5",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sha1",
+            "columnName": "sha1",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "archiveMembersJson",
+            "columnName": "archive_members_json",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_rom_files_rom_id",
+            "unique": false,
+            "columnNames": [
+              "rom_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_rom_files_rom_id` ON `${TABLE_NAME}` (`rom_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "roms",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "rom_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "installs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`rom_id` INTEGER NOT NULL, `volume_uuid` TEXT NOT NULL, `rel_path` TEXT NOT NULL, `path_key` TEXT NOT NULL, `platform_id` INTEGER NOT NULL, `kind` TEXT NOT NULL, `bytes` INTEGER NOT NULL, `verified_by` TEXT NOT NULL, `source` TEXT NOT NULL, `rom_fingerprint` TEXT, `installed_at` INTEGER NOT NULL, PRIMARY KEY(`rom_id`))",
+        "fields": [
+          {
+            "fieldPath": "romId",
+            "columnName": "rom_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "volumeUuid",
+            "columnName": "volume_uuid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "relPath",
+            "columnName": "rel_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pathKey",
+            "columnName": "path_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "platformId",
+            "columnName": "platform_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bytes",
+            "columnName": "bytes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "verifiedBy",
+            "columnName": "verified_by",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "romFingerprint",
+            "columnName": "rom_fingerprint",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "installedAtEpochMs",
+            "columnName": "installed_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "rom_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_installs_volume_uuid_path_key",
+            "unique": true,
+            "columnNames": [
+              "volume_uuid",
+              "path_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_installs_volume_uuid_path_key` ON `${TABLE_NAME}` (`volume_uuid`, `path_key`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '508e73f3282bc6d359fbf52ca80fe40f')"
+    ]
+  }
+}
