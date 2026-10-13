@@ -27,14 +27,22 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -314,9 +322,29 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(text.uppercase(), style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted, modifier = modifier.padding(top = Space.s))
 }
 
+/** Where [LoomDialog]s are drawn: one overlay above the whole screen, in the activity's window. */
+class DialogHostState {
+    internal var content by mutableStateOf<(@Composable () -> Unit)?>(null)
+}
+
+val LocalDialogHost = staticCompositionLocalOf<DialogHostState?> { null }
+
+/** Wrap the app (or a test) in this so dialogs declared deep inside a screen cover the whole screen. */
+@Composable
+fun DialogHost(content: @Composable () -> Unit) {
+    val state = remember { DialogHostState() }
+    CompositionLocalProvider(LocalDialogHost provides state) {
+        Box(Modifier.fillMaxSize()) {
+            content()
+            state.content?.invoke()
+        }
+    }
+}
+
 /**
  * A dialog drawn in the activity's own window (Compose's Dialog opens a separate window, which
- * would bypass the activity's gamepad remapping). Focus is trapped inside; B closes it.
+ * would bypass the activity's gamepad remapping). Rendered by the nearest [DialogHost] above
+ * everything else; focus is trapped inside; B closes it.
  */
 @Composable
 fun LoomDialog(
@@ -324,6 +352,28 @@ fun LoomDialog(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     body: @Composable ColumnScope.() -> Unit = {},
+    buttons: @Composable RowScope.(firstFocus: FocusRequester) -> Unit,
+) {
+    val host = LocalDialogHost.current
+    val surface: @Composable () -> Unit = { DialogSurface(title, onDismiss, modifier, body, buttons) }
+    if (host == null) {
+        surface()
+        return
+    }
+    val latest = rememberUpdatedState(surface)
+    DisposableEffect(host) {
+        val entry: @Composable () -> Unit = { latest.value() }
+        host.content = entry
+        onDispose { if (host.content === entry) host.content = null }
+    }
+}
+
+@Composable
+private fun DialogSurface(
+    title: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier,
+    body: @Composable ColumnScope.() -> Unit,
     buttons: @Composable RowScope.(firstFocus: FocusRequester) -> Unit,
 ) {
     val first = remember { FocusRequester() }
@@ -336,13 +386,14 @@ fun LoomDialog(
     ) {
         Column(
             modifier
-                .widthIn(max = 640.dp)
+                .widthIn(max = 680.dp)
                 .padding(Space.xl)
                 .background(LoomColors.Surface, RoundedCornerShape(16.dp))
                 .border(1.dp, LoomColors.Outline, RoundedCornerShape(16.dp))
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
                 .focusProperties { onExit = { cancelFocusChange() } }
                 .focusGroup()
+                .verticalScroll(rememberScrollState())
                 .padding(Space.xl),
             verticalArrangement = Arrangement.spacedBy(Space.l),
         ) {

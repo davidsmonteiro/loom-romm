@@ -8,6 +8,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.onRoot
+import ro.davidmontei.loom.ui.components.DialogHost
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.theme.LoomTheme
 import java.io.File
@@ -20,7 +21,7 @@ const val THOR_TOP_SCREEN = "w840dp-h470dp-land-xhdpi"
 
 @Composable
 fun LoomTestTheme(content: @Composable () -> Unit) = LoomTheme {
-    CompositionLocalProvider(LocalIndication provides FocusRingIndication()) { content() }
+    CompositionLocalProvider(LocalIndication provides FocusRingIndication()) { DialogHost { content() } }
 }
 
 /** Saves what the rule currently shows to app/build/screenshots/<name>.png for a human to look at. */

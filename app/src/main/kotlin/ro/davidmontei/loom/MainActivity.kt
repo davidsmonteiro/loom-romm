@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import ro.davidmontei.loom.data.settings.SettingsStore
+import ro.davidmontei.loom.ui.components.DialogHost
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.input.GamepadKeys
 import ro.davidmontei.loom.ui.nav.LoomNavHost
@@ -61,10 +62,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             LoomTheme {
                 CompositionLocalProvider(LocalIndication provides FocusRingIndication()) {
-                    Box(Modifier.fillMaxSize().background(LoomColors.Background)) {
-                        val state = app.state.collectAsStateWithLifecycle().value ?: return@Box
-                        val nav = rememberNavController()
-                        LoomNavHost(nav, state.onboarded, openQueue, onQueueOpened = { openQueue = false })
+                    DialogHost {
+                        Box(Modifier.fillMaxSize().background(LoomColors.Background)) {
+                            val state = app.state.collectAsStateWithLifecycle().value ?: return@Box
+                            val nav = rememberNavController()
+                            LoomNavHost(nav, state.onboarded, openQueue, onQueueOpened = { openQueue = false })
+                        }
                     }
                 }
             }

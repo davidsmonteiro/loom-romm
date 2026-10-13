@@ -56,6 +56,23 @@ class ScreenshotTest {
         rule.saveScreenshot("queue")
     }
 
+    @Test fun settingsMapping() {
+        rule.setContent { LoomTestTheme { ro.davidmontei.loom.ui.settings.SettingsContent(SettingsScreenTest.sample, SettingsScreenTest.noop) } }
+        settle()
+        rule.onNodeWithTag("section-MAPPING").performClick()
+        settle()
+        rule.saveScreenshot("settings-mapping")
+        rule.onNodeWithText("PlayStation").performClick()
+        settle()
+        rule.saveScreenshot("settings-mapping-editor")
+    }
+
+    @Test fun settingsServer() {
+        rule.setContent { LoomTestTheme { ro.davidmontei.loom.ui.settings.SettingsContent(SettingsScreenTest.sample, SettingsScreenTest.noop) } }
+        settle()
+        rule.saveScreenshot("settings-server")
+    }
+
     @Test fun libraryOffloadConfirm() {
         rule.setContent { LoomTestTheme { LibraryContent(library.state, NoopLibraryActions) } }
         settle()
