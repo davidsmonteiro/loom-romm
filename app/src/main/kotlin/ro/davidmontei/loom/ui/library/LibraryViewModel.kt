@@ -77,8 +77,8 @@ class LibraryViewModel @Inject constructor(
         LibraryHeader(sync, s.lastCatalogSyncEpochMs, jobs.count { it.phase != "FAILED" })
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryHeader(CatalogSyncStatus(false), null, 0))
 
-    /** Base URL for cover art; covers are cached by path, so any reachable address will do. */
-    val coverBase: StateFlow<HttpUrl?> = settings.settings.map { it.server?.primary }
+    /** Base URL for cover art. Covers are cached by path, so changing the address keeps them. */
+    val coverBase: StateFlow<HttpUrl?> = settings.settings.map { it.server?.url }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _messages = Channel<String>(Channel.BUFFERED)

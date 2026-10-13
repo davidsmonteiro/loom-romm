@@ -81,14 +81,11 @@ class StoresTest {
         assertThat(initial.maxConcurrentDownloads).isEqualTo(1)
         assertThat(initial.onboardingComplete).isFalse()
 
-        store.setServer(
-            ServerConfig("http://100.64.0.5:8080/".toHttpUrl(), "https://romm.example.org/".toHttpUrl()),
-            version = "5.3.1",
-        )
+        store.setServer(ServerConfig("http://100.64.0.5:8080/".toHttpUrl()), version = "5.3.1")
         store.setMaxConcurrentDownloads(9)
         store.setRomsRoot("/storage/9C33-6BBD/ROMs")
         val after = store.snapshot()
-        assertThat(after.server!!.addresses.map { it.host }).containsExactly("100.64.0.5", "romm.example.org").inOrder()
+        assertThat(after.server!!.url.toString()).isEqualTo("http://100.64.0.5:8080/")
         assertThat(after.maxConcurrentDownloads).isEqualTo(3)
         assertThat(after.romsRoot).isEqualTo("/storage/9C33-6BBD/ROMs")
         assertThat(after.serverVersion).isEqualTo("5.3.1")

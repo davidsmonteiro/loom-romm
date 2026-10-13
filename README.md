@@ -16,7 +16,7 @@ Loom does not launch games, replace the home screen, or emulate anything. Save s
   - Downloads go to a hidden staging folder on the same SD card.
   - Every file is checked against RomM's checksums.
   - The finished game appears with a single rename.
-- **Survives interruptions.** Pausing, the screen turning off, the app being killed, the SD card being pulled, or switching between your Tailnet and public address: downloads resume where they stopped.
+- **Survives interruptions.** Pausing, the screen turning off, the app being killed, the SD card being pulled, or changing the server address in Settings: downloads resume where they stopped.
 - **Offloads.** Removing a game frees the space and keeps it in the library, so it can come back with one press.
 
 ## Requirements
@@ -50,9 +50,12 @@ Then run `./gradlew assembleRelease`. To open Loom from Cocoon, add it from Coco
 
 ## First run
 
-1. **Server address.** For example `romm.example.org`, or a Tailnet/LAN address such as `100.64.0.5:8080`.
-   - You can add a second address. Loom uses the first one that answers, so the Tailnet address can come first with the public one as a fallback.
-   - Without a scheme, LAN and Tailnet hosts try `http://` first and everything else tries `https://` first.
+1. **Server address.** One address, whichever reaches RomM from the Thor:
+   - a local one, e.g. `192.168.1.10:8080`;
+   - a Tailscale IP or MagicDNS name, e.g. `100.64.0.5:8080`;
+   - or your domain, e.g. `romm.example.org`.
+
+   Without a scheme, LAN and Tailscale hosts try `http://` first and everything else tries `https://` first. Change it any time in Settings → Server & pairing; queued downloads continue from the new address.
 2. **Pair.** Scan the QR code with your phone and approve "Loom" in RomM.
    - Alternatively, create an API token in RomM's web UI and use **Pair device** to get an 8-character code, or paste a token.
    - Loom asks for these scopes: `me.read platforms.read roms.read assets.read assets.write devices.read devices.write`. The asset and device scopes are for the planned save sync, so you won't have to pair again.

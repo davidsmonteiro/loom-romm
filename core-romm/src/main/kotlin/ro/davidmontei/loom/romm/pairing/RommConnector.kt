@@ -12,6 +12,9 @@ import ro.davidmontei.loom.romm.dto.DeviceAuthInitRequest
 import ro.davidmontei.loom.romm.dto.DeviceAuthInitResponse
 import ro.davidmontei.loom.romm.dto.UserDto
 import ro.davidmontei.loom.romm.rommCall
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.TimeUnit
 
 /**
@@ -84,7 +87,13 @@ class RommConnector(private val client: OkHttpClient) {
         var last: Exception? = null
         for (base in candidates) {
             try {
-                val version = rommCall { RommServiceFactory.create(base, probeClient).heartbeat() }.system.version
+                // OkHttp's timeouts can't interrupt a blocked system DNS lookup (seen on the Thor
+                // when Tailscale's DNS couldn't resolve the public name), so cap it at this level.
+                val version = withContext(Dispatchers.IO) {
+                    withTimeoutOrNull(PROBE_TIMEOUT_MS) {
+                        rommCall { RommServiceFactory.create(base, probeClient).heartbeat() }.system.version
+                    }
+                } ?: throw RommException.Unreachable(java.io.IOException("No answer from ${base.host} within ${PROBE_TIMEOUT_MS / 1000} s"))
                 val parsed = RommVersion.parse(version)
                 if (parsed != null && parsed < MIN_SUPPORTED_ROMM) throw UnsupportedServerException(version)
                 return ServerProbe(base, version, parsed)
@@ -168,6 +177,7 @@ class RommConnector(private val client: OkHttpClient) {
 
     companion object {
         const val CLIENT_NAME = "loom"
+        const val PROBE_TIMEOUT_MS = 8_000L
 
         /** Strips spaces and dashes, uppercases, and checks for 8 letters/digits. */
         fun normalizePairCode(input: String): String? {

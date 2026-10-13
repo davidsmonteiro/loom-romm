@@ -55,6 +55,17 @@ class PairingTest {
         }
     }
 
+    /** What the Thor did: a DNS lookup that never returns. OkHttp's own timeouts can't stop it. */
+    @Test fun probeGivesUpOnAHungDnsLookup() {
+        val stuck = okhttp3.Dns { host ->
+            if (host == "stuck.example.org") { Thread.sleep(60_000); emptyList() } else okhttp3.Dns.SYSTEM.lookup(host)
+        }
+        val connector = RommConnector(OkHttpClient.Builder().dns(stuck).build())
+        val started = System.nanoTime()
+        assertThrows(RommException.Unreachable::class.java) { runBlocking { connector.probe("https://stuck.example.org") } }
+        assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(12_000)
+    }
+
     @Test fun deviceAuthHappyPath() = runTest {
         server.enqueue(json("""{"device_code":"dev-code","user_code":"ABCD2345","verification_path":"/pair/device",
             "verification_path_complete":"/pair/device?user_code=ABCD2345","expires_in":600,"interval":5}""", 201))

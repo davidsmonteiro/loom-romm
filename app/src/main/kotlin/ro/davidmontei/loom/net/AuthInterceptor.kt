@@ -7,8 +7,8 @@ import ro.davidmontei.loom.romm.RommUrls
 
 /** What the interceptor needs to know, read without blocking on every request. */
 interface AuthSource {
-    /** Addresses of the configured RomM server; the token is only ever sent to these hosts. */
-    fun serverAddresses(): List<HttpUrl>
+    /** The configured RomM server; the token is only ever sent to its host and port. */
+    fun serverUrl(): HttpUrl?
     fun token(): String?
 }
 
@@ -22,7 +22,7 @@ class AuthInterceptor(private val source: AuthSource) : Interceptor {
         val request = chain.request()
         if (request.header("Authorization") != null) return chain.proceed(request)
         val token = source.token() ?: return chain.proceed(request)
-        val ours = source.serverAddresses().any { RommUrls.sameServer(it, request.url) }
+        val ours = source.serverUrl()?.let { RommUrls.sameServer(it, request.url) } ?: false
         if (!ours) return chain.proceed(request)
         return chain.proceed(request.newBuilder().header("Authorization", "Bearer $token").build())
     }

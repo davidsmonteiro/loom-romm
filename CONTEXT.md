@@ -11,7 +11,7 @@ The user's self-hosted RomM instance, the source of truth for which games exist.
 _Avoid_: backend, API (when you mean the server as a whole)
 
 **Server address**:
-One base URL at which the RomM server is reachable; a server has a primary address and an optional fallback (e.g. Tailnet first, public URL second).
+The one base URL Loom uses to reach the RomM server: a LAN address, a Tailscale address or name, or a public domain, whichever suits the user's setup.
 _Avoid_: host, endpoint
 
 **Pairing**:

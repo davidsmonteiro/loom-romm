@@ -20,7 +20,6 @@ import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.TokenCipher
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.SettingsStore
-import ro.davidmontei.loom.romm.ServerAddressSelector
 import ro.davidmontei.loom.romm.pairing.PairedCredentials
 import java.io.File
 
@@ -43,18 +42,18 @@ class ActiveServerTest {
     /** What a WorkManager worker sees right after a cold start: freshly built objects over saved prefs. */
     @Test fun coldStartWaitsForSettingsInsteadOfReportingUnpaired() = runBlocking<Unit> {
         val (settings, creds) = stores()
-        settings.setServer(ServerConfig("http://100.64.0.5:8080/".toHttpUrl(), null), "5.3.1")
+        settings.setServer(ServerConfig("http://100.64.0.5:8080/".toHttpUrl()), "5.3.1")
         creds.save(PairedCredentials("http://100.64.0.5:8080/".toHttpUrl(), "rmm_x", null, "david", null))
         creds.current.filterNotNull().first()
 
-        val fresh = ActiveServer(settings, creds, OkHttpClient(), ServerAddressSelector(OkHttpClient()), scope)
+        val fresh = ActiveServer(settings, creds, OkHttpClient(), scope)
         assertThat(fresh.baseUrl().toString()).isEqualTo("http://100.64.0.5:8080/")
         assertThat(fresh.token()).isEqualTo("rmm_x")
     }
 
     @Test fun reallyUnpairedIsReported() {
         val (settings, creds) = stores()
-        val server = ActiveServer(settings, creds, OkHttpClient(), ServerAddressSelector(OkHttpClient()), scope)
+        val server = ActiveServer(settings, creds, OkHttpClient(), scope)
         assertThrows(NotPairedException::class.java) { runBlocking { server.baseUrl() } }
     }
 }

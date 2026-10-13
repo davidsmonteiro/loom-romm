@@ -71,7 +71,7 @@ import ro.davidmontei.loom.ui.theme.tabular
 
 /** Everything the settings screen can do, so it can be driven in tests without Hilt. */
 interface SettingsActions {
-    fun updateAddresses(primary: String, fallback: String)
+    fun updateAddress(address: String)
     fun repair()
     fun signOut()
     fun fullResync()
@@ -100,7 +100,7 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
     LifecycleResumeEffect(Unit) { vm.refreshDevice(); onPauseOrDispose { } }
     val actions = remember(vm) {
         object : SettingsActions {
-            override fun updateAddresses(primary: String, fallback: String) { vm.updateAddresses(primary, fallback) }
+            override fun updateAddress(address: String) { vm.updateAddress(address) }
             override fun repair() { vm.repair(onRepair) }
             override fun signOut() { vm.signOut() }
             override fun fullResync() = vm.fullResync()
@@ -175,18 +175,18 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
 private fun ServerSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
     val first = modifier
     val server = state.settings?.server
-    var primary by remember(server) { mutableStateOf(server?.primary?.toString().orEmpty()) }
-    var fallback by remember(server) { mutableStateOf(server?.fallback?.toString().orEmpty()) }
+    var address by remember(server) { mutableStateOf(server?.url?.toString().orEmpty()) }
     var confirmSignOut by remember { mutableStateOf(false) }
     SectionHeader("Server")
     Text(
         state.settings?.serverVersion?.let { "RomM $it (Loom is built against RomM ${state.contractVersion})" } ?: "Not connected",
         color = LoomColors.TextMuted,
     )
-    LoomTextField(primary, { primary = it }, "Address", keyboardType = KeyboardType.Uri, modifier = first)
-    LoomTextField(fallback, { fallback = it }, "Second address (optional)", keyboardType = KeyboardType.Uri,
-        supporting = "Loom tries the first address, then the second: e.g. your Tailnet address first, the public one second.")
-    LoomButton("Save addresses", onClick = { actions.updateAddresses(primary, fallback) })
+    LoomTextField(address, { address = it }, "Address", keyboardType = KeyboardType.Uri, modifier = first,
+        onImeAction = { actions.updateAddress(address) },
+        supporting = "A local, Tailscale or public address all work; Loom checks it answers as RomM before saving. " +
+            "Downloads in the queue continue from the new address.")
+    LoomButton("Save address", onClick = { actions.updateAddress(address) })
 
     SectionHeader("Pairing")
     val creds = state.credentials

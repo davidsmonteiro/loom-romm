@@ -5,7 +5,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,8 +38,7 @@ enum class PairMode { DEVICE_CODE, PAIR_CODE, PASTE_TOKEN }
 
 data class OnboardingState(
     val step: OnboardingStep = OnboardingStep.WELCOME,
-    val primaryInput: String = "",
-    val fallbackInput: String = "",
+    val addressInput: String = "",
     val probing: Boolean = false,
     val serverError: String? = null,
     val serverSummary: String? = null,
@@ -82,9 +80,8 @@ class OnboardingViewModel @Inject constructor(
             val s = settings.snapshot()
             _state.update {
                 it.copy(
-                    primaryInput = s.server?.primary?.toString().orEmpty(),
-                    fallbackInput = s.server?.fallback?.toString().orEmpty(),
-                    base = s.server?.primary,
+                    addressInput = s.server?.url?.toString().orEmpty(),
+                    base = s.server?.url,
                     romsRoot = s.romsRoot,
                     // Re-pairing from Settings: the server is known, go straight to the code.
                     step = if (s.server != null && credentials.current.value == null) OnboardingStep.PAIR else OnboardingStep.WELCOME,
@@ -106,8 +103,7 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
-    fun setPrimary(text: String) = _state.update { it.copy(primaryInput = text, serverError = null) }
-    fun setFallback(text: String) = _state.update { it.copy(fallbackInput = text, serverError = null) }
+    fun setAddress(text: String) = _state.update { it.copy(addressInput = text, serverError = null, serverSummary = null) }
 
     /** Finds RomM at the typed address (and the optional second one), then moves on to pairing. */
     fun connect() {
@@ -116,28 +112,16 @@ class OnboardingViewModel @Inject constructor(
         _state.update { it.copy(probing = true, serverError = null, serverSummary = null, insecureWarning = null) }
         viewModelScope.launch {
             try {
-                // The second address is optional: probed alongside the first, and kept even when it
-                // doesn't answer from here (it may well answer from elsewhere).
-                val fallbackProbe = s.fallbackInput.takeIf { it.isNotBlank() }?.let { input ->
-                    async { runCatching { connector.probe(input) } }
-                }
-                val primary = connector.probe(s.primaryInput)
-                val fallbackResult = fallbackProbe?.await()
-                val fallbackUrl = fallbackResult?.getOrNull()?.baseUrl
-                    ?: s.fallbackInput.takeIf { it.isNotBlank() }?.let { RommUrls.candidates(it).firstOrNull() }
-                val config = ServerConfig(primary.baseUrl, fallbackUrl?.takeIf { it != primary.baseUrl })
-                settings.setServer(config, primary.version)
-                val insecure = config.addresses.firstOrNull { it.scheme == "http" && !RommUrls.isPrivateHost(it.host) }
-                val second = when {
-                    fallbackResult == null -> ""
-                    fallbackResult.isSuccess -> "\nSecond address: RomM ${fallbackResult.getOrThrow().version} at ${fallbackResult.getOrThrow().baseUrl}"
-                    else -> "\nSecond address ${fallbackUrl ?: s.fallbackInput} didn't answer from here; Loom keeps it as a fallback."
-                }
+                val probe = connector.probe(s.addressInput)
+                settings.setServer(ServerConfig(probe.baseUrl), probe.version)
+                val url = probe.baseUrl
                 _state.update {
                     it.copy(
-                        probing = false, base = primary.baseUrl,
-                        serverSummary = "RomM ${primary.version} at ${primary.baseUrl}$second",
-                        insecureWarning = insecure?.let { u -> "${u.host} is a public address over plain HTTP: your token would travel unencrypted. Use https:// if you can." },
+                        probing = false, base = url,
+                        serverSummary = "RomM ${probe.version} at $url",
+                        insecureWarning = if (url.scheme == "http" && !RommUrls.isPrivateHost(url.host)) {
+                            "${url.host} is a public address over plain HTTP: your token would travel unencrypted. Use https:// if you can."
+                        } else null,
                     )
                 }
             } catch (e: UnsupportedServerException) {

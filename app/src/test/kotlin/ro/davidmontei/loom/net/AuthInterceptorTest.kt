@@ -15,18 +15,18 @@ class AuthInterceptorTest {
     private val ours = MockWebServer()
     private val other = MockWebServer()
     private var token: String? = "rmm_secret"
-    private lateinit var addresses: List<HttpUrl>
+    private lateinit var serverUrl: HttpUrl
 
     private val client by lazy {
         OkHttpClient.Builder().addInterceptor(AuthInterceptor(object : AuthSource {
-            override fun serverAddresses() = addresses
+            override fun serverUrl() = serverUrl
             override fun token() = token
         })).build()
     }
 
     @Before fun start() {
         ours.start(); other.start()
-        addresses = listOf("http://192.0.2.1:9/".toHttpUrl(), ours.url("/romm/"))
+        serverUrl = ours.url("/romm/")
     }
 
     @After fun stop() { ours.close(); other.close() }

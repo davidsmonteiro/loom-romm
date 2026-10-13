@@ -13,10 +13,11 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.UUID
 
-/** Where the server lives: a primary address and an optional fallback (e.g. Tailnet, then public). */
-data class ServerConfig(val primary: HttpUrl, val fallback: HttpUrl?) {
-    val addresses: List<HttpUrl> get() = listOfNotNull(primary, fallback)
-}
+/**
+ * Where the RomM server is: one base URL, whichever kind fits the user's setup (a LAN address,
+ * a Tailscale IP or MagicDNS name, or a public domain). Changed in Settings when that changes.
+ */
+data class ServerConfig(val url: HttpUrl)
 
 data class Settings(
     val server: ServerConfig?,
@@ -37,7 +38,7 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
 
     val settings: Flow<Settings> = dataStore.data.map { p ->
         Settings(
-            server = p[PRIMARY]?.toHttpUrlOrNull()?.let { ServerConfig(it, p[FALLBACK]?.toHttpUrlOrNull()) },
+            server = p[SERVER_URL]?.toHttpUrlOrNull()?.let(::ServerConfig),
             serverVersion = p[SERVER_VERSION],
             romsRoot = p[ROMS_ROOT],
             onboardingComplete = p[ONBOARDED] ?: false,
@@ -59,8 +60,7 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
     }
 
     suspend fun setServer(config: ServerConfig, version: String?) = dataStore.edit {
-        it[PRIMARY] = config.primary.toString()
-        if (config.fallback != null) it[FALLBACK] = config.fallback.toString() else it.remove(FALLBACK)
+        it[SERVER_URL] = config.url.toString()
         if (version != null) it[SERVER_VERSION] = version
     }
 
@@ -83,8 +83,7 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
     suspend fun resetCatalogWatermark() = dataStore.edit { it.remove(WATERMARK) }
 
     private companion object {
-        val PRIMARY = stringPreferencesKey("server_primary")
-        val FALLBACK = stringPreferencesKey("server_fallback")
+        val SERVER_URL = stringPreferencesKey("server_url")
         val SERVER_VERSION = stringPreferencesKey("server_version")
         val ROMS_ROOT = stringPreferencesKey("roms_root")
         val ONBOARDED = booleanPreferencesKey("onboarding_complete")

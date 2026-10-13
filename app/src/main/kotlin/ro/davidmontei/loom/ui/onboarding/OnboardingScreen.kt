@@ -118,15 +118,15 @@ private fun Welcome(first: FocusRequester, next: () -> Unit) {
 
 @Composable
 private fun Server(state: OnboardingState, vm: OnboardingViewModel, first: FocusRequester) {
-    Title("Where is your RomM server?", "Type the address you open RomM at. If the Thor can also reach it over your Tailnet or LAN, add that as the first address and the public one second: Loom uses whichever answers.")
-    LoomTextField(
-        value = state.primaryInput, onValueChange = vm::setPrimary, label = "Server address",
-        placeholder = "romm.example.org or 100.x.y.z:8080", keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next,
-        modifier = Modifier.focusRequester(first), isError = state.serverError != null,
+    Title(
+        "Where is your RomM server?",
+        "Use whichever address reaches it from the Thor: a local one (192.168.1.10:8080), Tailscale " +
+            "(100.x.y.z:8080 or a MagicDNS name) or your domain (romm.example.org). You can change it later in Settings.",
     )
     LoomTextField(
-        value = state.fallbackInput, onValueChange = vm::setFallback, label = "Second address (optional)",
-        placeholder = "https://romm.example.org", keyboardType = KeyboardType.Uri, onImeAction = vm::connect,
+        value = state.addressInput, onValueChange = vm::setAddress, label = "Server address",
+        placeholder = "romm.example.org or 100.x.y.z:8080", keyboardType = KeyboardType.Uri, onImeAction = vm::connect,
+        modifier = Modifier.focusRequester(first), isError = state.serverError != null,
     )
     state.serverError?.let { Text(it, color = LoomColors.Error, style = MaterialTheme.typography.bodyMedium) }
     state.serverSummary?.let { Text(it, color = LoomColors.Installed, style = MaterialTheme.typography.bodyMedium) }

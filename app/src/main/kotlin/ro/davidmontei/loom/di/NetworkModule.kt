@@ -69,7 +69,7 @@ object NetworkModule {
 
     /** Breaks the ActiveServer ↔ OkHttpClient construction cycle. */
     private class LazyAuthSource(private val server: dagger.Lazy<ActiveServer>) : ro.davidmontei.loom.net.AuthSource {
-        override fun serverAddresses() = server.get().serverAddresses()
+        override fun serverUrl() = server.get().serverUrl()
         override fun token() = server.get().token()
     }
 }

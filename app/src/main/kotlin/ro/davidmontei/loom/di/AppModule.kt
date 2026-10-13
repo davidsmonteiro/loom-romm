@@ -20,7 +20,6 @@ import ro.davidmontei.loom.data.auth.TokenCipher
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
-import ro.davidmontei.loom.romm.ServerAddressSelector
 import ro.davidmontei.loom.romm.pairing.RommConnector
 import javax.inject.Qualifier
 import javax.inject.Singleton
@@ -61,9 +60,6 @@ object AppModule {
     ) = CredentialStore(prefs, cipher, scope)
 
     @Provides @Singleton
-    fun serverAddressSelector(@BareHttp client: OkHttpClient) = ServerAddressSelector(client)
-
-    @Provides @Singleton
     fun rommConnector(@BareHttp client: OkHttpClient) = RommConnector(client)
 
     @Provides @Singleton
@@ -71,7 +67,6 @@ object AppModule {
         settings: SettingsStore,
         credentials: CredentialStore,
         @ApiHttp client: OkHttpClient,
-        selector: ServerAddressSelector,
         @AppScope scope: CoroutineScope,
-    ) = ActiveServer(settings, credentials, client, selector, scope)
+    ) = ActiveServer(settings, credentials, client, scope)
 }

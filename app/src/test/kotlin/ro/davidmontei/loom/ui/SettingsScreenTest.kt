@@ -49,7 +49,7 @@ class SettingsScreenTest {
         val noop: SettingsActions get() = Recording(mutableListOf())
 
         val sample = SettingsUiState(
-            settings = Settings(ServerConfig("http://100.64.0.5:8080/".toHttpUrl(), "https://romm.example.com/".toHttpUrl()),
+            settings = Settings(ServerConfig("http://100.64.0.7:8880/".toHttpUrl()),
                 "5.3.1", "/storage/9C33-6BBD/ROMs", true, false, 1, null, null),
             credentials = Credentials("rmm_x", "david", "dev-1", null),
             mapping = listOf(
@@ -64,7 +64,7 @@ class SettingsScreenTest {
     private val actions = Recording(calls)
 
     class Recording(private val calls: MutableList<String>) : SettingsActions {
-        override fun updateAddresses(primary: String, fallback: String) { calls += "addresses" }
+        override fun updateAddress(address: String) { calls += "address:$address" }
         override fun repair() { calls += "repair" }
         override fun signOut() { calls += "signout" }
         override fun fullResync() { calls += "resync" }
