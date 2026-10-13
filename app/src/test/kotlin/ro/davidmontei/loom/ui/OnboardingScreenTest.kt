@@ -63,6 +63,12 @@ class OnboardingScreenTest {
         rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
     }
 
+    /** Recompose with the new state first, then let delayed focus requests run. */
+    private fun update(change: (OnboardingState) -> OnboardingState) {
+        state = change(state)
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+    }
+
     /** What the activity does with B (BACK) once nothing in Compose has used it. */
     private fun back() {
         rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
@@ -76,5 +82,28 @@ class OnboardingScreenTest {
         assertThat(calls).contains("go:SERVER")
         back()
         assertThat(calls).contains("go:WELCOME")
+    }
+
+    /** Found by audit: B on the pairing screen opened from Settings walked back through setup, never to Settings. */
+    @Test fun bLeavesPairingAgain() {
+        show(OnboardingState(step = OnboardingStep.PAIR, pairAgain = true))
+        rule.onNodeWithText("Pair again").assertExists() // the screen's title, not "Set up Loom"
+        back()
+        assertThat(calls).contains("finish")
+        assertThat(calls.filter { it.startsWith("go:") }).isEmpty()
+    }
+
+    @Test fun pairingAgainClosesOnceTheNewTokenWorks() {
+        show(OnboardingState(step = OnboardingStep.PAIR, pairAgain = true))
+        assertThat(calls).doesNotContain("finish")
+        update { it.copy(pairedAs = "david") }
+        assertThat(calls).contains("finish")
+    }
+
+    @Test fun bOnTheSetupsPairingStepGoesBackAStep() {
+        show(OnboardingState(step = OnboardingStep.PAIR))
+        back()
+        assertThat(calls).contains("go:SERVER")
+        assertThat(calls).doesNotContain("finish")
     }
 }

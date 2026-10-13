@@ -126,13 +126,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    /** Forget the token and walk through pairing again (the catalog and installs stay). */
-    fun repair(then: () -> Unit) = viewModelScope.launch {
-        credentials.clear()
-        store.setOnboardingComplete(false)
-        then()
-    }
-
     fun signOut() = viewModelScope.launch {
         credentials.clear()
         _messages.send("Signed out. Your library and installed games stay on the device.")

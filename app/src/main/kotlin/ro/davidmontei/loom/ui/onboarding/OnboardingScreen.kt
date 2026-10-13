@@ -119,12 +119,16 @@ fun OnboardingContent(state: OnboardingState, actions: OnboardingActions) {
         OnboardingStep.BACKGROUND -> OnboardingStep.ROMS_ROOT
         OnboardingStep.SYNC -> OnboardingStep.BACKGROUND
     }
-    // B steps back; on the first step it does nothing rather than close Loom.
-    BackHandler { previous?.let(actions::go) }
+    // B steps back; on the first step it does nothing rather than close Loom. Pairing again is the one
+    // step: B leaves it, and Loom keeps the token it has. A new token that works leaves it too.
+    BackHandler { if (state.pairAgain) actions.finish() else previous?.let(actions::go) }
+    if (state.pairAgain) LaunchedEffect(state.pairedAs) { if (state.pairedAs != null) actions.finish() }
 
     val stepNumber = state.step.ordinal
-    ScreenScaffold(title = "Set up Loom", hints = hints, actions = {
-        if (stepNumber > 0) Text("Step $stepNumber of ${OnboardingStep.entries.size - 1}", style = MaterialTheme.typography.labelLarge.tabular(), color = LoomColors.TextMuted)
+    ScreenScaffold(title = if (state.pairAgain) "Pair again" else "Set up Loom", hints = hints, actions = {
+        if (stepNumber > 0 && !state.pairAgain) {
+            Text("Step $stepNumber of ${OnboardingStep.entries.size - 1}", style = MaterialTheme.typography.labelLarge.tabular(), color = LoomColors.TextMuted)
+        }
     }) {
         val first = remember { FocusRequester() }
         InitialFocus(first, state.step, state.pairMode, state.pairedAs)

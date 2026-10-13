@@ -347,4 +347,20 @@ class SettingsScreenTest {
         press(Key.DirectionCenter) // …and the next acts on it
         assertThat(calls).contains("swap:true")
     }
+
+    /** Found by audit: Pair again threw the working token away at once, without asking. */
+    @Test fun pairAgainAsksFirst() {
+        show()
+        press(Key.DirectionCenter) // Server & pairing: the address
+        press(Key.DirectionDown); press(Key.DirectionLeft); press(Key.DirectionLeft) // the first pairing button
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Cancel").assertIsFocused() // the dialog opens on the safe choice
+        press(Key.DirectionCenter)
+        assertThat(calls).doesNotContain("repair")
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionCenter)
+        press(Key.DirectionRight); press(Key.DirectionCenter) // Pair again, in the dialog
+        assertThat(calls).contains("repair")
+    }
 }

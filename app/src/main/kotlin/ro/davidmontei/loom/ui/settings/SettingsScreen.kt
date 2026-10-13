@@ -118,7 +118,7 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
     val actions = remember(vm) {
         object : SettingsActions {
             override fun updateAddress(address: String) { vm.updateAddress(address) }
-            override fun repair() { vm.repair(onRepair) }
+            override fun repair() = onRepair()
             override fun signOut() { vm.signOut() }
             override fun fullResync() = vm.fullResync()
             override fun setRomsRoot(dir: java.io.File) { vm.setRomsRoot(dir) }
@@ -243,11 +243,13 @@ private fun ServerSection(state: SettingsUiState, actions: SettingsActions, modi
     val server = state.settings?.server
     var address by remember(server) { mutableStateOf(server?.url?.toString().orEmpty()) }
     var confirmSignOut by remember { mutableStateOf(false) }
+    var confirmPairAgain by remember { mutableStateOf(false) }
     var signedOut by remember { mutableStateOf(false) }
     val pairAgainFocus = remember { FocusRequester() }
     val signOutFocus = remember { FocusRequester() }
     // Signing out removes its own button: focus goes to Pair again, the next thing to do.
     ReturnFocusOnClose(confirmSignOut) { if (signedOut) pairAgainFocus else signOutFocus }
+    ReturnFocusOnClose(confirmPairAgain) { pairAgainFocus }
     SectionHeader("Server")
     Text(
         state.settings?.serverVersion?.let { "RomM $it (Loom is built against RomM ${state.contractVersion})" } ?: "Not connected",
@@ -269,11 +271,20 @@ private fun ServerSection(state: SettingsUiState, actions: SettingsActions, modi
         color = if (creds != null) LoomColors.Installed else LoomColors.Error,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-        LoomButton("Pair again", onClick = actions::repair, modifier = Modifier.focusRequester(pairAgainFocus))
+        LoomButton("Pair again", onClick = { if (creds != null) confirmPairAgain = true else actions.repair() },
+            modifier = Modifier.focusRequester(pairAgainFocus))
         LoomButton("Full resync", onClick = actions::fullResync)
         if (creds != null) {
             LoomButton("Sign out", onClick = { confirmSignOut = true }, destructive = true, modifier = Modifier.focusRequester(signOutFocus))
         }
+    }
+    if (confirmPairAgain) {
+        LoomDialog(title = "Pair with RomM again?", onDismiss = { confirmPairAgain = false },
+            body = { Text("Loom keeps its current token until RomM accepts a new one. B on the pairing screen comes back here.", color = LoomColors.TextMuted) },
+            buttons = { f ->
+                LoomButton("Cancel", { confirmPairAgain = false }, Modifier.focusRequester(f))
+                LoomButton("Pair again", { confirmPairAgain = false; actions.repair() }, primary = true)
+            })
     }
     if (confirmSignOut) {
         LoomDialog(title = "Sign out of RomM?", onDismiss = { confirmSignOut = false },
