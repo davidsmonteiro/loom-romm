@@ -11,6 +11,7 @@ Loom does not launch games, replace the home screen, or emulate anything. Save s
 - **Pairs without typing a token.** Loom shows a QR code and an 8-character code. You approve it on your phone in RomM's web UI. RomM's own pair code and a pasted token also work.
 - **Keeps an offline copy of the catalog.** After the first sync you can browse every platform, with covers, with no network.
   - Later syncs only fetch what changed. Deleted games are detected by comparing ID lists.
+  - Covers are fetched in the background after a sync and kept at the size the library shows them, about 20 KB each (roughly 400 MB for 20,000 covers). They live in Loom's cache, so Android may trim them when storage runs low; the next sync fetches them again.
 - **Puts each game in the right system folder.** For example `ROMs/snes/`, `ROMs/gc/` or `ROMs/n3ds/`, from a mapping you can edit. It defaults to Cocoon's folder names.
 - **Never shows Cocoon a half-written file.**
   - Downloads go to a hidden staging folder on the same SD card.
@@ -116,7 +117,7 @@ In **Settings → Platform folders** you can change each platform's:
 | Start | Open the queue | | |
 | Select | Settings | | |
 
-For Nintendo-layout pads, use Settings → Controls → **Swap A and B**. Touch works too.
+For Nintendo-layout pads, use Settings → Controls → **Swap A and B**. Touch works too, and the first button press after a tap still acts (it doesn't just bring the focus ring back). Loom runs full screen; swipe from an edge to see the system bars.
 
 ## Scripting (adb, Termux)
 
@@ -152,6 +153,7 @@ Long-press Loom's icon for the **Sync library** and **Downloads** shortcuts.
 | "Needs X free on the SD card" | Offload something (X on an installed game) and retry from the queue. |
 | Downloads stop in the background | Allow background downloads in Settings → Downloads. Opening Loom resumes them either way. |
 | "RomM rejected Loom's token" | The token expired or was revoked. Use Settings → Server & pairing → Pair again. Your library and games stay. |
+| A multi-disc game shows up as one game per disc | RomM lists loose `(Disc N)` files as separate games; keep each multi-disc game in its own folder in RomM so it arrives as one `Name.m3u/` entry. See [docs/ROADMAP.md](docs/ROADMAP.md#needs-a-decision). |
 | Multi-disc PS1 games don't start in DuckStation via Cocoon | A known Cocoon issue with relative `.m3u` paths for DuckStation's default player (CocoonFE discussion #414). |
 
 ## Development
