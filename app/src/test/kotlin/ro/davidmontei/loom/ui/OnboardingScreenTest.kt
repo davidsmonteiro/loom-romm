@@ -40,10 +40,10 @@ class OnboardingScreenTest {
         override val knownSystemFolders = setOf("snes", "psx")
         override fun go(step: OnboardingStep) { calls += "go:$step"; state = state.copy(step = step) }
         override fun setAddress(text: String) { calls += "address:$text" }
-        override fun connect() { calls += "connect" }
+        override fun connect() { calls += "connect"; state = state.copy(probing = true, serverError = null, serverSummary = null) }
         override fun setPairMode(mode: PairMode) { calls += "mode:$mode"; state = state.copy(pairMode = mode, pairInput = "", pairError = null) }
         override fun setPairInput(text: String) { calls += "input:$text" }
-        override fun submitPairInput() { calls += "submit" }
+        override fun submitPairInput() { calls += "submit"; state = state.copy(pairing = true, pairError = null) }
         override fun startDeviceAuth() { calls += "deviceAuth" }
         override fun pairAgain() { calls += "pairAgain" }
         override fun refreshStorage() = Unit
@@ -120,5 +120,27 @@ class OnboardingScreenTest {
         press(Key.DirectionCenter)
         rule.onNodeWithTag("pair-input").assertIsFocused()
         assertThat(calls).containsNoneOf("mode:DEVICE_CODE", "deviceAuth")
+    }
+
+    /** Found by audit: the busy Pair button lost focus to "Scan a code", so after a rejected code A switched modes. */
+    @Test fun pairingKeepsFocusAndARejectedCodeGoesBackToTheField() {
+        show(OnboardingState(step = OnboardingStep.PAIR, pairMode = PairMode.PAIR_CODE, pairInput = "ABCD2345"))
+        rule.onNodeWithTag("pair-input").assertIsFocused()
+        press(Key.DirectionDown)
+        press(Key.DirectionCenter) // Pair
+        rule.onNodeWithText("Pairing…").assertIsFocused()
+        update { it.copy(pairing = false, pairError = "That code is invalid or expired (codes last 60 seconds). Create a new one in RomM.") }
+        rule.onNodeWithTag("pair-input").assertIsFocused()
+        assertThat(calls).containsNoneOf("mode:DEVICE_CODE", "deviceAuth")
+    }
+
+    /** Found by audit: while an address was being checked, the disabled button dropped focus to the top of the step. */
+    @Test fun checkingAnAddressKeepsFocusOnTheButton() {
+        show(OnboardingState(step = OnboardingStep.SERVER, addressInput = "romm.example.org"))
+        press(Key.DirectionDown)
+        press(Key.DirectionCenter) // Check address
+        rule.onNodeWithText("Checking…").assertIsFocused()
+        update { it.copy(probing = false, serverError = "Couldn't reach RomM: timeout") }
+        rule.onNodeWithText("Check address").assertIsFocused()
     }
 }

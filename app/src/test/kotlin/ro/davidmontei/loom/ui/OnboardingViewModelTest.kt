@@ -67,12 +67,17 @@ class OnboardingViewModelTest {
 
     private val me = """{"id":1,"username":"david","enabled":true,"oauth_scopes":["roms.read"]}"""
 
+    @Volatile private var meRequests = 0
+
     /** RomM accepts only [goodToken]; it has no device pairing to offer, so the QR step fails quietly. */
-    private fun serve(goodToken: String) {
+    private fun serve(goodToken: String, meDelayMs: Long = 0) {
         romm.server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when (request.url.encodedPath) {
-                "/api/users/me" ->
+                "/api/users/me" -> {
+                    meRequests++
+                    Thread.sleep(meDelayMs)
                     if (request.headers["Authorization"] == "Bearer $goodToken") json(me) else json("""{"detail":"bad token"}""", 401)
+                }
                 else -> json("""{"detail":"not here"}""", 404)
             }
         }
@@ -135,5 +140,18 @@ class OnboardingViewModelTest {
         vm.await { it.pairedAs == "david" }
         runBlocking { withTimeout(5_000) { credentials.current.first { it?.token == "rmm_new" } } }
         assertThat(vm.state.value.step).isEqualTo(OnboardingStep.PAIR) // the screen closes; no walk through setup
+    }
+
+    /** Found by audit: with Pair kept enabled while checking, a second press (or Enter) must not send the code twice. */
+    @Test fun aSecondSubmitWhilePairingIsIgnored() {
+        serve(goodToken = "rmm_new", meDelayMs = 500)
+        val vm = viewModel(pairAgain = true)
+        vm.await { it.pairError != null }
+        vm.setPairMode(PairMode.PASTE_TOKEN)
+        vm.setPairInput("rmm_new")
+        vm.submitPairInput()
+        vm.submitPairInput()
+        vm.await { it.pairedAs == "david" }
+        assertThat(meRequests).isEqualTo(1)
     }
 }

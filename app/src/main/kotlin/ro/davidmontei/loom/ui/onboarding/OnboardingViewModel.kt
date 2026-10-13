@@ -190,6 +190,7 @@ class OnboardingViewModel @Inject constructor(
 
     fun submitPairInput() {
         val s = _state.value
+        if (s.pairing) return // already checking this one (the button stays enabled, and Enter can submit too)
         val base = s.base ?: return
         _state.update { it.copy(pairing = true, pairError = null) }
         viewModelScope.launch {

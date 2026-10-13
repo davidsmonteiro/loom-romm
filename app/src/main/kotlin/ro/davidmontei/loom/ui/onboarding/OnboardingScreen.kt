@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -195,8 +196,10 @@ private fun Server(state: OnboardingState, actions: OnboardingActions, first: Fo
         if (state.serverSummary != null) runCatching { continueFocus.requestFocus() }
         else if (state.serverError != null) runCatching { checkFocus.requestFocus() }
     }
+    // Busy buttons stay enabled (a second press does nothing): disabling the focused one would drop focus to the
+    // top of the step.
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-        LoomButton(if (state.probing) "Checking…" else "Check address", onClick = actions::connect, enabled = !state.probing,
+        LoomButton(if (state.probing) "Checking…" else "Check address", onClick = actions::connect,
             modifier = Modifier.focusRequester(checkFocus))
         LoomButton("Continue", onClick = { actions.go(OnboardingStep.PAIR) }, primary = true, enabled = state.serverSummary != null,
             modifier = Modifier.focusRequester(continueFocus))
@@ -214,6 +217,11 @@ private fun Pair(state: OnboardingState, actions: OnboardingActions, first: Focu
         return
     }
     val session = state.session.takeIf { state.pairMode == PairMode.DEVICE_CODE }
+    // A rejected code or token puts focus back on its field (`first` in these modes), so A types it again.
+    var fieldFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(state.pairError) {
+        if (state.pairError != null && state.pairMode != PairMode.DEVICE_CODE && !fieldFocused) runCatching { first.requestFocus() }
+    }
     // The QR code sits beside the whole step rather than under it: nothing below the chips takes focus, so on a
     // gamepad anything pushed off the bottom of the screen could never be scrolled to.
     Row(horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
@@ -240,16 +248,16 @@ private fun Pair(state: OnboardingState, actions: OnboardingActions, first: Focu
                 PairMode.PAIR_CODE -> {
                     Text("In RomM's web UI, open your profile → API tokens, create a token for Loom and choose “Pair device”. Type the 8-character code it shows (it lasts 60 seconds).",
                         style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
-                    LoomTextField(state.pairInput, actions::setPairInput, "Pair code", Modifier.focusRequester(first), placeholder = "ABCD-2345",
+                    LoomTextField(state.pairInput, actions::setPairInput, "Pair code", Modifier.focusRequester(first).onFocusChanged { fieldFocused = it.hasFocus }, placeholder = "ABCD-2345",
                         onImeAction = actions::submitPairInput, tag = "pair-input")
-                    LoomButton(if (state.pairing) "Pairing…" else "Pair", onClick = actions::submitPairInput, primary = true, enabled = !state.pairing)
+                    LoomButton(if (state.pairing) "Pairing…" else "Pair", onClick = actions::submitPairInput, primary = true)
                 }
                 PairMode.PASTE_TOKEN -> {
                     Text("Paste a RomM client API token (starts with rmm_), e.g. sent over adb or KDE Connect.",
                         style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
-                    LoomTextField(state.pairInput, actions::setPairInput, "API token", Modifier.focusRequester(first), placeholder = "rmm_…",
+                    LoomTextField(state.pairInput, actions::setPairInput, "API token", Modifier.focusRequester(first).onFocusChanged { fieldFocused = it.hasFocus }, placeholder = "rmm_…",
                         secret = true, onImeAction = actions::submitPairInput, tag = "pair-input")
-                    LoomButton(if (state.pairing) "Checking…" else "Use token", onClick = actions::submitPairInput, primary = true, enabled = !state.pairing)
+                    LoomButton(if (state.pairing) "Checking…" else "Use token", onClick = actions::submitPairInput, primary = true)
                 }
             }
             state.pairError?.let { Text(it, color = LoomColors.Error, style = MaterialTheme.typography.bodyMedium) }
