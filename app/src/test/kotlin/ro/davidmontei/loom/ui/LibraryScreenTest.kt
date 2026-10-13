@@ -391,6 +391,17 @@ class LibraryScreenTest {
         rule.onNodeWithTag("game-1").assertIsFocused()
     }
 
+    /** Found by review: in list mode a new platform kept the old scroll, so its first game wasn't there to take focus. */
+    @Test fun aNewPlatformStartsAtTheTopInListModeToo() {
+        val many = (1..40).map { game(it, "Game $it", InstallState.NOT_INSTALLED) }
+        state = state.copy(gridMode = false, games = many)
+        show()
+        repeat(30) { press(Key.DirectionDown) }
+        rule.onNodeWithTag("game-31").assertIsFocused()
+        update { it.copy(selected = platforms[1], games = (101..140).map { id -> game(id, "Other $id", InstallState.NOT_INSTALLED) }) }
+        rule.onNodeWithTag("game-101").assertIsFocused()
+    }
+
     /** Found by audit: a sync error was cut to one line in the header, and nothing there led to pairing again. */
     @Test fun aRejectedTokenShowsWhyAndLeadsToPairing() {
         val error = "RomM rejected Loom's token. Pair again in Settings."

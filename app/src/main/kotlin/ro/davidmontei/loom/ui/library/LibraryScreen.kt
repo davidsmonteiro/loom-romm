@@ -400,12 +400,12 @@ private fun Games(
         return
     }
     val entryId = (state.games.firstOrNull { it.id == lastGameId } ?: state.games[lastGameIndex.coerceAtMost(state.games.lastIndex)]).id
+    // Back to the top for a new platform, in either layout, but not when coming back from another
+    // screen: the saved position still shows the game the user left.
+    var scrolledFor by rememberSaveable { mutableStateOf<Int?>(null) }
+    val platformId = state.selected?.platform?.id
     if (state.gridMode) {
         val gridState = rememberLazyGridState()
-        // Back to the top for a new platform, but not when coming back from another screen: the
-        // saved position still shows the game the user left.
-        var scrolledFor by rememberSaveable { mutableStateOf<Int?>(null) }
-        val platformId = state.selected?.platform?.id
         LaunchedEffect(platformId) {
             if (platformId != scrolledFor) gridState.scrollToItem(0)
             scrolledFor = platformId
@@ -427,8 +427,14 @@ private fun Games(
             }
         }
     } else {
+        val listState = rememberLazyListState()
+        LaunchedEffect(platformId) {
+            if (platformId != scrolledFor) listState.scrollToItem(0)
+            scrolledFor = platformId
+        }
         LazyColumn(
             Modifier.fillMaxSize().focusRequester(gamesFocus).focusRestorer(entryGame).testTag("game-list"),
+            state = listState,
             contentPadding = PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(Space.s),
         ) {
