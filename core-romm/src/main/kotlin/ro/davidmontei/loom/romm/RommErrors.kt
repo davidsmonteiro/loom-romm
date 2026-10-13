@@ -23,6 +23,12 @@ sealed class RommException(message: String, cause: Throwable? = null) : Exceptio
 
     class NotFound(detail: String?) : RommException(detail ?: "Not found")
 
+    /**
+     * 409: the server refused because its state moved on. For a save upload this is "Slot has a
+     * newer save since your last sync": a save conflict, never something to retry blindly.
+     */
+    class Conflict(val detail: String?) : RommException(detail ?: "Conflict")
+
     /** 429: RomM rate-limits the pairing endpoints. */
     class RateLimited(detail: String?) : RommException(detail ?: "Too many requests")
 
@@ -68,6 +74,7 @@ fun HttpException.toRommException(): RommException {
         401 -> RommException.Unauthorized(detail)
         403 -> RommException.Forbidden(detail)
         404 -> RommException.NotFound(detail)
+        409 -> RommException.Conflict(detail)
         429 -> RommException.RateLimited(detail)
         else -> RommException.Http(code(), detail)
     }

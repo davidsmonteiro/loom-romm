@@ -17,18 +17,30 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Query
 import ro.davidmontei.loom.romm.api.RommApi
+import ro.davidmontei.loom.romm.api.SAVE_FILE_FIELD
 import ro.davidmontei.loom.romm.dto.ArchiveMemberDto
+import ro.davidmontei.loom.romm.dto.ClientSaveStateDto
 import ro.davidmontei.loom.romm.dto.ClientTokenCreateDto
 import ro.davidmontei.loom.romm.dto.ClientTokenExchangeRequest
 import ro.davidmontei.loom.romm.dto.DeviceAuthInitRequest
 import ro.davidmontei.loom.romm.dto.DeviceAuthInitResponse
 import ro.davidmontei.loom.romm.dto.DeviceAuthTokenRequest
 import ro.davidmontei.loom.romm.dto.DeviceAuthTokenResponse
+import ro.davidmontei.loom.romm.dto.DeviceDto
+import ro.davidmontei.loom.romm.dto.DeviceSyncDto
 import ro.davidmontei.loom.romm.dto.HeartbeatDto
 import ro.davidmontei.loom.romm.dto.PlatformDto
 import ro.davidmontei.loom.romm.dto.RomDto
 import ro.davidmontei.loom.romm.dto.RomFileDto
 import ro.davidmontei.loom.romm.dto.RomPageDto
+import ro.davidmontei.loom.romm.dto.SaveDeviceRequest
+import ro.davidmontei.loom.romm.dto.SaveDto
+import ro.davidmontei.loom.romm.dto.SyncCompleteRequest
+import ro.davidmontei.loom.romm.dto.SyncCompleteResponseDto
+import ro.davidmontei.loom.romm.dto.SyncNegotiateRequest
+import ro.davidmontei.loom.romm.dto.SyncNegotiateResponseDto
+import ro.davidmontei.loom.romm.dto.SyncOperationDto
+import ro.davidmontei.loom.romm.dto.SyncSessionDto
 import ro.davidmontei.loom.romm.dto.SystemDto
 import ro.davidmontei.loom.romm.dto.UserDto
 
@@ -62,33 +74,77 @@ class RommSchemaConformanceTest {
         check(DeviceAuthInitResponse.serializer(), "DeviceAuthInitResponse")
         check(DeviceAuthTokenResponse.serializer(), "DeviceAuthTokenResponse")
         check(ClientTokenCreateDto.serializer(), "ClientTokenCreateSchema")
+        check(SyncNegotiateResponseDto.serializer(), "SyncNegotiateResponse", newerFields = setOf("total_delete"))
+        check(SyncOperationDto.serializer(), "SyncOperationSchema")
+        check(SyncCompleteResponseDto.serializer(), "SyncCompleteResponse")
+        check(SyncSessionDto.serializer(), "SyncSessionSchema")
+        check(SaveDto.serializer(), "SaveSchema")
+        check(DeviceSyncDto.serializer(), "DeviceSyncSchema")
+        check(DeviceDto.serializer(), "DeviceSchema")
     }
 
     @Test fun requestDtosMatchSchemas() {
         check(DeviceAuthInitRequest.serializer(), "DeviceAuthInitPayload", isRequest = true)
         check(DeviceAuthTokenRequest.serializer(), "DeviceAuthTokenPayload", isRequest = true)
         check(ClientTokenExchangeRequest.serializer(), "ClientTokenExchangePayload", isRequest = true)
+        check(SyncNegotiateRequest.serializer(), "SyncNegotiatePayload", isRequest = true)
+        check(ClientSaveStateDto.serializer(), "ClientSaveState", isRequest = true)
+        check(SyncCompleteRequest.serializer(), "SyncCompletePayload", isRequest = true)
+        check(SaveDeviceRequest.serializer(), "Body_confirm_download_api_saves__id__downloaded_post", isRequest = true)
+        check(SaveDeviceRequest.serializer(), "Body_track_save_api_saves__id__track_post", isRequest = true)
+        check(SaveDeviceRequest.serializer(), "Body_untrack_save_api_saves__id__untrack_post", isRequest = true)
+    }
+
+    @Test fun saveUploadSendsTheFileInTheSchemasField() {
+        val body = schemas["Body_add_save_api_saves_post"]!!.jsonObject
+        assertWithMessage("required multipart fields").that(body["required"]!!.jsonArray.map { it.jsonPrimitive.content })
+            .containsExactly(SAVE_FILE_FIELD)
     }
 
     @Test fun everyApiMethodExistsInSchema() {
         val paths = openApi["paths"]!!.jsonObject
         for (method in RommApi::class.java.declaredMethods) {
-            val (verb, path) = method.getAnnotation(GET::class.java)?.let { "get" to it.value }
+            val (verb, annotated) = method.getAnnotation(GET::class.java)?.let { "get" to it.value }
                 ?: method.getAnnotation(POST::class.java)?.let { "post" to it.value }
                 ?: continue
+            // A query fixed in the annotation ("…/content?optimistic=false") is checked like a @Query.
+            val path = annotated.substringBefore('?')
+            val fixedQuery = annotated.substringAfter('?', "").split('&').filter { it.isNotEmpty() }.map { it.substringBefore('=') }
             val operation = paths["/$path"]?.jsonObject?.get(verb)?.jsonObject
             assertWithMessage("${method.name}: ${verb.uppercase()} /$path in schema").that(operation).isNotNull()
             val declared = operation!!["parameters"]?.jsonArray.orEmpty()
-                .map { it.jsonObject["name"]!!.jsonPrimitive.content }.toSet()
+                .map { it.jsonObject["name"]!!.jsonPrimitive.content }.toSet() +
+                NEWER_QUERY_PARAMS["${verb.uppercase()} /$path"].orEmpty()
             val queryNames = method.parameterAnnotations.flatMap { it.toList() }
-                .filterIsInstance<Query>().map { it.value }
+                .filterIsInstance<Query>().map { it.value } + fixedQuery
             for (name in queryNames) {
                 assertWithMessage("${method.name}: query param '$name'").that(declared).contains(name)
             }
         }
     }
 
-    private fun check(serializer: KSerializer<*>, schemaName: String, isRequest: Boolean = false) {
+    /** Newer parameters must stay out of the snapshot: bumping it then shows they're now plain. */
+    @Test fun newerQueryParamsAreNotInTheSnapshot() {
+        val paths = openApi["paths"]!!.jsonObject
+        for ((route, names) in NEWER_QUERY_PARAMS) {
+            val (verb, path) = route.split(' ')
+            val declared = paths[path]!!.jsonObject[verb.lowercase()]!!.jsonObject["parameters"]!!.jsonArray
+                .map { it.jsonObject["name"]!!.jsonPrimitive.content }
+            assertWithMessage("$route already declares").that(declared).containsNoneIn(names)
+        }
+    }
+
+    /**
+     * [newerFields] are sent by a newer RomM but not by the contract version: they must be optional
+     * in Kotlin (so the contract version still parses) and absent from the snapshot (so a bump
+     * turns them into plain fields).
+     */
+    private fun check(
+        serializer: KSerializer<*>,
+        schemaName: String,
+        isRequest: Boolean = false,
+        newerFields: Set<String> = emptySet(),
+    ) {
         val schema = schemas[schemaName]?.jsonObject
         assertWithMessage("schema $schemaName exists").that(schema).isNotNull()
         val properties = schema!!["properties"]!!.jsonObject
@@ -97,6 +153,11 @@ class RommSchemaConformanceTest {
         for (i in 0 until d.elementsCount) {
             val name = d.getElementName(i)
             val where = "${d.serialName}.$name vs $schemaName"
+            if (name in newerFields) {
+                assertWithMessage("$where: newer field is in the snapshot").that(properties[name]).isNull()
+                assertWithMessage("$where: newer field must be optional").that(d.isElementOptional(i)).isTrue()
+                continue
+            }
             val property = properties[name]?.jsonObject
             assertWithMessage("$where: field exists").that(property).isNotNull()
             val element = d.getElementDescriptor(i)
@@ -141,5 +202,16 @@ class RommSchemaConformanceTest {
         StructureKind.LIST -> "array"
         StructureKind.MAP -> "object"
         else -> "object"
+    }
+
+    private companion object {
+        /**
+         * Query parameters Loom sends for a newer RomM. FastAPI ignores parameters a route doesn't
+         * declare, so the contract version accepts them unread.
+         */
+        val NEWER_QUERY_PARAMS = mapOf(
+            // RomM 5.4.0 records it as this device's baseline for the slot.
+            "POST /api/saves" to setOf("content_hash"),
+        )
     }
 }

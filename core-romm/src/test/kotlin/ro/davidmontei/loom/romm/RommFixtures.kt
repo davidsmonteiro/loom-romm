@@ -106,6 +106,76 @@ object RommFixtures {
 
     fun ids(vararg ids: Int): String = buildJsonArray { ids.forEach { add(JsonPrimitive(it)) } }.toString()
 
+    /** A `SaveSchema` as 5.3.1 serves it, screenshot and path fields included. */
+    fun save(
+        id: Int,
+        romId: Int,
+        fileName: String = "Pokemon X [2026-10-13_17-49-45].zip",
+        slot: String? = "autosave",
+        emulator: String? = "azahar",
+        contentHash: String? = "c43ef632a43368c6ec5e23a4e9653a50",
+        updatedAt: String = "2026-10-13T17:49:45+00:00",
+        originDeviceId: String? = "dev-thor",
+        syncs: List<JsonObject> = emptyList(),
+    ) = buildJsonObject {
+        put("id", id); put("rom_id", romId); put("user_id", 1); put("file_name", fileName)
+        put("file_name_no_tags", fileName.substringBefore(" [")); put("file_name_no_ext", fileName.substringBeforeLast('.'))
+        put("file_extension", fileName.substringAfterLast('.')); put("file_path", "users/1/saves/n3ds/$romId/azahar")
+        put("file_size_bytes", 415_232); put("full_path", "users/1/saves/n3ds/$romId/azahar/$fileName")
+        put("download_path", "/api/saves/$id/content/$fileName"); put("missing_from_fs", false)
+        put("created_at", updatedAt); put("updated_at", updatedAt)
+        put("emulator", emulator.json()); put("slot", slot.json()); put("content_hash", contentHash.json())
+        put("is_public", false); put("screenshot", JsonNull); put("origin_device_id", originDeviceId.json())
+        put("device_syncs", JsonArray(syncs))
+    }
+
+    fun deviceSync(deviceId: String, lastSyncedAt: String, current: Boolean = true, untracked: Boolean = false) =
+        buildJsonObject {
+            put("device_id", deviceId); put("device_name", "AYN Thor (Loom)"); put("last_synced_at", lastSyncedAt)
+            put("is_untracked", untracked); put("is_current", current)
+        }
+
+    /** A `SyncOperationSchema`; [serverUpdatedAt] and [serverHash] are left out for uploads, as RomM does. */
+    fun syncOp(
+        action: String,
+        romId: Int,
+        saveId: Int? = null,
+        fileName: String = "Pokemon X.zip",
+        emulator: String? = "azahar",
+        reason: String = "Save exists on client but not on server",
+        serverUpdatedAt: String? = null,
+        serverHash: String? = null,
+    ) = buildJsonObject {
+        put("action", action); put("rom_id", romId); put("save_id", saveId.json()); put("file_name", fileName)
+        put("slot", "autosave"); put("emulator", emulator.json()); put("reason", reason)
+        serverUpdatedAt?.let { put("server_updated_at", it) }
+        serverHash?.let { put("server_content_hash", it) }
+    }
+
+    fun negotiated(sessionId: Int, ops: List<JsonObject>, totalDelete: Int? = null) = buildJsonObject {
+        put("session_id", sessionId); put("operations", JsonArray(ops))
+        listOf("upload", "download", "conflict", "no_op").forEach { action ->
+            put("total_$action", ops.count { it["action"] == JsonPrimitive(action) })
+        }
+        totalDelete?.let { put("total_delete", it) }
+    }
+
+    fun syncSession(id: Int, status: String, completed: Int, failed: Int) = buildJsonObject {
+        put("id", id); put("device_id", "dev-thor"); put("user_id", 1); put("status", status)
+        put("initiated_at", "2026-10-13T21:00:00+00:00"); put("completed_at", "2026-10-13T21:00:05+00:00")
+        put("operations_planned", completed + failed); put("operations_completed", completed)
+        put("operations_failed", failed); put("error_message", JsonNull)
+        put("created_at", "2026-10-13T21:00:00+00:00"); put("updated_at", "2026-10-13T21:00:05+00:00")
+    }
+
+    fun device(id: String, name: String?) = buildJsonObject {
+        put("id", id); put("user_id", 1); put("name", name.json()); put("platform", "android"); put("client", "argosy")
+        put("client_version", "2.21.0"); put("ip_address", JsonNull); put("mac_address", JsonNull)
+        put("hostname", JsonNull); put("client_device_identifier", "argosy-1"); put("sync_mode", "api")
+        put("sync_enabled", true); put("sync_config", JsonNull); put("last_seen", "2026-10-12T08:00:00+00:00")
+        put("created_at", "2026-09-01T10:00:00+00:00"); put("updated_at", "2026-10-12T08:00:00+00:00")
+    }
+
     private fun String?.json(): JsonElement = this?.let(::JsonPrimitive) ?: JsonNull
     private fun Int?.json(): JsonElement = this?.let(::JsonPrimitive) ?: JsonNull
 }
