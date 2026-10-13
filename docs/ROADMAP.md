@@ -10,12 +10,12 @@ Phase 1 (the MVP: pairing, catalog sync, offline browsing, platform mapping, dow
 - Optional: RomM 5.4's install queue ("send to device" from the web UI), via `POST /api/devices/{id}/installs/claim` and the Socket.IO `/devices` namespace. Loom's token is already device-bound, which that feature requires.
 
 ### Save sync
-RomM ≥ 4.9 negotiates sync server-side, so Loom does not invent its own conflict logic:
-1. Loom lists local saves for installed ROMs: `{rom_id, file_name, slot, emulator, content_hash, updated_at, file_size_bytes}`. `content_hash` is the MD5 of the file. For a zipped folder save it is the MD5 over the sorted `name:md5` lines, matching RomM's `_compute_zip_hash`.
-2. `POST /api/sync/negotiate`, scoped with `rom_ids` to what's installed, returns operations: `upload`, `download`, `conflict`, `delete`, `no_op`.
-3. Loom carries out the operations:
-   - Upload: `POST /api/saves?rom_id&emulator&slot&device_id&content_hash`, multipart field `saveFile`.
-   - Download: `GET /api/saves/{id}/content?device_id`, then `POST /api/saves/{id}/downloaded`.
+RomM ≥ 4.9 plans sync server-side with negotiate. On 5.3.1, though, negotiate compares timestamps whenever another device uploaded last, so Loom decides from its own baseline and treats any disagreement as a save conflict ([ADR 0010](adr/0010-decide-save-sync-from-a-local-baseline.md)):
+1. Loom lists local saves for installed ROMs, one per ROM: `{rom_id, file_name, slot: "autosave", emulator, content_hash, updated_at, file_size_bytes}`. `content_hash` is the MD5 of the file. For a zipped folder save it is the MD5 over the sorted `name:md5` lines, matching RomM's `_compute_zip_hash`.
+2. `POST /api/sync/negotiate`, always scoped with `rom_ids` (at most 500 per call) to what's installed, returns operations: `upload`, `download`, `conflict`, `no_op` (5.4.0 adds `delete`). It cancels the device's other open sessions, so sync runs never overlap.
+3. Loom checks each operation against its baseline, then carries it out:
+   - Upload: `POST /api/saves?rom_id&emulator&slot&device_id&session_id&content_hash`, multipart field `saveFile`. A 409 is a save conflict.
+   - Download: `GET /api/saves/{id}/content?device_id&optimistic=false`, then `POST /api/saves/{id}/downloaded` once the save is in place.
 4. `POST /api/sync/sessions/{id}/complete`.
 
 Per-emulator save-folder mapping:

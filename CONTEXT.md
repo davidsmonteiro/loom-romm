@@ -84,3 +84,24 @@ _Avoid_: publish, commit, move
 
 **Install state**:
 What the catalog shows per ROM: not installed, queued, downloading, installed or failed.
+
+### Saves
+
+**Save**:
+A game's own saved progress as its emulator keeps it (cartridge save, memory card, save data). Not a save state.
+_Avoid_: save state, save file (a save can be a folder)
+
+**Save unit**:
+Everything Loom syncs as one game's save, travelling as one file: a single save file, or folders zipped under fixed root names (`data/` for a 3DS title, as Argosy does). Extdata and states are not part of it.
+_Avoid_: save folder, save dir
+
+**Slot**:
+RomM's name for one line of save versions per ROM; device and server saves pair on (ROM, slot). Loom syncs one slot, `autosave`, and its newest version is the **slot head**.
+_Avoid_: channel
+
+**Baseline**:
+What Loom recorded the last time a game's slot was in sync on the Thor: its own hash of the save unit, and the slot head's id, hash and time. Comparing each side with it tells which one changed.
+_Avoid_: last sync, sync row (that is RomM's record of the device's last download or upload)
+
+**Save conflict**:
+A slot where Loom won't pick a side on its own: both sides changed since the baseline, the server's save went back or came from another emulator, or RomM disagrees with Loom. The user chooses Keep Thor, Keep server, Keep both or Skip.
