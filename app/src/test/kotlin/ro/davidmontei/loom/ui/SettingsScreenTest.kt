@@ -18,6 +18,7 @@ import com.google.common.truth.Truth.assertThat
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import ro.davidmontei.loom.data.auth.Credentials
@@ -42,6 +43,7 @@ import java.io.File
 @Config(qualifiers = THOR_TOP_SCREEN)
 class SettingsScreenTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
+    @get:Rule val tmp = TemporaryFolder()
     private val calls = mutableListOf<String>()
     private var state by mutableStateOf(sample)
 
@@ -255,6 +257,22 @@ class SettingsScreenTest {
         rule.onNodeWithText("Change folder").assertIsFocused()
         back()
         rule.onNodeWithTag("section-STORAGE").assertIsFocused()
+        assertThat(calls.filter { it.startsWith("root:") }).isEmpty()
+    }
+
+    /** Found by audit: the browser opened at the card's root on "Use this folder", so A, A made the root the ROMs folder. */
+    @Test fun changeFolderStartsOnTheCurrentRomsFolder() {
+        val card = tmp.newFolder("9C33-6BBD")
+        listOf("Android", "DCIM", "Download", "Music", "Pictures", "ROMs/snes").forEach { File(card, it).mkdirs() }
+        val roms = File(card, "ROMs")
+        state = sample.copy(storage = sample.storage.copy(romsRoot = roms.path))
+        show()
+        press(Key.DirectionDown) // Storage
+        press(Key.DirectionCenter) // Change folder
+        press(Key.DirectionCenter) // the browser opens beside the ROMs folder
+        rule.onNodeWithText("ROMs").assertIsFocused()
+        press(Key.DirectionCenter) // A goes into it
+        rule.onNodeWithText("snes").assertExists()
         assertThat(calls.filter { it.startsWith("root:") }).isEmpty()
     }
 }

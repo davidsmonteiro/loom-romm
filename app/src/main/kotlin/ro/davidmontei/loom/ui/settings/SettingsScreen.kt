@@ -286,7 +286,8 @@ private fun StorageSection(state: SettingsUiState, actions: SettingsActions, mod
     if (picking) {
         Text("Games already installed stay where they are; Loom looks for games it knows in the new folder.", color = LoomColors.TextMuted,
             style = MaterialTheme.typography.bodySmall)
-        FolderPicker(actions.volumes(), s.romsRoot?.let { java.io.File(it) }?.parentFile, actions.cocoonFolders.toSet(),
+        val romsRoot = s.romsRoot?.let { java.io.File(it) }
+        FolderPicker(actions.volumes(), romsRoot?.parentFile, actions.cocoonFolders.toSet(), focusOn = romsRoot,
             onPick = { actions.setRomsRoot(it); picking = false },
             modifier = Modifier.heightIn(max = 360.dp).onFocusChanged { pickerFocused = it.hasFocus })
     }

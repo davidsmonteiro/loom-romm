@@ -38,7 +38,9 @@ import java.io.File
  * system folders, so picking the right ROMs root is easy to confirm.
  *
  * With [focusOnOpen] false the screen around it keeps focus (onboarding puts it on its suggested
- * folder) until the user moves within the picker.
+ * folder) until the user moves within the picker. [focusOn], a folder inside [initial], takes focus
+ * in place of "Use this folder": Settings opens the picker beside the current ROMs folder, and A
+ * must go into that folder, not pick its parent.
  *
  * B, while the picker has focus, goes back up through the folders opened with A, then leaves it to
  * the screen. Going up puts focus on the folder just left, so A goes back into it rather than
@@ -52,10 +54,11 @@ fun FolderPicker(
     onPick: (File) -> Unit,
     modifier: Modifier = Modifier,
     focusOnOpen: Boolean = true,
+    focusOn: File? = null,
 ) {
     var current by remember { mutableStateOf(initial?.takeIf { it.isDirectory }) }
-    // The folder (or volume) just left by going up.
-    var left by remember { mutableStateOf<File?>(null) }
+    // The folder (or volume) just left by going up, or [focusOn] at first.
+    var left by remember { mutableStateOf(focusOn) }
     // How many folders below the starting one were opened: B goes back up through these.
     var depth by remember { mutableIntStateOf(0) }
     var focusable by remember { mutableStateOf(focusOnOpen) }
