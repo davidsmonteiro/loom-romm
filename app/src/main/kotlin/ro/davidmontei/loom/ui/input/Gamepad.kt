@@ -48,6 +48,17 @@ object GamepadKeys {
             event.deviceId, event.scanCode, event.flags, event.source,
         )
     }
+
+    /**
+     * Remaps [event] and hands it to [deliver]. A pad button Loom handles always counts as used:
+     * Android sends a fallback key for one nobody used (B becomes BACK, Y too), so with A and B
+     * swapped, confirm on a row with nothing to press went back. Mode (Home) keeps its fallback.
+     */
+    fun dispatch(event: KeyEvent, swapConfirmBack: Boolean, deliver: (KeyEvent) -> Boolean): Boolean {
+        val used = deliver(remapEvent(event, swapConfirmBack))
+        return used || event.keyCode == KeyEvent.KEYCODE_BUTTON_A || event.keyCode == KeyEvent.KEYCODE_BUTTON_B ||
+            action(event.keyCode) != null
+    }
 }
 
 enum class PadAction { X, Y, L1, R1, START, SELECT }
