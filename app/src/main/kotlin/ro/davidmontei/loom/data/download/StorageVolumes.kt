@@ -19,8 +19,14 @@ data class VolumeInfo(
     val stagingRoot: File get() = File(root, STAGING_DIR_NAME)
 }
 
+/** What reconcile and offload need to know about volumes (faked in tests). */
+interface Volumes {
+    fun forPath(path: String): VolumeInfo?
+    fun isMounted(volumeId: String): Boolean
+}
+
 /** Storage volumes, free space, and whether Loom may write to them (all-files access). */
-class StorageVolumes(private val context: Context) {
+class StorageVolumes(private val context: Context) : Volumes {
     private val storage = context.getSystemService(StorageManager::class.java)
 
     fun mounted(): List<VolumeInfo> = storage.storageVolumes
@@ -28,14 +34,14 @@ class StorageVolumes(private val context: Context) {
         .mapNotNull { it.toInfo() }
 
     /** The volume holding [path], or null if it isn't on a mounted volume. */
-    fun forPath(path: String): VolumeInfo? {
+    override fun forPath(path: String): VolumeInfo? {
         val file = File(path)
         val volume = storage.getStorageVolume(file) ?: return null
         if (volume.state != Environment.MEDIA_MOUNTED) return null
         return volume.toInfo()
     }
 
-    fun isMounted(volumeId: String): Boolean = mounted().any { it.id == volumeId }
+    override fun isMounted(volumeId: String): Boolean = mounted().any { it.id == volumeId }
 
     fun freeBytes(path: File): Long = StatFs(path.existingAncestor().path).availableBytes
 

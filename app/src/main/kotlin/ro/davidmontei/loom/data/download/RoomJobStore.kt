@@ -50,8 +50,10 @@ class RoomJobStore(
     override suspend fun setFinalEntry(jobId: Long, relPath: String, kind: EntryKind) =
         dao.setFinalEntry(jobId, relPath, NameSanitizer.key(relPath), kind.name)
 
-    override suspend fun complete(jobId: Long, lease: String, install: InstallResult): Boolean =
-        dao.completeJob(jobId, lease, install.toEntity(nowMs()))
+    override suspend fun complete(jobId: Long, lease: String, install: InstallResult): Boolean {
+        val romsRoot = dao.job(jobId)?.romsRoot ?: return false
+        return dao.completeJob(jobId, lease, install.toEntity(romsRoot, nowMs()))
+    }
 
     override suspend fun isPathClaimed(volumeId: String, pathKey: String, exceptRomId: Int): Boolean =
         dao.installsClaimingPath(volumeId, pathKey, exceptRomId) > 0 || dao.jobsClaimingPath(volumeId, pathKey, exceptRomId) > 0
@@ -84,9 +86,10 @@ fun PartRecord.toEntity() = DownloadPartEntity(
     relUrl = relUrl, durableBytes = durableBytes, validator = validator, digest = digest, state = state.name,
 )
 
-fun InstallResult.toEntity(now: Long) = InstallEntity(
+fun InstallResult.toEntity(romsRoot: String, now: Long) = InstallEntity(
     romId = romId,
     volumeUuid = volumeId,
+    romsRoot = romsRoot,
     relPath = relPath,
     pathKey = NameSanitizer.key(relPath),
     platformId = platformId,

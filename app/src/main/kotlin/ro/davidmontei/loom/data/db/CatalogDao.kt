@@ -93,6 +93,8 @@ interface CatalogDao {
 
     @Query("SELECT * FROM roms WHERE id = :id") suspend fun rom(id: Int): RomEntity?
 
+    @Query("SELECT * FROM roms WHERE platform_id = :platformId") suspend fun romsOf(platformId: Int): List<RomEntity>
+
     @Query("SELECT * FROM rom_files WHERE rom_id = :romId ORDER BY file_path, file_name")
     suspend fun filesOf(romId: Int): List<RomFileEntity>
 

@@ -86,6 +86,8 @@ data class RomFileEntity(
 data class InstallEntity(
     @PrimaryKey @ColumnInfo(name = "rom_id") val romId: Int,
     @ColumnInfo(name = "volume_uuid") val volumeUuid: String,
+    /** The ROMs root the install was made under (it can be changed in Settings later). */
+    @ColumnInfo(name = "roms_root") val romsRoot: String,
     /** Relative to the ROMs root, e.g. "psx/Final Fantasy VII.m3u". */
     @ColumnInfo(name = "rel_path") val relPath: String,
     /** NFC + case-folded [relPath], for collision checks on case-insensitive file systems. */

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "7da372f4370ad4d3a0d77e8dd1b53a45",
+    "identityHash": "0c5b2820f503067ef7ff00435c9bcc81",
     "entities": [
       {
         "tableName": "platforms",
@@ -307,7 +307,7 @@
       },
       {
         "tableName": "installs",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`rom_id` INTEGER NOT NULL, `volume_uuid` TEXT NOT NULL, `rel_path` TEXT NOT NULL, `path_key` TEXT NOT NULL, `platform_id` INTEGER NOT NULL, `kind` TEXT NOT NULL, `bytes` INTEGER NOT NULL, `verified_by` TEXT NOT NULL, `source` TEXT NOT NULL, `rom_fingerprint` TEXT, `installed_at` INTEGER NOT NULL, PRIMARY KEY(`rom_id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`rom_id` INTEGER NOT NULL, `volume_uuid` TEXT NOT NULL, `roms_root` TEXT NOT NULL, `rel_path` TEXT NOT NULL, `path_key` TEXT NOT NULL, `platform_id` INTEGER NOT NULL, `kind` TEXT NOT NULL, `bytes` INTEGER NOT NULL, `verified_by` TEXT NOT NULL, `source` TEXT NOT NULL, `rom_fingerprint` TEXT, `installed_at` INTEGER NOT NULL, PRIMARY KEY(`rom_id`))",
         "fields": [
           {
             "fieldPath": "romId",
@@ -318,6 +318,12 @@
           {
             "fieldPath": "volumeUuid",
             "columnName": "volume_uuid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "romsRoot",
+            "columnName": "roms_root",
             "affinity": "TEXT",
             "notNull": true
           },
@@ -645,7 +651,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7da372f4370ad4d3a0d77e8dd1b53a45')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '0c5b2820f503067ef7ff00435c9bcc81')"
     ]
   }
 }

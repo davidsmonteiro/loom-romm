@@ -138,7 +138,7 @@ class CatalogSyncerTest {
             .map { RommJson.decodeFromJsonElement(RomDto.serializer(), it) }
         dao.writePage(seed.map { it.toEntity() }, emptyList())
         // ROM 12 (on gba, about to vanish from the server) is installed.
-        dao.upsertInstall(InstallEntity(12, "9C33-6BBD", "gba/Game 12.gba", "gba/game 12.gba", 2,
+        dao.upsertInstall(InstallEntity(12, "9C33-6BBD", "/storage/9C33-6BBD/ROMs", "gba/Game 12.gba", "gba/game 12.gba", 2,
             InstallKind.FILE, 2048, VerifiedBy.SHA1, InstallSource.LOOM, null, 0))
 
         server.enqueue(heartbeat())
