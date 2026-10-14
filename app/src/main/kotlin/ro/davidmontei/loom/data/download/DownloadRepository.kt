@@ -13,6 +13,7 @@ import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.net.NotPairedException
 import ro.davidmontei.loom.romm.RommException
 import ro.davidmontei.loom.romm.RommUrls
+import ro.davidmontei.loom.romm.rommCall
 import ro.davidmontei.loom.romm.dto.RomDto
 import ro.davidmontei.loom.storage.engine.JobEvent
 import ro.davidmontei.loom.storage.engine.JobMachine
@@ -68,9 +69,13 @@ class DownloadRepository(
         val volume = volumes.forPath(romsRoot) ?: return EnqueueResult.Failed("The storage holding $romsRoot isn't mounted")
 
         val rom = try {
-            server.call { it.rom(romId) }
+            server.call { api -> rommCall { api.rom(romId) } }
         } catch (e: NotPairedException) {
             return EnqueueResult.Failed("Pair Loom with your RomM server first")
+        } catch (e: RommException.Unreachable) {
+            return EnqueueResult.Failed("Can't reach the RomM server")
+        } catch (e: RommException.NotFound) {
+            return EnqueueResult.Failed("RomM no longer has this game. Sync the library to update it.")
         } catch (e: RommException) {
             return EnqueueResult.Failed(e.message ?: "Couldn't reach RomM")
         }

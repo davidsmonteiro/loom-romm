@@ -273,6 +273,22 @@ class DrainWorkerTest {
         assertThat(job.failureDetail).isEqualTo("This game is no longer on the RomM server")
     }
 
+    // --- queueing a game: RomM is asked for its files first ---
+
+    /** Found by review: X on a game while RomM couldn't be reached threw out of the library, which closed Loom. */
+    @Test fun queueingWhileRommCantBeReachedSaysSo() = runBlocking<Unit> {
+        romm.close()
+        assertThat(downloads.enqueue(10)).isEqualTo(EnqueueResult.Failed("Can't reach the RomM server"))
+        assertThat(db.downloadDao().jobForRom(10)).isNull()
+    }
+
+    @Test fun queueingAGameRommNoLongerHasSaysSo() = runBlocking<Unit> {
+        goneLater = true
+        romCalls.set(1) // RomM's next answer is the "later" one: gone
+        fileAsked.countDown()
+        assertThat(downloads.enqueue(10)).isEqualTo(EnqueueResult.Failed("RomM no longer has this game. Sync the library to update it."))
+    }
+
     /** RomM's file changed since the game was queued: the download stops, is planned afresh and gets the new file. */
     @Test fun filesThatChangedOnRommAreDownloadedAfresh() {
         throttleBytesPer100Ms = 20_000
