@@ -76,8 +76,8 @@ data class SaveSyncRequest(
         /** PULL_SAVES: only the safe downloads. Reachable by any app on the device, so it must never do more. */
         val PULL = SaveSyncRequest(uploads = false, downloads = true)
 
-        /** The per-game "Sync saves", once the user confirmed the emulator is closed. */
-        fun game(romId: Int) = SaveSyncRequest(uploads = true, downloads = true, romIds = setOf(romId))
+        /** A game's "Upload save": only that game, and never a download (those need the emulator closed). */
+        fun upload(romId: Int) = SaveSyncRequest(uploads = true, downloads = false, romIds = setOf(romId))
     }
 }
 
@@ -131,6 +131,21 @@ enum class ConflictChoice {
 sealed interface ResolveResult {
     data object Done : ResolveResult
     data class Failed(val reason: String) : ResolveResult
+}
+
+/** RomM's record of one save version: its size, and the device that uploaded it when RomM knows. */
+data class ServerSaveInfo(val bytes: Long, val deviceName: String?)
+
+/** Why a game is in conflict, in words, from the `SyncDecision` name a conflict records. */
+fun conflictReason(decision: String): String = when (decision) {
+    SyncDecision.SERVER_SAYS_CONFLICT.name, SyncDecision.BOTH_CHANGED.name -> "Both the Thor and RomM have changed this save since the last sync"
+    SyncDecision.DISAGREES_WITH_SERVER.name -> "RomM and Loom disagree about which save is newer"
+    SyncDecision.UPLOAD_REJECTED.name -> "RomM got a newer save from elsewhere before this one could upload"
+    SyncDecision.FIRST_SYNC_DIFFERS.name -> "The Thor and RomM each have a different save, and they were never synced"
+    SyncDecision.SERVER_WENT_BACK.name -> "RomM's newest save is older than the one last synced: it may have been deleted"
+    SyncDecision.SERVER_SLOT_GONE.name -> "RomM no longer has this game's save"
+    SyncDecision.FOREIGN_EMULATOR.name -> "RomM's newer save was made by another emulator"
+    else -> decision
 }
 
 /**
@@ -195,6 +210,30 @@ class SaveSyncEngine(
      */
     suspend fun restoreFromServer(romId: Int): ResolveResult = lock.withLock {
         withContext(Dispatchers.IO) { restore(romId) }
+    }
+
+    /**
+     * What RomM says about save [saveId] of [romId], for the user choosing a side of a conflict
+     * (Loom keeps neither its size nor where it came from). Null when RomM can't be asked or no
+     * longer has it; the device's name is null when RomM doesn't know or won't say.
+     */
+    suspend fun serverSaveInfo(romId: Int, saveId: Int): ServerSaveInfo? = withContext(Dispatchers.IO) {
+        try {
+            val api = server.api()
+            val save = rommCall { api.saves(romId = romId) }.firstOrNull { it.id == saveId } ?: return@withContext null
+            val device = save.originDeviceId?.let { id ->
+                try {
+                    rommCall { api.device(id) }.name
+                } catch (e: RommException) {
+                    null
+                }
+            }
+            ServerSaveInfo(save.fileSizeBytes, device)
+        } catch (e: RommException) {
+            null
+        } catch (e: NotPairedException) {
+            null
+        }
     }
 
     // --- one run ---
@@ -397,7 +436,7 @@ class SaveSyncEngine(
             )
             saves.upsertConflict(record)
             if (!record.skipped) conflicts += game.romId
-            setState(game.romId, SaveSyncState.CONFLICT, conflictText(decision))
+            setState(game.romId, SaveSyncState.CONFLICT, conflictReason(decision.name))
         }
 
         private suspend fun fail(romId: Int, message: String) {
@@ -724,17 +763,6 @@ class SaveSyncEngine(
     /** Errors no game in the run can get past: the server is gone, or Loom's token isn't accepted. */
     private fun Exception.isFatal() =
         this is RommException.Unreachable || this is RommException.Unauthorized || this is RommException.Forbidden
-
-    private fun conflictText(decision: SyncDecision): String = when (decision) {
-        SyncDecision.SERVER_SAYS_CONFLICT, SyncDecision.BOTH_CHANGED -> "Both the Thor and RomM have changed this save since the last sync"
-        SyncDecision.DISAGREES_WITH_SERVER -> "RomM and Loom disagree about which save is newer"
-        SyncDecision.UPLOAD_REJECTED -> "RomM got a newer save from elsewhere before this one could upload"
-        SyncDecision.FIRST_SYNC_DIFFERS -> "The Thor and RomM each have a different save, and they were never synced"
-        SyncDecision.SERVER_WENT_BACK -> "RomM's newest save is older than the one last synced: it may have been deleted"
-        SyncDecision.SERVER_SLOT_GONE -> "RomM no longer has this game's save"
-        SyncDecision.FOREIGN_EMULATOR -> "RomM's newer save was made by another emulator"
-        else -> decision.name
-    }
 
     companion object {
         /** A save must be left alone this long before it's uploaded. */

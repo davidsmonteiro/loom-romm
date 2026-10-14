@@ -7,11 +7,13 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineScope
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.db.CatalogDao
 import ro.davidmontei.loom.data.db.LoomDatabase
 import ro.davidmontei.loom.data.db.SaveDao
 import ro.davidmontei.loom.data.download.StorageVolumes
+import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.SaveSyncEngine
 import ro.davidmontei.loom.data.saves.SaveSyncNotifications
 import ro.davidmontei.loom.data.saves.SaveSyncScheduler
@@ -41,6 +43,9 @@ object SaveModule {
         volumes: StorageVolumes,
         @ApplicationContext context: Context,
     ) = SaveSyncEngine(catalog, saves, server, credentials, settings, units, volumes, File(context.cacheDir, "save-sync"))
+
+    @Provides @Singleton
+    fun saveRepository(engine: SaveSyncEngine, saves: SaveDao, @AppScope scope: CoroutineScope) = SaveRepository(engine, saves, scope)
 
     @Provides @Singleton fun saveSyncScheduler(workManager: WorkManager) = SaveSyncScheduler(workManager)
 

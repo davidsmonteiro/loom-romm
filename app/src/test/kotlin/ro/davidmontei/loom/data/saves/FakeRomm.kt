@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * slot) and compares through this device's sync rows (`compare_save_state`); an upload is refused
  * with 409 when the device never synced the slot head, deduplicated by hash, and writes a sync
  * row; `/content` with optimistic=false writes none; `/downloaded` does. Tests can also make
- * negotiate answer something else, or the upload fail.
+ * negotiate answer something else, or the upload fail. Devices are looked up in [devices].
  */
 class FakeRomm(private val scratch: Path) : Dispatcher() {
     class Save(
@@ -93,6 +93,9 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
             request.method == "GET" && path.matches(Regex("/api/saves/\\d+/content")) -> content(path)
             request.method == "POST" && path.matches(Regex("/api/saves/\\d+/downloaded")) -> downloaded(path, json(request))
             request.method == "GET" && path == "/api/devices" -> ok(JsonArray(devices))
+            request.method == "GET" && path.startsWith("/api/devices/") ->
+                devices.firstOrNull { it.string("id") == path.substringAfterLast('/') }?.let(::ok)
+                    ?: MockResponse.Builder().code(404).body("""{"detail":"Device not found"}""").build()
             else -> MockResponse.Builder().code(404).body("""{"detail":"Not found: $path"}""").build()
         }
     }
@@ -234,8 +237,8 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
         put("server_updated_at", (head?.updatedAt?.toString()).json()); put("server_content_hash", head?.hash.json())
     }
 
-    fun device(id: String, identifier: String) = buildJsonObject {
-        put("id", id); put("name", "AYN Thor (Loom)"); put("platform", "android"); put("client", "loom"); put("client_version", "0.2.0")
+    fun device(id: String, identifier: String, name: String = "AYN Thor (Loom)") = buildJsonObject {
+        put("id", id); put("name", name); put("platform", "android"); put("client", "loom"); put("client_version", "0.2.0")
         put("client_device_identifier", identifier); put("sync_enabled", true); put("last_seen", "2026-10-14T10:00:00+00:00")
     }
 

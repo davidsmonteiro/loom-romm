@@ -45,6 +45,26 @@ class SaveUnitResolverTest : SaveSyncTestBase() {
         assertThat(unsupported.reason).contains("Azahar's folder")
     }
 
+    /** The library says why a game's saves aren't synced, naming the emulator Cocoon runs it in on the Thor. */
+    @Test fun otherPlatformsSayWhyTheirSavesArentSynced() {
+        assertThat(SaveUnitResolver.supportsPlatform("3ds")).isTrue()
+        assertThat(SaveUnitResolver.supportsPlatform("new-nintendo-3ds")).isTrue()
+        assertThat(SaveUnitResolver.supportsPlatform("nds")).isFalse()
+        assertThat(SaveUnitResolver.unsupportedReason("switch")).isEqualTo("Eden keeps its saves in Android/data, where Loom can't reach them")
+        assertThat(SaveUnitResolver.unsupportedReason("psx")).isEqualTo("DuckStation keeps its memory cards in Android/data, where Loom can't reach them")
+        assertThat(SaveUnitResolver.unsupportedReason("ngc")).startsWith("Dolphin")
+        assertThat(SaveUnitResolver.unsupportedReason("wiiu")).startsWith("Cemu")
+        assertThat(SaveUnitResolver.unsupportedReason("psp")).isEqualTo("Loom doesn't sync PPSSPP saves yet")
+        assertThat(SaveUnitResolver.unsupportedReason("snes")).isEqualTo("Loom syncs 3DS saves (Azahar) only, for now")
+    }
+
+    @Test fun azaharsFolderIsTheOneHoldingItsSdCard() {
+        assertThat(SaveUnitResolver.holdsAzaharData(n3ds)).isTrue()
+        assertThat(SaveUnitResolver.holdsAzaharData(File(volume, "ROMs"))).isFalse()
+        File(n3ds, "sdmc/Nintendo 3DS").deleteRecursively()
+        assertThat(SaveUnitResolver.holdsAzaharData(n3ds)).isFalse() // sdmc alone isn't Azahar's yet
+    }
+
     /** The card being out is "can't look now", never "no save". */
     @Test fun anUnmountedCardIsUnavailableNotEmpty() = runBlocking<Unit> {
         install(pokemonX)
