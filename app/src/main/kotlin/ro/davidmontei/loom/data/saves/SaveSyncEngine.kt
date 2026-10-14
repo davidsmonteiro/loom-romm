@@ -138,7 +138,12 @@ enum class ConflictChoice {
 
 sealed interface ResolveResult {
     data object Done : ResolveResult
-    data class Failed(val reason: String) : ResolveResult
+
+    /**
+     * Nothing changed, for [reason]. [stale]: a side moved on since Loom last looked at the game,
+     * so where it stands, and what can be asked of it, needs a fresh look.
+     */
+    data class Failed(val reason: String, val stale: Boolean = false) : ResolveResult
 }
 
 /** RomM's record of one save version: its size, and the device that uploaded it when RomM knows. */
@@ -404,7 +409,7 @@ class SaveSyncEngine(
                     Acted.DONE
                 } else {
                     serverNewer += game.romId
-                    setState(game.romId, SaveSyncState.SERVER_NEWER, "RomM has a newer save; close Azahar, then sync this game to get it")
+                    setState(game.romId, SaveSyncState.SERVER_NEWER, "RomM has a newer save; close Azahar, then restore it")
                     Acted.NOTHING
                 }
                 SyncOutcome.CONFLICT -> {
@@ -506,17 +511,19 @@ class SaveSyncEngine(
         return try {
             val local = SaveHasher.hashUnit(save.roots)
             if (local != null && local != saves.baseline(romId, SAVE_SLOT)?.localHash) {
-                return ResolveResult.Failed("The save on the Thor changed since the last sync: sync this game to choose which to keep")
+                return ResolveResult.Failed("The save on the Thor changed since the last sync", stale = true)
             }
             val head = heads(api, listOf(romId))[romId] ?: return ResolveResult.Failed("RomM has no save for this game")
             if (head.emulator != save.emulator) {
-                return ResolveResult.Failed("RomM's save was made by ${head.emulator ?: "another app"}: sync this game to choose which to keep")
+                return ResolveResult.Failed("RomM's save was made by ${head.emulator ?: "another app"}", stale = true)
             }
             download(api, deviceId, null, romId, save, head, local)
             saves.deleteConflict(romId)
             ResolveResult.Done
         } catch (e: CancellationException) {
             throw e
+        } catch (e: SaveChangedException) {
+            ResolveResult.Failed(e.message ?: "The save on the Thor changed since Loom looked", stale = true)
         } catch (e: Exception) {
             if (e is RommException && e.isFatal()) throw e
             ResolveResult.Failed(e.message ?: e.javaClass.simpleName)
@@ -539,9 +546,9 @@ class SaveSyncEngine(
         return try {
             // The user chose between what the conflict showed: both sides must still be exactly that.
             val local = SaveHasher.hashUnit(save.roots)
-            if (local != conflict.localHash) return ResolveResult.Failed(STALE_LOCAL)
+            if (local != conflict.localHash) return ResolveResult.Failed(STALE_LOCAL, stale = true)
             val head = heads(api, listOf(romId))[romId]
-            if (head?.saveId != conflict.serverSaveId || head?.contentHash != conflict.serverHash) return ResolveResult.Failed(STALE_SERVER)
+            if (head?.saveId != conflict.serverSaveId || head?.contentHash != conflict.serverHash) return ResolveResult.Failed(STALE_SERVER, stale = true)
             when (choice) {
                 ConflictChoice.KEEP_THOR -> {
                     if (local == null) return ResolveResult.Failed("There's no save on the Thor to keep")
@@ -563,7 +570,7 @@ class SaveSyncEngine(
         } catch (e: CancellationException) {
             throw e
         } catch (e: SaveChangedException) {
-            ResolveResult.Failed(STALE_LOCAL)
+            ResolveResult.Failed(STALE_LOCAL, stale = true)
         } catch (e: Exception) {
             if (e is RommException && e.isFatal()) throw e
             ResolveResult.Failed(e.message ?: e.javaClass.simpleName)
@@ -787,8 +794,8 @@ class SaveSyncEngine(
         const val MAX_DOWNLOAD_BYTES = 256L * 1024 * 1024
 
         const val NO_DEVICE = "RomM doesn't have Loom as a device, so saves can't sync. Pair again in Settings with the code Loom shows."
-        private const val STALE_LOCAL = "The save on the Thor changed since; sync again to see where it stands"
-        private const val STALE_SERVER = "RomM's save changed since; sync again to see where it stands"
+        private const val STALE_LOCAL = "The save on the Thor changed since this choice was shown"
+        private const val STALE_SERVER = "RomM's save changed since this choice was shown"
         private const val STILL_WRITING = "Azahar is still writing this save. Close it and try again in a minute."
         private const val EMULATOR_UNKNOWN = "unknown"
 

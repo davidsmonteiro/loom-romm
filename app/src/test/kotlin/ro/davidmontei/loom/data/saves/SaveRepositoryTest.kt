@@ -127,11 +127,16 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         assertThat(repository.restore(7, "Pokemon X")).isEqualTo("Restored Pokemon X's save from RomM")
         assertThat(localMain(pokemonX)).isEqualTo(bytes(2))
 
-        writeSave(pokemonX, bytes(3)) // played on
+        val played = writeSave(pokemonX, bytes(3), minutesAgo = 5) // played on
         romm.addSave(7, archiveOf(bytes(4)))
-        assertThat(repository.restore(7, "Pokemon X"))
-            .isEqualTo("Didn't restore Pokemon X's save: The save on the Thor changed since the last sync: sync this game to choose which to keep")
+        assertThat(repository.restore(7, "Pokemon X")).isEqualTo(
+            "Didn't restore Pokemon X's save: The save on the Thor changed since the last sync. Loom looked again: choose which to keep in the queue",
+        )
         assertThat(localMain(pokemonX)).isEqualTo(bytes(3))
+        // Loom looked again: the queue now lists the conflict, as both sides are now.
+        assertThat(db.saveDao().conflict(7)!!.localHash).isEqualTo(played)
+        assertThat(db.saveDao().unit(7)!!.state).isEqualTo(SaveSyncState.CONFLICT)
+        assertThat(romm.uploads()).hasSize(1) // the first sync's: looking again moves no save
     }
 
     @Test fun conflictAnswersSayWhatEachSideNowHolds() = runBlocking<Unit> {
@@ -141,13 +146,62 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         engine().sync(SaveSyncRequest.PUSH)
         writeSave(pokemonX, bytes(3), minutesAgo = 5) // changed since the conflict was found
 
-        assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_SERVER))
-            .isEqualTo("Nothing changed for Pokemon X: The save on the Thor changed since; sync again to see where it stands")
+        assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_SERVER)).isEqualTo(
+            "Nothing changed for Pokemon X: The save on the Thor changed since this choice was shown. " +
+                "Loom looked again: choose which to keep in the queue",
+        )
 
-        engine().sync(SaveSyncRequest.PUSH) // the conflict as it is now
+        // Loom looked again, so the conflict is as it is now and the same answer goes through.
         assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_SERVER))
             .isEqualTo("The Thor now has RomM's save of Pokemon X; the one it replaced is backed up on the card")
         assertThat(localMain(pokemonX)).isEqualTo(bytes(2))
+    }
+
+    /** Azahar made a new save after the old one was deleted: Restore is refused, and looking again sends nothing. */
+    @Test fun lookingAgainAfterARefusedRestoreUploadsNothing() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        saveFolder(pokemonX).deleteRecursively()
+        engine().sync(SaveSyncRequest.PUSH) // missing on the Thor: RomM's can come back
+        writeSave(pokemonX, bytes(3), minutesAgo = 5) // a new game started meanwhile
+
+        assertThat(repository.restore(7, "Pokemon X")).isEqualTo(
+            "Didn't restore Pokemon X's save: The save on the Thor changed since the last sync. " +
+                "Loom looked again: the Thor's save is the newer one, and Upload save sends it",
+        )
+        assertThat(romm.uploads()).hasSize(1) // the first sync's
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(3))
+    }
+
+    /** The sides moved on to the same save: Loom looks again and says there's nothing left to choose. */
+    @Test fun anAnswerOnSidesThatNowAgreeSaysSo() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.addSave(7, archiveOf(bytes(2)))
+        engine().sync(SaveSyncRequest.PUSH)
+        writeSave(pokemonX, bytes(2), minutesAgo = 5) // RomM's save, put on the Thor by hand
+
+        assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_THOR)).isEqualTo(
+            "Nothing changed for Pokemon X: The save on the Thor changed since this choice was shown. " +
+                "Loom looked again: both sides hold the same save now",
+        )
+        assertThat(db.saveDao().conflict(7)).isNull()
+        assertThat(romm.uploads()).isEmpty()
+    }
+
+    /** When RomM can't be asked again, the message names the control that looks again. */
+    @Test fun aRefusedAnswerNamesUploadSaveWhenLoomCantLookAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.addSave(7, archiveOf(bytes(2)))
+        engine().sync(SaveSyncRequest.PUSH)
+        writeSave(pokemonX, bytes(3), minutesAgo = 5)
+        romm.negotiateAnswer = { json(500, "Internal error") }
+
+        assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_SERVER)).isEqualTo(
+            "Nothing changed for Pokemon X: The save on the Thor changed since this choice was shown. Upload save in its details looks again",
+        )
     }
 
     @Test fun keepingBothSaysWhereEachSaveWent() = runBlocking<Unit> {

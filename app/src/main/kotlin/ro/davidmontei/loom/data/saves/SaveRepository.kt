@@ -60,7 +60,7 @@ class SaveRepository(private val engine: SaveSyncEngine, private val saves: Save
     suspend fun restore(romId: Int, title: String): String = request {
         when (val result = engine.restoreFromServer(romId)) {
             ResolveResult.Done -> "Restored $title's save from RomM"
-            is ResolveResult.Failed -> "Didn't restore $title's save: ${result.reason}"
+            is ResolveResult.Failed -> "Didn't restore $title's save: ${result.reason}" + lookAgain(romId, result)
         }
     }
 
@@ -74,7 +74,29 @@ class SaveRepository(private val engine: SaveSyncEngine, private val saves: Save
                 ConflictChoice.KEEP_BOTH -> "RomM keeps the Thor's save of $title as a separate copy, and the Thor now has RomM's"
                 ConflictChoice.SKIP -> "Left both saves of $title as they are. Loom asks again if either one changes."
             }
-            is ResolveResult.Failed -> "Nothing changed for $title: ${result.reason}"
+            is ResolveResult.Failed -> "Nothing changed for $title: ${result.reason}" + lookAgain(romId, result)
+        }
+    }
+
+    /**
+     * After an answer refused because a side moved on, Loom looks at the game again, moving no
+     * save either way, so the queue and the game's details show where it stands now; the message
+     * says what to do from there. When RomM can't be asked, Upload save in the details looks again.
+     */
+    private suspend fun lookAgain(romId: Int, result: ResolveResult.Failed): String {
+        if (!result.stale) return ""
+        val report = try {
+            engine.sync(SaveSyncRequest.CHECK.copy(romIds = setOf(romId)))
+        } catch (e: RommException) {
+            null
+        }
+        if (report == null || report.unavailable != null || romId in report.failed) return ". Upload save in its details looks again"
+        return ". Loom looked again: " + when (engine.observeGame(romId).first()?.state) {
+            SaveSyncState.CONFLICT -> "choose which to keep in the queue"
+            SaveSyncState.SERVER_NEWER, SaveSyncState.LOCAL_MISSING -> "RomM's save can be restored from the queue"
+            SaveSyncState.LOCAL_NEWER, SaveSyncState.WRITING -> "the Thor's save is the newer one, and Upload save sends it"
+            SaveSyncState.IN_SYNC -> "both sides hold the same save now"
+            else -> "see the game's details"
         }
     }
 

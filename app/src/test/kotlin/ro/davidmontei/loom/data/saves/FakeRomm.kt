@@ -58,6 +58,8 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
     val negotiateSays = mutableMapOf<Int, String>()
     /** Answers uploads with this instead (e.g. a 409). */
     var uploadAnswer: (() -> MockResponse)? = null
+    /** Answers negotiate with this instead (e.g. a 500). */
+    var negotiateAnswer: (() -> MockResponse)? = null
     /** How long negotiate takes, to catch two runs overlapping. */
     var negotiateDelayMs = 0L
 
@@ -86,7 +88,7 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
         requests += request
         val path = request.url.encodedPath
         return when {
-            request.method == "POST" && path == "/api/sync/negotiate" -> negotiate(json(request))
+            request.method == "POST" && path == "/api/sync/negotiate" -> negotiateAnswer?.invoke() ?: negotiate(json(request))
             request.method == "POST" && path.matches(Regex("/api/sync/sessions/\\d+/complete")) -> complete(path, json(request))
             request.method == "POST" && path == "/api/saves" -> uploadAnswer?.invoke() ?: upload(request)
             request.method == "GET" && path == "/api/saves" -> list(request)
