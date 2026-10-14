@@ -138,9 +138,13 @@ class EdenSaves(
         if (recorded?.source == SwitchTitleSource.IMAGE && recorded.imageFingerprint == imagesPrint) {
             SwitchTitleId.parse(recorded.titleId)?.let { return Title.Known(it) }
         }
+        // From here an ID read from the image before no longer holds: the image changed. If this
+        // read finds none, it is forgotten, so it doesn't keep its folder from other games.
         val title = readTitle(images, keyFiles)
         if (title is Title.Known) {
             saves.upsertSwitchTitle(SwitchTitleEntity(rom.id, title.id.toString(), SwitchTitleSource.IMAGE, imagesPrint, now()))
+        } else if (recorded?.source == SwitchTitleSource.IMAGE && title !is Title.CantLook) {
+            saves.forgetReadSwitchTitle(rom.id)
         }
         return title
     }

@@ -105,6 +105,10 @@ interface SaveDao {
 
     @Upsert suspend fun upsertSwitchTitle(title: SwitchTitleEntity)
 
+    /** Forgets a title ID read from a game's image (never the owner's pick). */
+    @Query("DELETE FROM switch_titles WHERE rom_id = :romId AND source = 'IMAGE'")
+    suspend fun forgetReadSwitchTitle(romId: Int)
+
     /** The titles of the installed games other than [romId] whose save folder is [titleId]'s. */
     @Query(
         """SELECT r.title FROM switch_titles t JOIN installs i ON i.rom_id = t.rom_id JOIN roms r ON r.id = t.rom_id

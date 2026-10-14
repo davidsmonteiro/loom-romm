@@ -149,6 +149,25 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         assertThat(detail(wonder)).isEqualTo("Loom can't read its title ID: not an XCI or NSP image, and the file it can read is an update")
     }
 
+    /** A title ID read from an image that has since changed and can't be read again no longer keeps its folder from other games. */
+    @Test fun aStaleTitleIdIsForgotten() = runBlocking<Unit> {
+        putProdKeys()
+        installSwitch(wonder)
+        writeEdenSave(wonder, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(saves.switchTitle(wonder.romId)).isNotNull()
+
+        File(volume, "ROMs/prod.keys").delete()
+        val image = File(volume, "ROMs/switch/Super Mario Bros Wonder.xci")
+        image.setLastModified(image.lastModified() + 60_000) // replaced, say by a new dump
+        installSwitch(arceus)
+        engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(saves.switchTitle(wonder.romId)).isNull()
+        val choice = eden().folderChoice(arceus.romId) as EdenFolderChoice.Options
+        assertThat(choice.folders.map { it.titleId.toString() }).contains(wonder.titleId)
+    }
+
     /** Once another game has a folder, it isn't offered for this one. */
     @Test fun aFolderAnotherGameHasIsntOffered() = runBlocking<Unit> {
         putProdKeys()
