@@ -42,7 +42,6 @@ class SaveRepository(private val engine: SaveSyncEngine, private val saves: Save
         report.unavailable ?: when (romId) {
             in report.uploaded -> "Uploaded $title's save to RomM"
             in report.adopted -> "RomM already had this save of $title; it's in sync"
-            in report.conflicts -> chooseText(title)
             in report.serverNewer -> "RomM has a newer save of $title. Close ${emulatorName(unit?.emulator)}, then restore it."
             in report.waiting -> "${emulatorName(unit?.emulator)} wrote $title's save less than a minute ago. " +
                 "Loom uploads a save once it has been left alone for a minute; try again then."
@@ -51,7 +50,7 @@ class SaveRepository(private val engine: SaveSyncEngine, private val saves: Save
             else -> when (unit?.state) {
                 SaveSyncState.NO_SAVE -> "$title has no save yet, on the Thor or on RomM"
                 SaveSyncState.LOCAL_MISSING -> "$title's save isn't on the Thor; RomM has one to restore"
-                SaveSyncState.CONFLICT -> chooseText(title) // skipped before, and nothing changed since
+                SaveSyncState.CONFLICT -> chooseText(title) // found now, or skipped before and nothing changed since
                 else -> "$title's save is already in sync with RomM"
             }
         }
