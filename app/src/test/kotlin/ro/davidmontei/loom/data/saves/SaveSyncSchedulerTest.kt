@@ -57,6 +57,15 @@ class SaveSyncSchedulerTest {
         assertThat(info.constraints.requiredNetworkType).isEqualTo(NetworkType.CONNECTED)
     }
 
+    @Test fun theSettingsSwitchStoresTheChoiceAndStartsOrStopsThePeriodicScan() = runBlocking<Unit> {
+        triggers.setAutomaticUpload(true)
+        assertThat(settings.snapshot().autoUploadSaves).isTrue()
+        assertThat(periodic().single().state).isEqualTo(WorkInfo.State.ENQUEUED)
+        triggers.setAutomaticUpload(false)
+        assertThat(settings.snapshot().autoUploadSaves).isFalse()
+        assertThat(periodic().single().state).isEqualTo(WorkInfo.State.CANCELLED)
+    }
+
     @Test fun turningAutomaticUploadOffStopsThePeriodicScan() {
         scheduler.setPeriodic(true)
         scheduler.setPeriodic(false)

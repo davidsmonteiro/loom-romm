@@ -4,6 +4,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
 import org.junit.Test
@@ -66,6 +67,23 @@ class ScreenshotTest {
         rule.onNodeWithText("PlayStation").performClick()
         settle()
         rule.saveScreenshot("settings-mapping-editor")
+    }
+
+    @Test fun settingsDownloadsAndSaves() {
+        val state = SettingsScreenTest.sample.copy(
+            settings = SettingsScreenTest.sample.settings!!.copy(
+                lastSaveSync = ro.davidmontei.loom.data.settings.SaveSyncOutcome(System.currentTimeMillis() - 12 * 60_000, "1 uploaded · 1 newer on RomM", false),
+            ),
+            storage = SettingsScreenTest.sample.storage.copy(azaharFound = "/storage/6365-3230/ROMs/n3ds"),
+        )
+        rule.setContent { LoomTestTheme { ro.davidmontei.loom.ui.settings.SettingsContent(state, SettingsScreenTest.noop) } }
+        settle()
+        rule.onNodeWithTag("section-DOWNLOADS").performClick()
+        settle()
+        rule.saveScreenshot("settings-downloads-saves")
+        rule.onNodeWithText("Change folder").performScrollTo()
+        settle()
+        rule.saveScreenshot("settings-saves")
     }
 
     @Test fun settingsServer() {

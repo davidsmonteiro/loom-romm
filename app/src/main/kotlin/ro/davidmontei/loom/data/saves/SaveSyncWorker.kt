@@ -148,4 +148,10 @@ class SaveSyncTriggers(private val settings: SettingsStore, private val schedule
 
     /** A card came back: the saves on it may have changed elsewhere. The worker honours the setting. */
     fun cardMounted() = scheduler.runNow(SaveSyncKind.AUTO)
+
+    /** The Settings switch: the periodic scan runs exactly while automatic upload is on. */
+    suspend fun setAutomaticUpload(on: Boolean) {
+        settings.setAutoUploadSaves(on)
+        scheduler.setPeriodic(on)
+    }
 }

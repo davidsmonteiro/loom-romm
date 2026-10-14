@@ -70,6 +70,7 @@ import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.ROM_FILE_CATEGORIES
 import ro.davidmontei.loom.ui.components.ButtonHint
 import ro.davidmontei.loom.ui.components.FocusRingIndication
+import ro.davidmontei.loom.ui.components.FolderNote
 import ro.davidmontei.loom.ui.components.FolderPicker
 import ro.davidmontei.loom.ui.components.InitialFocus
 import ro.davidmontei.loom.ui.components.LoomButton
@@ -82,6 +83,7 @@ import ro.davidmontei.loom.ui.components.ScreenScaffold
 import ro.davidmontei.loom.ui.components.SectionHeader
 import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.StatusBadge
+import ro.davidmontei.loom.ui.components.ago
 import ro.davidmontei.loom.ui.components.gameCount
 import ro.davidmontei.loom.ui.components.padScroll
 import ro.davidmontei.loom.ui.theme.LoomColors
@@ -102,6 +104,10 @@ interface SettingsActions {
     val exportPath: String
     val cocoonFolders: List<String>
     fun setConcurrency(n: Int)
+    /** The automatic upload switch; the periodic scan follows it. */
+    fun setAutoUploadSaves(on: Boolean)
+    /** Azahar's user directory; null goes back to the 3DS system folder. */
+    fun setAzaharFolder(dir: java.io.File?)
     fun setSwap(swap: Boolean)
     fun openBatterySettings()
     fun licenseText(): String
@@ -131,6 +137,8 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
             override val exportPath get() = vm.exportPath
             override val cocoonFolders get() = vm.cocoonFolders
             override fun setConcurrency(n: Int) { vm.setConcurrency(n) }
+            override fun setAutoUploadSaves(on: Boolean) { vm.setAutoUploadSaves(on) }
+            override fun setAzaharFolder(dir: java.io.File?) { vm.setAzaharFolder(dir) }
             override fun setSwap(swap: Boolean) { vm.setSwap(swap) }
             override fun openBatterySettings() {
                 runCatching {
@@ -200,7 +208,10 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
                     SettingsSection.SERVER -> ServerSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
                     SettingsSection.STORAGE -> StorageSection(state, actions, first)
                     SettingsSection.MAPPING -> MappingSection(state, actions, first)
-                    SettingsSection.DOWNLOADS -> DownloadsSection(state, actions, first)
+                    SettingsSection.DOWNLOADS -> {
+                        DownloadsSection(state, actions, first)
+                        SaveSyncSection(state, actions)
+                    }
                     SettingsSection.CONTROLS -> Box(first) {
                         LoomSwitchRow("Swap A and B", state.settings?.swapConfirmBack == true, actions::setSwap,
                             subtitle = "For Nintendo-style pads: confirm with the right face button and go back with the bottom one.")
@@ -507,6 +518,66 @@ private fun DownloadsSection(state: SettingsUiState, actions: SettingsActions, m
             modifier = Modifier.onFocusChanged { allowFocused = it.isFocused })
     }
 }
+
+/**
+ * Save sync: automatic upload, how the last background sync went, and where Azahar keeps its data
+ * (its folder browser opens in place, as the ROMs folder's does).
+ */
+@Composable
+private fun SaveSyncSection(state: SettingsUiState, actions: SettingsActions) {
+    val settings = state.settings
+    var picking by remember { mutableStateOf(false) }
+    val changeFolder = remember { FocusRequester() }
+    ReturnFocusOnClose(picking) { changeFolder }
+    // B on the browser (once it has no folder left to go back up from) or its toggle closes it.
+    var toggleFocused by remember { mutableStateOf(false) }
+    var pickerFocused by remember { mutableStateOf(false) }
+    BackHandler(enabled = picking && (toggleFocused || pickerFocused)) { picking = false }
+    SectionTop {
+        SectionHeader("Save sync")
+        LoomSwitchRow("Upload saves automatically", settings?.autoUploadSaves ?: true, actions::setAutoUploadSaves,
+            subtitle = "Loom uploads a 3DS save once Azahar has left it alone for a minute: every 15 minutes, and when Loom opens. " +
+                "Saves from RomM always wait for you.")
+        val last = settings?.lastSaveSync
+        Text(
+            if (last == null) "No save sync has run yet." else "Last sync ${ago(last.atEpochMs)}: ${last.summary}",
+            style = MaterialTheme.typography.bodyMedium, color = if (last?.failed == true) LoomColors.Error else LoomColors.TextMuted,
+            modifier = Modifier.testTag("last-save-sync"),
+        )
+    }
+    val chosen = settings?.azaharUserDir
+    val current = (chosen ?: state.storage.azaharFound)?.let { java.io.File(it) }
+    SectionTop {
+        SectionHeader("Azahar's folder")
+        Text(current?.path ?: "Not found", style = MaterialTheme.typography.titleSmall)
+        Text(
+            when {
+                chosen != null -> "Chosen here. Azahar keeps sdmc and nand in it."
+                current != null -> "Found in the 3DS system folder."
+                else -> "Loom looks for Azahar's sdmc folder in the 3DS system folder. Run a game in Azahar once, or choose its folder."
+            },
+            style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+            LoomButton(if (picking) "Close folder browser" else "Change folder", onClick = { picking = !picking },
+                modifier = Modifier.focusRequester(changeFolder).onFocusChanged { toggleFocused = it.isFocused })
+            if (chosen != null) LoomButton("Use the 3DS folder", onClick = { actions.setAzaharFolder(null) })
+        }
+    }
+    if (picking) {
+        val start = current ?: state.storage.romsRoot?.let { java.io.File(it) }
+        FolderPicker(actions.volumes(), start?.parentFile, AZAHAR_FOLDERS, focusOn = start, note = ::azaharNote,
+            onPick = { actions.setAzaharFolder(it); picking = false },
+            modifier = Modifier.heightIn(max = 360.dp).onFocusChanged { pickerFocused = it.hasFocus })
+    }
+}
+
+/** The folders Azahar keeps in its user directory, highlighted in its folder browser. */
+private val AZAHAR_FOLDERS = setOf("sdmc", "nand")
+
+private fun azaharNote(children: List<java.io.File>): FolderNote =
+    if (children.any { it.name == "sdmc" }) FolderNote("Azahar's data is here (${children.filter { it.name in AZAHAR_FOLDERS }.joinToString { it.name }}).", true)
+    else FolderNote("Azahar's folder holds sdmc and nand; they aren't here.", false)
 
 @Composable
 private fun AboutSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {

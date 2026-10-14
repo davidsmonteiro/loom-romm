@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
@@ -37,6 +38,7 @@ import ro.davidmontei.loom.data.auth.Credentials
 import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.data.download.VolumeInfo
+import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.Settings
 import ro.davidmontei.loom.storage.mapping.MappingJson
@@ -95,6 +97,8 @@ class SettingsScreenTest {
         override val exportPath = "/storage/emulated/0/Download/loom-mapping.json"
         override val cocoonFolders = listOf("psx", "snes", "gc")
         override fun setConcurrency(n: Int) { calls += "concurrency:$n" }
+        override fun setAutoUploadSaves(on: Boolean) { calls += "autoUpload:$on" }
+        override fun setAzaharFolder(dir: File?) { calls += "azahar:$dir" }
         override fun setSwap(swap: Boolean) { calls += "swap:$swap" }
         override fun openBatterySettings() { calls += "battery" }
         override fun licenseText() = (1..120).joinToString("\n\n") { "GNU GENERAL PUBLIC LICENSE, paragraph $it" }
@@ -391,5 +395,84 @@ class SettingsScreenTest {
         restore.emulateSavedInstanceStateRestore()
         rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
         rule.onNodeWithText("Pair again").assertIsFocused()
+    }
+
+    // --- save sync, in Downloads & saves ---
+
+    /** Into Downloads & saves, then down past the download settings to the automatic upload switch. */
+    private fun toTheSaveSwitch() {
+        repeat(3) { press(Key.DirectionDown) }
+        press(Key.DirectionCenter) // the first concurrency chip
+        press(Key.DirectionDown) // Allow background downloads
+        press(Key.DirectionDown)
+        rule.onNodeWithText("Upload saves automatically").assertIsFocused()
+    }
+
+    @Test fun aTurnsAutomaticUploadOff() {
+        show()
+        toTheSaveSwitch()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("autoUpload:false")
+    }
+
+    @Test fun theLastSaveSyncSaysWhenAndHowItWent() {
+        state = sample.copy(settings = sample.settings!!.copy(lastSaveSync = SaveSyncOutcome(System.currentTimeMillis() - 5 * 60_000, "2 uploaded · 1 conflict", false)))
+        show()
+        toTheSaveSwitch()
+        rule.onNodeWithTag("last-save-sync").assertTextEquals("Last sync 5 min ago: 2 uploaded · 1 conflict")
+        update { it.copy(settings = it.settings!!.copy(lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), "Can't reach the RomM server", true))) }
+        rule.onNodeWithTag("last-save-sync").assertTextEquals("Last sync just now: Can't reach the RomM server")
+    }
+
+    /** Azahar's folder browser opens beside the folder in use, and says whether the open folder holds Azahar's data. */
+    @Test fun azaharsFolderIsChosenWithTheFolderBrowser() {
+        val card = tmp.newFolder("6365-3230")
+        val n3ds = File(card, "ROMs/n3ds").apply { File(this, "sdmc/Nintendo 3DS").mkdirs(); File(this, "nand").mkdirs() }
+        File(card, "ROMs/snes").mkdirs()
+        state = sample.copy(storage = sample.storage.copy(romsRoot = File(card, "ROMs").path, azaharFound = n3ds.path))
+        show()
+        toTheSaveSwitch()
+        rule.onNodeWithText(n3ds.path).assertExists()
+        rule.onNodeWithText("Found in the 3DS system folder.").assertExists()
+        press(Key.DirectionDown)
+        rule.onNodeWithText("Change folder").assertIsFocused()
+        press(Key.DirectionCenter) // the browser opens, on the folder in use
+        rule.onNodeWithText("n3ds").assertIsFocused()
+        press(Key.DirectionCenter) // A goes into it
+        rule.onNodeWithText("Azahar's data is here (nand, sdmc).").assertExists()
+        rule.onNodeWithText("Use this folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("azahar:${n3ds.path}")
+        rule.onNodeWithText("Change folder").assertIsFocused()
+    }
+
+    @Test fun bClosesAzaharsFolderBrowser() {
+        show()
+        toTheSaveSwitch()
+        press(Key.DirectionDown); press(Key.DirectionCenter) // the browser lists volumes: the card isn't there in tests
+        rule.onNodeWithText("SD card").assertIsFocused()
+        back()
+        rule.onNodeWithText("Change folder").assertIsFocused()
+        back()
+        rule.onNodeWithTag("section-DOWNLOADS").assertIsFocused()
+        assertThat(calls.filter { it.startsWith("azahar") }).isEmpty()
+    }
+
+    @Test fun aChosenFolderCanGoBackToThe3dsFolder() {
+        state = sample.copy(settings = sample.settings!!.copy(azaharUserDir = "/storage/6365-3230/Azahar"))
+        show()
+        toTheSaveSwitch()
+        rule.onNodeWithText("/storage/6365-3230/Azahar").assertExists()
+        press(Key.DirectionDown); press(Key.DirectionRight)
+        rule.onNodeWithText("Use the 3DS folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("azahar:null")
+    }
+
+    @Test fun withoutAzaharsFolderItSaysWhatToDo() {
+        show()
+        toTheSaveSwitch()
+        rule.onNodeWithText("Not found").assertExists()
+        rule.onNodeWithText("Use the 3DS folder").assertDoesNotExist()
     }
 }

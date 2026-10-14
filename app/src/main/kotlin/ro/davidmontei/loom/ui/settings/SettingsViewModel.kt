@@ -27,6 +27,8 @@ import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.MappingRepository
+import ro.davidmontei.loom.data.saves.SaveSyncTriggers
+import ro.davidmontei.loom.data.saves.SaveUnitResolver
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.Settings
 import ro.davidmontei.loom.data.settings.SettingsStore
@@ -42,15 +44,26 @@ import ro.davidmontei.loom.storage.mapping.ResolvedPlatform
 import java.io.File
 import javax.inject.Inject
 
+/**
+ * Settings' sections. Save sync shares Downloads' section: a seventh would make the section list
+ * taller than the Thor's screen (FitsTheScreenTest.theSettingsSectionListFits).
+ */
 enum class SettingsSection(val title: String) {
     SERVER("Server & pairing"), STORAGE("Storage"), MAPPING("Platform folders"),
-    DOWNLOADS("Downloads"), CONTROLS("Controls"), ABOUT("About & licenses"),
+    DOWNLOADS("Downloads & saves"), CONTROLS("Controls"), ABOUT("About & licenses"),
 }
 
 /** A server platform with the folder and policies Loom will use for it. */
 data class MappingRow(val platform: PlatformSummary, val resolved: ResolvedPlatform, val override: PlatformMappingEntry?)
 
-data class StorageInfo(val romsRoot: String?, val volumeLabel: String?, val freeBytes: Long?, val totalBytes: Long?)
+data class StorageInfo(
+    val romsRoot: String?,
+    val volumeLabel: String?,
+    val freeBytes: Long?,
+    val totalBytes: Long?,
+    /** Where Azahar's data was found when Settings doesn't name its folder: the 3DS system folder, as on the Thor. */
+    val azaharFound: String? = null,
+)
 
 data class SettingsUiState(
     val settings: Settings? = null,
@@ -75,6 +88,7 @@ class SettingsViewModel @Inject constructor(
     private val sync: CatalogSyncScheduler,
     private val connector: RommConnector,
     private val server: ActiveServer,
+    private val saveSync: SaveSyncTriggers,
 ) : ViewModel() {
 
     private val storageInfo = MutableStateFlow(StorageInfo(null, null, null, null))
@@ -105,9 +119,12 @@ class SettingsViewModel @Inject constructor(
         val power = context.getSystemService(PowerManager::class.java)
         deviceState.value = power.isIgnoringBatteryOptimizations(context.packageName) to volumes.hasAllFilesAccess()
         val root = store.snapshot().romsRoot
+        val mapper = mapping.currentMapper()
+        val n3dsFolders = catalog.platforms().filter { SaveUnitResolver.supportsPlatform(it.slug) }.map { mapper.resolve(it.slug, it.fsSlug).folder }
         storageInfo.value = withContext(Dispatchers.IO) {
             val volume = root?.let(volumes::forPath)
-            StorageInfo(root, volume?.label, volume?.let { volumes.freeBytes(it.root) }, volume?.let { volumes.totalBytes(it.root) })
+            StorageInfo(root, volume?.label, volume?.let { volumes.freeBytes(it.root) }, volume?.let { volumes.totalBytes(it.root) },
+                findAzaharFolder(root, n3dsFolders)?.path)
         }
     }
 
@@ -182,11 +199,34 @@ class SettingsViewModel @Inject constructor(
         MappingJson.shippedDefaults().platforms.mapNotNull { it.folder }.distinct().sorted()
     }
 
-    // --- downloads & controls ---
+    // --- downloads, saves & controls ---
 
     fun setConcurrency(n: Int) = viewModelScope.launch { store.setMaxConcurrentDownloads(n) }
+
+    fun setAutoUploadSaves(on: Boolean) = viewModelScope.launch { saveSync.setAutomaticUpload(on) }
+
+    /** [dir] null goes back to finding Azahar's data in the 3DS system folder. */
+    fun setAzaharFolder(dir: File?) = viewModelScope.launch {
+        store.setAzaharUserDir(dir?.path)
+        refreshDevice()
+        _messages.send(withContext(Dispatchers.IO) { azaharFolderSaved(dir) })
+    }
     fun setSwap(swap: Boolean) = viewModelScope.launch { store.setSwapConfirmBack(swap) }
 
     fun licenseText(): String = context.assets.open("licenses/gpl-3.0.txt").bufferedReader().use { it.readText() }
     fun interLicense(): String = context.assets.open("licenses/inter-OFL.txt").bufferedReader().use { it.readText() }
+}
+
+/**
+ * Where Azahar keeps its data when Settings doesn't say: the first of the 3DS system folders
+ * ([systemFolders], in [romsRoot]) holding its `sdmc/Nintendo 3DS`, as on the Thor.
+ */
+fun findAzaharFolder(romsRoot: String?, systemFolders: List<String>): File? =
+    romsRoot?.let { root -> systemFolders.distinct().map { File(root, it) }.firstOrNull(SaveUnitResolver::holdsAzaharData) }
+
+/** What Settings says once Azahar's folder is chosen ([dir]), or set back to the 3DS folder (null). */
+fun azaharFolderSaved(dir: File?): String = when {
+    dir == null -> "Loom looks for Azahar's data in the 3DS folder again"
+    SaveUnitResolver.holdsAzaharData(dir) -> "Saved. Loom finds 3DS saves in ${dir.path}"
+    else -> "Saved, but Azahar's sdmc/Nintendo 3DS isn't in ${dir.path} yet. Run a game in Azahar once, or choose its folder."
 }

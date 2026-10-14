@@ -37,6 +37,7 @@ import ro.davidmontei.loom.ui.onboarding.PairMode
 import ro.davidmontei.loom.ui.queue.QueueContent
 import ro.davidmontei.loom.ui.settings.SettingsActions
 import ro.davidmontei.loom.ui.settings.SettingsContent
+import ro.davidmontei.loom.ui.settings.SettingsSection
 
 /**
  * Screens that must fit the Thor's top screen without scrolling. Native graphics measure text with
@@ -81,6 +82,16 @@ class FitsTheScreenTest {
         rule.setContent { LoomTestTheme { OnboardingContent(state, NoopOnboardingActions) } }
         assertThat(overflow()).isEqualTo(0f)
         rule.saveScreenshot("onboarding-server-http-warning")
+    }
+
+    /** Every section is in the list without scrolling it: a section that has to be scrolled to is easily missed. */
+    @Test fun theSettingsSectionListFits() {
+        rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample, SettingsScreenTest.noop) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        val list = rule.onNodeWithTag("settings-sections").fetchSemanticsNode()
+        assertThat(list.config[SemanticsProperties.VerticalScrollAxisRange].maxValue()).isEqualTo(0f)
+        val last = rule.onNodeWithTag("section-${SettingsSection.entries.last().name}").fetchSemanticsNode()
+        assertThat(last.boundsInRoot.bottom).isAtMost(list.boundsInRoot.bottom)
     }
 
     /** Found by audit: the platform folder editor was taller than the screen. */

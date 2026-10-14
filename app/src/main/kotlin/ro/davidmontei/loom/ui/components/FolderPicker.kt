@@ -32,10 +32,15 @@ import ro.davidmontei.loom.data.download.VolumeInfo
 import ro.davidmontei.loom.ui.theme.LoomColors
 import java.io.File
 
+/** What the picker says about the folder it shows, and whether that looks like the one wanted. */
+class FolderNote(val text: String, val looksRight: Boolean)
+
 /**
  * Browses folders with the D-pad (the system picker is touch-first and returns SAF URIs Loom
  * doesn't need with all-files access). Shows how many of the folders inside look like Cocoon
- * system folders, so picking the right ROMs root is easy to confirm.
+ * system folders, so picking the right ROMs root is easy to confirm; [note] says something else
+ * about the open folder's [children] when it isn't a ROMs root being picked, and the folders in
+ * [knownSystemFolders] are the ones to highlight.
  *
  * With [focusOnOpen] false the screen around it keeps focus (onboarding puts it on its suggested
  * folder) until the user moves within the picker. [focusOn], a folder inside [initial], takes focus
@@ -55,6 +60,7 @@ fun FolderPicker(
     modifier: Modifier = Modifier,
     focusOnOpen: Boolean = true,
     focusOn: File? = null,
+    note: ((children: List<File>) -> FolderNote)? = null,
 ) {
     var current by remember { mutableStateOf(initial?.takeIf { it.isDirectory }) }
     // The folder (or volume) just left by going up, or [focusOn] at first.
@@ -87,12 +93,12 @@ fun FolderPicker(
     Column(modifier.onFocusChanged { hasFocus = it.hasFocus }, verticalArrangement = Arrangement.spacedBy(Space.m)) {
         Text(current?.path ?: "Choose a storage", style = MaterialTheme.typography.titleSmall, color = LoomColors.TextMuted)
         if (current != null) {
-            Text(
+            val said = note?.invoke(children) ?: FolderNote(
                 if (systems > 0) "$systems folders here look like Cocoon systems (${children.filter { it.name.lowercase() in knownSystemFolders }.take(6).joinToString { it.name }}…)"
                 else "No system folders (snes, psx, gba…) here yet.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (systems > 0) LoomColors.Installed else LoomColors.TextMuted,
+                looksRight = systems > 0,
             )
+            Text(said.text, style = MaterialTheme.typography.bodyMedium, color = if (said.looksRight) LoomColors.Installed else LoomColors.TextMuted)
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
                 LoomButton("Use this folder", onClick = { onPick(current!!) }, primary = true,
                     modifier = if (focusIndex == null) Modifier.focusRequester(firstFocus) else Modifier)
