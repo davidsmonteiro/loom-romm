@@ -206,6 +206,33 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         assertThat(repository.serverSaveInfo(7, 9_999)).isNull()
     }
 
+    /**
+     * An offloaded game's conflict, or its save to restore, can't be answered (the game isn't
+     * installed): the queue leaves it out, keeping the record, and lists it again once the game is
+     * back. Its save still sits in Azahar's folder.
+     */
+    @Test fun anOffloadedGamesSavesLeaveTheQueueUntilItsBack() = runBlocking<Unit> {
+        install(pokemonX)
+        install(omegaRuby)
+        writeSave(pokemonX, bytes(1))
+        romm.addSave(7, archiveOf(bytes(2))) // a conflict
+        romm.addSave(8, archiveOf(bytes(3))) // RomM's can come back
+        engine().sync(SaveSyncRequest.PUSH)
+        val repository = repository
+
+        db.catalogDao().deleteInstall(7)
+        db.catalogDao().deleteInstall(8)
+
+        assertThat(repository.observeConflicts().first()).isEmpty()
+        assertThat(repository.observeRestorable().first()).isEmpty()
+        assertThat(db.saveDao().conflict(7)).isNotNull()
+
+        install(pokemonX)
+        install(omegaRuby)
+        assertThat(repository.observeConflicts().first().map { it.conflict.romId }).containsExactly(7)
+        assertThat(repository.observeRestorable().first().map { it.romId }).containsExactly(8)
+    }
+
     @Test fun theQueueListsConflictsRestorableSavesAndRecentSyncsByTitle() = runBlocking<Unit> {
         install(pokemonX)
         install(omegaRuby)

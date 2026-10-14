@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.Flow
 
 /**
  * A save conflict with its game's title (null if the ROM has left the catalog) and the emulator
- * the Thor's save belongs to (null once the game is no longer installed).
+ * the Thor's save belongs to (null until Loom has looked at the save since the game came back).
  */
 data class TitledConflict(
     @Embedded val conflict: SaveConflictEntity,
@@ -56,8 +56,13 @@ interface SaveDao {
     @Query("SELECT * FROM save_conflicts WHERE rom_id = :romId")
     suspend fun conflict(romId: Int): SaveConflictEntity?
 
+    /**
+     * The conflicts of installed games, oldest first. An offloaded game's conflict stays recorded
+     * (its save is still in the emulator's folder) but can't be answered, so it isn't listed.
+     */
     @Query(
         """SELECT c.*, r.title AS title, u.emulator AS local_emulator FROM save_conflicts c
+           JOIN installs i ON i.rom_id = c.rom_id
            LEFT JOIN roms r ON r.id = c.rom_id LEFT JOIN save_units u ON u.rom_id = c.rom_id ORDER BY c.detected_at""",
     )
     fun observeTitledConflicts(): Flow<List<TitledConflict>>
@@ -84,10 +89,10 @@ interface SaveDao {
     @Query("SELECT * FROM save_units ORDER BY rom_id")
     fun observeUnits(): Flow<List<SaveUnitEntity>>
 
-    /** Games whose save is in one of [states] (names of [SaveSyncState]), by title. */
+    /** Installed games whose save is in one of [states] (names of [SaveSyncState]), by title. */
     @Query(
         """SELECT u.rom_id, r.title, u.emulator, u.state FROM save_units u JOIN roms r ON r.id = u.rom_id
-           WHERE u.state IN (:states) ORDER BY r.sort_key, r.id""",
+           JOIN installs i ON i.rom_id = u.rom_id WHERE u.state IN (:states) ORDER BY r.sort_key, r.id""",
     )
     fun observeUnitsIn(states: List<String>): Flow<List<TitledSaveUnit>>
 
