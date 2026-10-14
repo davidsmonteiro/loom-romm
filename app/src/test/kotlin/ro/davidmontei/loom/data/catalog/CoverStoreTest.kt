@@ -22,7 +22,6 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.annotation.GraphicsMode
-import ro.davidmontei.loom.data.db.CoverPaths
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
@@ -118,33 +117,34 @@ class CoverStoreTest {
         assertThat(store.get(base = null, "/never/fetched.png")).isNull()
     }
 
-    /** A thumbnail from before (256 px wide, from the small cover) as the previous Loom kept it. */
-    private fun olderThumbnail(path: String): File {
+    /** A plain thumbnail, from the small cover, as the prefetch (or an earlier Loom, at 256 px) keeps it. */
+    private fun plainThumbnail(path: String): File {
         val name = store.file(path).name.substringBefore('-') + ".webp"
-        return File(dir, name).apply { writeBytes(png(256, 384)) }
+        return File(dir, name).apply { writeBytes(png(240, 360)) }
     }
 
     /**
-     * Thumbnails from before stay drawn until replaced, and a drawn one is replaced in the background:
-     * the library never waits on RomM for a cover it has, and covers aren't all fetched again at once.
+     * A cover that is drawn is made sharp in the background, from RomM's large art, while its plain
+     * thumbnail is shown: the library never waits on RomM for a cover it has. The plain one goes once
+     * the sharp one is stored.
      */
-    @Test fun anOlderThumbnailIsDrawnAtOnceAndReplacedInTheBackground() = runBlocking<Unit> {
+    @Test fun aDrawnCoverIsShownAtOnceAndSharpenedInTheBackground() = runBlocking<Unit> {
         cover(large, 600, 900)
-        val older = olderThumbnail(small)
-        val replaced = CountDownLatch(1)
-        assertThat(store.forDrawing(CoverRef(small, server.url("/"), large)) { replaced.countDown() }).isEqualTo(older)
-        assertThat(replaced.await(5, TimeUnit.SECONDS)).isTrue()
+        val plain = plainThumbnail(small)
+        val sharpened = CountDownLatch(1)
+        assertThat(store.forDrawing(CoverRef(small, server.url("/"), large)) { sharpened.countDown() }).isEqualTo(plain)
+        assertThat(sharpened.await(5, TimeUnit.SECONDS)).isTrue()
         assertThat(size(store.file(small))).isEqualTo(CoverStore.WIDTH to CoverStore.HEIGHT)
-        assertThat(older.exists()).isFalse() // its space is given back
+        assertThat(plain.exists()).isFalse() // its space is given back
         assertThat(store.forDrawing(CoverRef(small, server.url("/"), large))).isEqualTo(store.file(small))
-        assertThat(requested).hasSize(1)
+        assertThat(requested).containsExactly("/assets/romm/resources/roms/18/8562/cover/big.png")
     }
 
     /**
-     * Scrolling through a long list of older thumbnails replaces them a couple at a time, with a few
-     * dozen waiting at most: the rest wait to be drawn again, or for the next prefetch.
+     * Scrolling through a long list of plain thumbnails sharpens them a couple at a time, with a few
+     * dozen waiting at most: the rest wait to be drawn again.
      */
-    @Test fun olderThumbnailsAreReplacedACoupleAtATime() = runBlocking<Unit> {
+    @Test fun drawnCoversAreSharpenedACoupleAtATime() = runBlocking<Unit> {
         val release = CountDownLatch(1)
         val inFlight = java.util.concurrent.atomic.AtomicInteger()
         val most = java.util.concurrent.atomic.AtomicInteger()
@@ -157,67 +157,78 @@ class CoverStoreTest {
                 return MockResponse.Builder().setHeader("Content-Type", "image/png").body(Buffer().write(png(600, 900))).build()
             }
         }
-        val games = (1..40).map(::paths)
-        games.forEach { olderThumbnail(it.small) }
-        val replaced = CountDownLatch(32)
-        repeat(2) { games.forEach { store.forDrawing(CoverRef(it.small, server.url("/"), it.large)) { replaced.countDown() } } } // drawn twice: asked for once
+        val games = (1..40).map { smallOf(it) to largeOf(it) }
+        games.forEach { plainThumbnail(it.first) }
+        val sharpened = CountDownLatch(32)
+        repeat(2) { games.forEach { (s, l) -> store.forDrawing(CoverRef(s, server.url("/"), l)) { sharpened.countDown() } } } // drawn twice: asked for once
 
         Thread.sleep(300)
         assertThat(requested).hasSize(2)
         release.countDown()
-        assertThat(replaced.await(10, TimeUnit.SECONDS)).isTrue()
+        assertThat(sharpened.await(10, TimeUnit.SECONDS)).isTrue()
         assertThat(most.get()).isEqualTo(2)
-        assertThat(games.count { store.file(it.small).exists() }).isEqualTo(32)
+        assertThat(games.count { store.file(it.first).exists() }).isEqualTo(32)
         assertThat(requested).hasSize(32)
     }
 
-    @Test fun offlineAnOlderThumbnailIsDrawnAsItIs() = runBlocking<Unit> {
-        val older = olderThumbnail(small)
-        assertThat(store.forDrawing(CoverRef(small, base = null, large))).isEqualTo(older)
-        assertThat(older.exists()).isTrue()
+    /** A cover drawn before any prefetch has made it is made sharp straight away: it's being looked at. */
+    @Test fun aCoverWithNoThumbnailIsMadeSharpWhenDrawn() = runBlocking<Unit> {
+        cover(small, 240, 360)
+        cover(large, 600, 900)
+        assertThat(size(store.forDrawing(CoverRef(small, server.url("/"), large))!!)).isEqualTo(CoverStore.WIDTH to CoverStore.HEIGHT)
+        assertThat(requested).containsExactly("/assets/romm/resources/roms/18/8562/cover/big.png")
     }
 
-    private fun paths(id: Int) = CoverPaths("/assets/romm/resources/roms/18/$id/cover/small.png?ts=1", "/assets/romm/resources/roms/18/$id/cover/big.png?ts=1")
+    @Test fun offlineAPlainThumbnailIsDrawnAsItIs() = runBlocking<Unit> {
+        val plain = plainThumbnail(small)
+        assertThat(store.forDrawing(CoverRef(small, base = null, large))).isEqualTo(plain)
+        assertThat(plain.exists()).isTrue()
+    }
+
+    private fun smallOf(id: Int) = "/assets/romm/resources/roms/18/$id/cover/small.png?ts=1"
+    private fun largeOf(id: Int) = "/assets/romm/resources/roms/18/$id/cover/big.png?ts=1"
 
     /**
-     * A prefetch makes the covers not stored yet, and replaces only so many from before: 20,000
-     * covers don't all come down again in one go.
+     * The prefetch keeps offline browsing complete cheaply: a cover with no thumbnail gets a plain
+     * one, from RomM's small cover (about 0.1 MB to fetch, not the large art's 0.5 MB). Covers already
+     * kept are left alone: only covers that are drawn are made sharp.
      */
-    @Test fun aPrefetchMakesMissingCoversAndReplacesOnlySomeFromBefore() = runBlocking<Unit> {
-        val missing = paths(1)
-        val before = (2..5).map(::paths)
-        (listOf(missing) + before).forEach { cover(it.large!!, 600, 900) }
-        before.forEach { olderThumbnail(it.small) }
+    @Test fun thePrefetchMakesPlainThumbnailsOfMissingCoversOnly() = runBlocking<Unit> {
+        val missing = 1
+        val kept = (2..5).toList()
+        (listOf(missing) + kept).forEach { cover(smallOf(it), 240, 360); cover(largeOf(it), 600, 900) }
+        val plain = kept.map { plainThumbnail(smallOf(it)) }
 
-        store.prefetch(server.url("/"), listOf(missing) + before, upgrades = 2)
+        store.prefetch(server.url("/"), (listOf(missing) + kept).map(::smallOf))
 
-        assertThat(store.file(missing.small).exists()).isTrue()
-        assertThat(before.count { store.file(it.small).exists() }).isEqualTo(2)
-        assertThat(before.count { store.older(it.small) != null }).isEqualTo(2) // the rest are still drawn, until the next run
-        assertThat(requested).hasSize(3)
+        assertThat(requested).containsExactly("/assets/romm/resources/roms/18/1/cover/small.png")
+        assertThat(store.file(smallOf(missing)).exists()).isFalse() // not sharp: nobody has looked at it
+        assertThat(size(store.plain(smallOf(missing))!!)).isEqualTo(240 to 360)
+        assertThat(plain.all { it.exists() }).isTrue()
+        assertThat(kept.none { store.file(smallOf(it)).exists() }).isTrue()
     }
 
     @Test fun prefetchDropsCoversNoGameUses() = runBlocking<Unit> {
         cover(large, 600, 900)
-        store.get(server.url("/"), small, large)
+        store.get(server.url("/"), small, large) // a sharp one, kept
         val gone = store.file("/assets/romm/resources/roms/1/1/cover/small.png").apply { writeText("old") }
-        val goneBefore = olderThumbnail("/assets/romm/resources/roms/1/2/cover/small.png")
+        val gonePlain = plainThumbnail("/assets/romm/resources/roms/1/2/cover/small.png")
         val writing = File(dir, "abc.webp123.tmp").apply { writeText("") } // another fetch, mid-write
 
-        val other = paths(8563)
-        cover(other.large!!, 600, 900)
-        store.prefetch(server.url("/"), listOf(CoverPaths(small, large), other))
+        cover(smallOf(8563), 240, 360)
+        store.prefetch(server.url("/"), listOf(small, smallOf(8563)))
 
         assertThat(requested).hasSize(2) // one earlier, one for the missing cover
-        assertThat(store.file(other.small).exists()).isTrue()
+        assertThat(store.file(small).exists()).isTrue()
+        assertThat(store.plain(smallOf(8563))).isNotNull()
         assertThat(gone.exists()).isFalse()
-        assertThat(goneBefore.exists()).isFalse()
+        assertThat(gonePlain.exists()).isFalse()
         assertThat(writing.exists()).isTrue()
     }
 
     @Test fun prefetchStopsWhenAsked() = runBlocking<Unit> {
         serve()
-        store.prefetch(server.url("/"), listOf(CoverPaths(small, large)), stopped = { true })
+        store.prefetch(server.url("/"), listOf(small), stopped = { true })
         assertThat(requested).isEmpty()
     }
 }
