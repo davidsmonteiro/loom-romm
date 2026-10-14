@@ -20,6 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.settings.ServerConfig
+import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import ro.davidmontei.loom.storage.saves.SyncDecision
 import java.time.Duration
 
@@ -40,6 +41,27 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         assertThat(repository.upload(7, "Pokemon X")).isEqualTo("Uploaded Pokemon X's save to RomM")
 
         assertThat(romm.uploads().map { it.url.queryParameter("rom_id") }).containsExactly("7")
+    }
+
+    /**
+     * The owner's pick of a Switch game's save folder is remembered and looked at at once, moving
+     * nothing: the answer says what Loom found there.
+     */
+    @Test fun choosingAnEdenSaveFolderLooksAtItAtOnce() = runBlocking<Unit> {
+        installSwitch(wonder) // no prod.keys: Loom can't read its title ID
+        writeEdenSave(wonder, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(db.saveDao().unit(wonder.romId)!!.state).isEqualTo(SaveSyncState.NEEDS_FOLDER)
+
+        val id = SwitchTitleId.parse(wonder.titleId)!!
+        assertThat(repository.chooseSaveFolder(wonder.romId, wonder.title, id)).isEqualTo("Super Mario Bros Wonder's save is Eden's 0100A0B00C0D0000 folder")
+        assertThat(db.saveDao().unit(wonder.romId)!!.state).isEqualTo(SaveSyncState.LOCAL_NEWER)
+        assertThat(romm.uploads()).isEmpty() // looking, not uploading
+
+        installSwitch(arceus)
+        val empty = SwitchTitleId.parse(arceus.titleId)!!
+        assertThat(repository.chooseSaveFolder(arceus.romId, arceus.title, empty))
+            .isEqualTo("Pokemon Legends Arceus's save is Eden's 01002B300C1D2000 folder. Neither the Thor nor RomM has a save of it yet")
     }
 
     /** Replacing a save needs the emulator closed, which only the restore question asks: Upload never downloads. */

@@ -175,11 +175,16 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
     }
 
     @Test fun severalProfilesWaitForTheOwnersChoice() = runBlocking<Unit> {
-        putProdKeys()
         installSwitch(wonder)
         writeEdenSave(wonder, bytes(1))
         File(eden, "user/save/0000000000000000/0123456789ABCDEF0123456789ABCDEF").mkdirs()
 
+        // Whose saves comes first: a game's folder can only be picked from a profile's.
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(detail(wonder)).isEqualTo(EdenSaves.SEVERAL_PROFILES)
+        assertThat(eden().folderChoice(wonder.romId)).isEqualTo(EdenFolderChoice.Unavailable(EdenSaves.SEVERAL_PROFILES))
+
+        putProdKeys()
         engine().sync(SaveSyncRequest.PUSH)
         assertThat(state(wonder)).isEqualTo(SaveSyncState.UNSUPPORTED)
         assertThat(detail(wonder)).isEqualTo(EdenSaves.SEVERAL_PROFILES)

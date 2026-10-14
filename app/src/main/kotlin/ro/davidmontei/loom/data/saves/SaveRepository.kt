@@ -60,7 +60,7 @@ class SaveRepository(
             null
         }
         "$title's save is Eden's $titleId folder" + when {
-            report == null || report.unavailable != null || romId in report.failed -> ". Upload save in its details looks at it again"
+            report == null || report.unavailable != null || romId in report.failed -> ". Loom couldn't look at it yet; the next sync does"
             romId in report.unsupported -> ", but it isn't synced: ${report.unsupported.getValue(romId)}"
             engine.observeGame(romId).first()?.state == SaveSyncState.NO_SAVE -> ". Neither the Thor nor RomM has a save of it yet"
             else -> ""

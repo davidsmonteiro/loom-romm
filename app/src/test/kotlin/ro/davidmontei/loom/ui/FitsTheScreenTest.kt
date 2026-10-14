@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import java.io.File
 import org.junit.Rule
 import org.junit.Test
@@ -172,7 +173,7 @@ class FitsTheScreenTest {
         assertThat(settingsOverflow()).isEqualTo(0f)
         rule.saveScreenshot("settings-saves-thor")
         for (line in listOf("/storage/6365-3230/ROMs/n3ds", "/storage/6365-3230/ROMs/saves/Eden", "found in ROMs/saves/Eden")) {
-            com.google.common.truth.Truth.assertWithMessage(line).that(ellipsized(line)).isFalse()
+            assertWithMessage(line).that(ellipsized(line)).isFalse()
         }
     }
 
