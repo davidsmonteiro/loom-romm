@@ -253,13 +253,18 @@ object FolderNames {
         name.startsWith(".") -> "folder name starts with a dot, so Cocoon would ignore it"
         name.any { it == '/' || it == '\\' || it.code < 0x20 } -> "folder name must be a single folder, without slashes"
         name.any { it in "*?\"<>|:" } -> "folder name contains a character SD cards don't allow"
+        EmulatorData.isSavesFolder(name) -> "${EmulatorData.SAVES_FOLDER} holds emulators' saves, not games"
         else -> null
     }
 
     /** Comparison key: SD cards treat "MAME" and "mame" as one folder. */
     fun key(name: String): String = NameSanitizer.key(name)
 
-    /** Server folder names are already single components; this only guards against odd ones. */
+    /**
+     * Server folder names are already single components; this only guards against odd ones, and
+     * against the ROMs root's saves folder, which is never a system folder.
+     */
     fun fromServer(fsSlug: String): String =
         fsSlug.trim().trimStart('.').replace(Regex("[\\\\/*?\"<>|:]"), "_").ifBlank { "unknown" }
+            .let { if (EmulatorData.isSavesFolder(it)) "${it}_games" else it }
 }

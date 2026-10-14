@@ -41,6 +41,18 @@ class SystemFolderScannerTest {
         assertThat(SystemFolderScanner.scan(tmp.root).single()).isEqualTo(SystemFolder("n3ds", 1, null))
     }
 
+    /**
+     * ROMs/saves holds emulators' saves (Eden's on the Thor): never a system folder Loom finds,
+     * offers in the folder question, or counts games in, whatever its case.
+     */
+    @Test fun theSavesFolderIsNoSystemFolder() {
+        system("snes", null, "Chrono Trigger.sfc")
+        File(tmp.root, "Saves/Eden/user/save/0000000000000000").mkdirs()
+        File(tmp.root, "Saves/Eden/prod.keys").writeText("not a game")
+        assertThat(SystemFolderScanner.scan(tmp.root)).containsExactly(SystemFolder("snes", 1, null))
+        assertThat(SystemFolderScanner.scan(tmp.root, listOf("saves", "snes"))).containsExactly(SystemFolder("snes", 1, null))
+    }
+
     @Test fun theChooserSaysWhichOfAPlatformsFoldersAreOnTheCard() = runBlocking<Unit> {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         try {

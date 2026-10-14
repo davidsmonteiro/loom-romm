@@ -216,4 +216,19 @@ class PlatformMappingTest {
         assertThat(FolderNames.validate("x:y")).isNotNull()
         assertThat(FolderNames.fromServer(".hidden")).isEqualTo("hidden")
     }
+
+    /** ROMs/saves holds emulators' saves (Eden's on the Thor): no platform's games ever go there. */
+    @Test fun theSavesFolderIsNeverAPlatformsFolder() {
+        assertThat(FolderNames.validate("saves")).isEqualTo("saves holds emulators' saves, not games")
+        assertThat(FolderNames.validate("Saves")).isNotNull()
+        assertThat(FolderNames.validate("savestates")).isNull()
+        val stored = MappingJson.encode(PlatformMappingFile(platforms = listOf(PlatformMappingEntry(PlatformMatch(fsSlug = "switch"), folder = "saves"))))
+        assertThat(MappingJson.parseOverrides(stored)).isEmpty()
+        assertThrows(InvalidMappingException::class.java) {
+            MappingJson.parse("""{"schemaVersion":1,"platforms":[{"match":{"slug":"switch"},"folder":"saves"}]}""")
+        }
+        // A RomM platform whose own folder is called saves gets another one.
+        assertThat(PlatformMapper(shipped).resolve("saves", "saves").folder).isEqualTo("saves_games")
+        assertThat(PlatformMapper(shipped).resolve("saves", "SAVES").candidates).doesNotContain("SAVES")
+    }
 }

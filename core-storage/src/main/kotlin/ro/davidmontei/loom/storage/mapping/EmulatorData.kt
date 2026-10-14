@@ -18,8 +18,18 @@ object EmulatorData {
         "nand", "screenshots", "sdmc", "shaders", "states", "sysdata",
     )
 
+    /**
+     * The folder in the ROMs root that holds emulators' saves moved to the card (Eden's in
+     * `saves/Eden` on the Thor). It is never a system folder: not detected, offered, adopted from,
+     * installed into or offloaded.
+     */
+    const val SAVES_FOLDER = "saves"
+
     /** Whether an entry named [name] at the top of a system folder is emulator data, not a game. */
     fun isEmulatorData(name: String): Boolean = name.lowercase(Locale.ROOT) in AZAHAR_FOLDERS
+
+    /** Whether a folder named [name] at the top of the ROMs root is [SAVES_FOLDER] (the card ignores case). */
+    fun isSavesFolder(name: String): Boolean = name.equals(SAVES_FOLDER, ignoreCase = true)
 
     /**
      * Whether [dir] is (or holds) an emulator's user directory: Azahar's `sdmc` or `nand` folder

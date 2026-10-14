@@ -59,10 +59,14 @@ class InstallManager(
         if (!entry.path.startsWith(root.path + File.separator)) {
             return@withContext OffloadResult.Failed("Refusing to delete ${entry.path}: it's outside the ROMs folder")
         }
-        // An install is one entry inside a system folder. Never a system folder itself, and never
-        // an emulator's data that lives among the games (Azahar's user directory is ROMs/n3ds).
-        val inSystemFolder = install.relPath.split('/').drop(1)
-        if (entry.parentFile == root || inSystemFolder.any(EmulatorData::isEmulatorData) || EmulatorData.holdsEmulatorData(entry.toPath())) {
+        // An install is one entry inside a system folder. Never a system folder itself, never an
+        // emulator's data that lives among the games (Azahar's user directory is ROMs/n3ds), and
+        // never anything in the ROMs root's saves folder (Eden's saves are in ROMs/saves/Eden).
+        val segments = install.relPath.split('/')
+        val inSystemFolder = segments.drop(1)
+        if (entry.parentFile == root || EmulatorData.isSavesFolder(segments.first()) || inSystemFolder.any(EmulatorData::isEmulatorData) ||
+            EmulatorData.holdsEmulatorData(entry.toPath())
+        ) {
             return@withContext OffloadResult.Failed("Refusing to delete ${install.relPath}: it holds an emulator's data, not a game")
         }
         if (!volumes.isMounted(install.volumeUuid)) {

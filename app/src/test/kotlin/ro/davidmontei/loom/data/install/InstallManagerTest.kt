@@ -318,6 +318,34 @@ class InstallManagerTest {
         assertThat(game.exists()).isTrue()
     }
 
+    /**
+     * ROMs/saves holds emulators' saves (Eden's in saves/Eden on the Thor). A platform RomM keeps in
+     * a server folder of that name doesn't get it as its system folder, so nothing in it is adopted.
+     */
+    @Test fun nothingInTheSavesFolderIsAdopted() = runBlocking<Unit> {
+        val dao = db.catalogDao()
+        dao.upsertPlatforms(listOf(PlatformEntity(5, "saves", "saves", "Saves", "Saves", 1, "t")))
+        dao.writePage(listOf(rom(50, 5, "Eden", 0, folder = true)), listOf(
+            RomFileEntity(500, 50, "a.sav", "roms/saves/Eden", 10, true, null, null, null, null, null),
+            RomFileEntity(501, 50, "b.sav", "roms/saves/Eden", 10, true, null, null, null, null, null),
+        ))
+        put("saves/Eden/user/save/0000000000000000/4E431822D6DEFD527268BA35B5C09533/010015100B514000/game_data.sav", 64)
+
+        assertThat(manager.reconcile().adopted).isEqualTo(0)
+        assertThat(dao.install(50)).isNull()
+    }
+
+    @Test fun offloadNeverDeletesTheSavesFolder() = runBlocking<Unit> {
+        val save = put("saves/Eden/user/save/0000000000000000/4E431822D6DEFD527268BA35B5C09533/010015100B514000/game_data.sav", 64)
+        val dao = db.catalogDao()
+        for ((i, rel) in listOf("saves/Eden", "SAVES/Eden", "saves/Eden/user", "saves").withIndex()) {
+            dao.upsertInstall(InstallEntity(10, "9C33-6BBD", romsRoot.path, rel, "s$i", 1, InstallKind.DIRECTORY, 1,
+                VerifiedBy.NAME, InstallSource.ADOPTED, null, 1))
+            assertWithMessage(rel).that(manager.offload(10)).isInstanceOf(OffloadResult.Failed::class.java)
+        }
+        assertThat(save.length()).isEqualTo(64)
+    }
+
     @Test fun offloadWhileUnmountedFails() = runBlocking<Unit> {
         put("snes/Chrono Trigger (USA).sfc", 4096)
         db.catalogDao().upsertInstall(InstallEntity(10, "9C33-6BBD", romsRoot.path, "snes/Chrono Trigger (USA).sfc",
