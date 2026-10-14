@@ -162,6 +162,8 @@ class EdenSaves(
             found.size > 1 -> Title.Ask("Its files are of different games, so Loom can't tell which save is its")
             results.any { it is SwitchTitleIdResult.SeveralGames } -> Title.Ask("Its image holds several games, so Loom can't tell which save is its")
             results.any { it is SwitchTitleIdResult.WrongKey } -> Title.Ask(WRONG_KEY)
+            // An update beside a file Loom can't read: that file may well be the game, which keeps the save.
+            update != null && unreadable != null -> Title.Ask("Loom can't read its title ID: ${unreadable.reason}, and the file it can read is an update")
             update != null -> Title.NoSave("This is an update of ${update.game}; the game itself keeps the save")
             results.all { it is SwitchTitleIdResult.NoProgram } -> Title.NoSave("It holds no game program (DLC?), so it keeps no save of its own")
             else -> Title.Ask("Loom can't read its title ID: " + (unreadable?.reason ?: "unknown image"))

@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.shadows.ShadowLog
+import ro.davidmontei.loom.data.db.InstallKind
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.db.SwitchTitleSource
 import ro.davidmontei.loom.storage.saves.SaveHasher
@@ -130,6 +131,22 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         installSwitch(arceus)
         writeEdenSave(arceus, bytes(2))
         assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(arceus.romId)
+    }
+
+    /** An update beside a game file Loom can't read: the game may be that file, so the owner is asked, not told it has no save. */
+    @Test fun anUpdateBesideAnUnreadableGameAsks() = runBlocking<Unit> {
+        putProdKeys()
+        val folder = File(volume, "ROMs/switch/Wonder").apply { mkdirs() }
+        File(folder, "Wonder.xci").writeBytes(ByteArray(0x4000) { (it * 7).toByte() })
+        switchFixture("update.nsp").copyTo(File(folder, "Wonder [Update].nsp"))
+        val dao = db.catalogDao()
+        installSwitch(wonder)
+        dao.upsertInstall(dao.install(wonder.romId)!!.copy(relPath = "switch/Wonder", pathKey = "switch/wonder", kind = InstallKind.DIRECTORY))
+
+        engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.NEEDS_FOLDER)
+        assertThat(detail(wonder)).isEqualTo("Loom can't read its title ID: not an XCI or NSP image, and the file it can read is an update")
     }
 
     /** Once another game has a folder, it isn't offered for this one. */
