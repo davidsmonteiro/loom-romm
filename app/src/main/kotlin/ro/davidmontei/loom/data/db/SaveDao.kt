@@ -7,8 +7,15 @@ import androidx.room.Query
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
-/** A save conflict with its game's title; null if the ROM has left the catalog. */
-data class TitledConflict(@Embedded val conflict: SaveConflictEntity, val title: String?)
+/**
+ * A save conflict with its game's title (null if the ROM has left the catalog) and the emulator
+ * the Thor's save belongs to (null once the game is no longer installed).
+ */
+data class TitledConflict(
+    @Embedded val conflict: SaveConflictEntity,
+    val title: String?,
+    @ColumnInfo(name = "local_emulator") val localEmulator: String?,
+)
 
 /** A game's save state with its title. */
 data class TitledSaveUnit(
@@ -49,7 +56,10 @@ interface SaveDao {
     @Query("SELECT * FROM save_conflicts WHERE rom_id = :romId")
     suspend fun conflict(romId: Int): SaveConflictEntity?
 
-    @Query("SELECT c.*, r.title AS title FROM save_conflicts c LEFT JOIN roms r ON r.id = c.rom_id ORDER BY c.detected_at")
+    @Query(
+        """SELECT c.*, r.title AS title, u.emulator AS local_emulator FROM save_conflicts c
+           LEFT JOIN roms r ON r.id = c.rom_id LEFT JOIN save_units u ON u.rom_id = c.rom_id ORDER BY c.detected_at""",
+    )
     fun observeTitledConflicts(): Flow<List<TitledConflict>>
 
     @Query("SELECT * FROM save_conflicts ORDER BY detected_at")

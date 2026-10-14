@@ -22,6 +22,8 @@ import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.data.db.SaveSyncState
+import ro.davidmontei.loom.data.saves.conflictReason
+import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.ui.library.FolderQuestion
 import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.GameItem
@@ -32,6 +34,7 @@ import ro.davidmontei.loom.ui.onboarding.OnboardingContent
 import ro.davidmontei.loom.ui.onboarding.OnboardingState
 import ro.davidmontei.loom.ui.onboarding.OnboardingStep
 import ro.davidmontei.loom.ui.onboarding.PairMode
+import ro.davidmontei.loom.ui.queue.QueueContent
 import ro.davidmontei.loom.ui.settings.SettingsActions
 import ro.davidmontei.loom.ui.settings.SettingsContent
 
@@ -111,6 +114,18 @@ class FitsTheScreenTest {
             "00000000000000000000000000000000/00000000000000000000000000000000/title/00040000/0011c400/data (Permission denied)", "azahar")
         state = state.copy(games = listOf(game.copy(save = failed)))
         assertThat(overflow(title)).isEqualTo(0f)
+    }
+
+    /** A save conflict's choice at its tallest: a long title, the longest reason, and RomM's side in full. */
+    @Test fun theSaveConflictChoiceFits() {
+        val title = "Pokémon Omega Ruby (USA) (En,Ja,Fr,De,Es,It,Ko) (Rev 2)"
+        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = conflictReason(SyncDecision.SERVER_WENT_BACK.name),
+            serverDevice = "AYN Odin 2 Portal (Argosy)")
+        rule.setContent { LoomTestTheme { QueueContent(QueueScreenTest.sample.copy(conflicts = listOf(conflict)), NoopQueueActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("conflict-7").performClick()
+        assertThat(overflow("$title: which save to keep?")).isEqualTo(0f)
+        rule.saveScreenshot("queue-conflict-choice")
     }
 
     /** The question at a platform's first download, with its few options and with every folder of the Thor's ES-DE template. */

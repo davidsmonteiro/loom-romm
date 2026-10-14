@@ -1,12 +1,18 @@
 package ro.davidmontei.loom.ui
 
+import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -19,7 +25,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import ro.davidmontei.loom.data.db.RecentInstall
+import ro.davidmontei.loom.data.saves.ConflictChoice
 import ro.davidmontei.loom.storage.engine.JobPhase
+import ro.davidmontei.loom.storage.engine.formatBytes
+import ro.davidmontei.loom.ui.queue.ConflictItem
+import ro.davidmontei.loom.ui.queue.RecentSave
+import ro.davidmontei.loom.ui.queue.RestorableSave
 import ro.davidmontei.loom.ui.queue.QueueActions
 import ro.davidmontei.loom.ui.queue.QueueContent
 import ro.davidmontei.loom.ui.queue.QueueItem
@@ -30,13 +41,15 @@ import ro.davidmontei.loom.ui.queue.transferLine
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = THOR_TOP_SCREEN)
 class QueueScreenTest {
-    @get:Rule val rule = createComposeRule()
+    @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
     private val calls = mutableListOf<String>()
     private val actions = object : QueueActions {
         override fun pause(jobId: Long) { calls += "pause:$jobId" }
         override fun resume(jobId: Long) { calls += "resume:$jobId" }
         override fun retry(jobId: Long) { calls += "retry:$jobId" }
         override fun cancel(jobId: Long) { calls += "cancel:$jobId" }
+        override fun resolveConflict(romId: Int, title: String, choice: ConflictChoice) { calls += "resolve:$romId:$choice" }
+        override fun restoreSave(romId: Int, title: String) { calls += "restore:$romId" }
     }
 
     companion object {
@@ -52,6 +65,17 @@ class QueueScreenTest {
             ),
             failed = listOf(item(4, "Chrono Cross (USA)", JobPhase.FAILED, detail = "Needs 1.4 GB free on the SD card; 900 MB available. Offload something and retry.")),
             finished = listOf(RecentInstall(5, "Chrono Trigger (USA)", "snes/Chrono Trigger (USA).sfc", 4_194_304, 0, "SHA1")),
+        )
+
+        val pokemonX = ConflictItem(
+            7, "Pokemon X", "Both the Thor and RomM have changed this save since the last sync",
+            thorModifiedMs = 1_792_000_000_000, thorBytes = 524_288, serverUpdatedMs = 1_791_990_000_000, serverEmulator = "azahar",
+            serverBytes = 530_000, serverDevice = "Steam Deck", emulator = "azahar",
+        )
+        private val omegaRuby = RestorableSave(8, "Pokemon Omega Ruby", missing = false, emulator = "azahar")
+        val withSaves = sample.copy(
+            conflicts = listOf(pokemonX), restorable = listOf(omegaRuby),
+            recentSaves = listOf(RecentSave(9, "Pokemon Y", System.currentTimeMillis() - 3 * 60_000)),
         )
     }
 
@@ -70,6 +94,15 @@ class QueueScreenTest {
     }
 
     private fun press(key: Key) { rule.onRoot().performKeyInput { pressKey(key) }; rule.mainClock.advanceTimeBy(100); rule.waitForIdle() }
+
+    /** A button, not the hint of the same name ("X Cancel"). */
+    private fun button(text: String) = rule.onNode(hasText(text) and hasClickAction())
+
+    /** What the activity does with B (BACK) once nothing in Compose has used it. */
+    private fun back() {
+        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+    }
 
     @Test fun aPausesResumesAndRetriesByRow() {
         show()
@@ -178,5 +211,140 @@ class QueueScreenTest {
         current = current.copy(active = current.active.filterNot { it.jobId == 3L }) // cancelled
         rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
         rule.onNodeWithTag("job-4").assertIsFocused() // the job now in its place, not job 1
+    }
+
+    // --- saves ---
+
+    /** Opened from a save notification, the queue lands on what needs the user; the choice opens on Skip. */
+    @Test fun aConflictComesFirstAndItsChoiceOpensOnSkip() {
+        show(withSaves)
+        rule.onNodeWithTag("conflict-7").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Pokemon X: which save to keep?").assertExists()
+        rule.onNodeWithText("Skip").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("resolve:7:SKIP")
+        rule.onNodeWithTag("conflict-7").assertIsFocused() // a skipped conflict stays listed
+    }
+
+    @Test fun bOnTheChoiceSkips() {
+        show(withSaves)
+        press(Key.DirectionCenter)
+        back()
+        assertThat(calls).containsExactly("resolve:7:SKIP")
+        rule.onNodeWithText("Pokemon X: which save to keep?").assertDoesNotExist()
+        rule.onNodeWithTag("conflict-7").assertIsFocused()
+    }
+
+    @Test fun theChoiceShowsBothSides() {
+        show(withSaves)
+        press(Key.DirectionCenter)
+        fun side(tag: String, text: String) = rule.onNode(hasText(text) and hasAnyAncestor(hasTestTag(tag)), useUnmergedTree = true)
+        side("thor-side", formatBytes(524_288)).assertExists()
+        side("server-side", "${formatBytes(530_000)} · Azahar").assertExists()
+        side("server-side", "From Steam Deck").assertExists()
+    }
+
+    @Test fun keepThorAnswersAtOnce() {
+        show(withSaves)
+        press(Key.DirectionCenter); press(Key.DirectionRight)
+        rule.onNodeWithText("Keep Thor").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("resolve:7:KEEP_THOR")
+        rule.onNodeWithTag("conflict-7").assertIsFocused()
+    }
+
+    /** Keep server and Keep both replace the Thor's save, so they ask for the emulator to be closed first. */
+    @Test fun keepingRommsSaveAsksToCloseTheEmulatorFirst() {
+        show(withSaves)
+        press(Key.DirectionCenter); press(Key.DirectionRight); press(Key.DirectionRight)
+        rule.onNodeWithText("Keep server").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Put RomM's save of Pokemon X on the Thor?").assertExists()
+        rule.onNodeWithText("Close Azahar completely first (swipe it away in Recents). Loom backs up the save on the Thor before replacing it.")
+            .assertExists()
+        button("Cancel").assertIsFocused()
+        press(Key.DirectionCenter) // back to the choice, nothing decided
+        rule.onNodeWithText("Skip").assertIsFocused()
+        assertThat(calls).isEmpty()
+
+        repeat(3) { press(Key.DirectionRight) }
+        rule.onNodeWithText("Keep both").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Upload the Thor's save of Pokemon X as a copy, then take RomM's?").assertExists()
+        press(Key.DirectionRight); press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("resolve:7:KEEP_BOTH")
+        rule.onNodeWithTag("conflict-7").assertIsFocused()
+    }
+
+    @Test fun bOnTheCloseTheEmulatorQuestionGoesBackToTheChoice() {
+        show(withSaves)
+        press(Key.DirectionCenter); press(Key.DirectionRight); press(Key.DirectionRight); press(Key.DirectionCenter) // Keep server
+        back()
+        rule.onNodeWithText("Skip").assertIsFocused()
+        assertThat(calls).isEmpty()
+    }
+
+    /** RomM's save from another emulator, and none on the Thor: there is no Thor save to keep, so the pad skips past it. */
+    @Test fun aSideWithoutASaveCantBeKept() {
+        show(sample.copy(conflicts = listOf(pokemonX.copy(thorModifiedMs = null, thorBytes = null))))
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Keep Thor").assertIsNotEnabled()
+        press(Key.DirectionRight)
+        rule.onNodeWithText("Keep server").assertIsFocused()
+    }
+
+    @Test fun aNewerSaveOnRommIsRestoredOnceTheEmulatorIsClosed() {
+        show(withSaves)
+        press(Key.DirectionDown)
+        rule.onNodeWithTag("restore-8").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Restore Pokemon Omega Ruby's save from RomM?").assertExists()
+        button("Cancel").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).isEmpty()
+        rule.onNodeWithTag("restore-8").assertIsFocused()
+        press(Key.DirectionCenter); press(Key.DirectionRight); press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("restore:8")
+        rule.onNodeWithTag("restore-8").assertIsFocused()
+    }
+
+    @Test fun aSettledConflictHandsFocusToTheRowInItsPlace() {
+        show(withSaves)
+        rule.onNodeWithTag("conflict-7").assertIsFocused()
+        update { it.copy(conflicts = emptyList()) }
+        rule.onNodeWithTag("restore-8").assertIsFocused()
+    }
+
+    @Test fun aGameBeingWorkedOnIgnoresA() {
+        show(withSaves.copy(conflicts = listOf(pokemonX.copy(busy = true))))
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Pokemon X: which save to keep?").assertDoesNotExist()
+    }
+
+    @Test fun xLeavesSavesAlone() {
+        show(withSaves)
+        press(Key.ButtonX)
+        rule.onNodeWithText("Keep").assertDoesNotExist()
+        assertThat(calls).isEmpty()
+    }
+
+    @Test fun openedForAJobItStillStartsOnThatJob() {
+        show(withSaves, focusJobId = 3)
+        rule.onNodeWithTag("job-3").assertIsFocused()
+    }
+
+    @Test fun savesSyncedLatelyCanBeScrolledWithThePad() {
+        val now = System.currentTimeMillis()
+        show(QueueUiState(emptyList(), emptyList(), emptyList(), recentSaves = (1..10).map { RecentSave(it, "Game $it", now - it * 60_000L) }))
+        rule.onNodeWithTag("synced-1").assertIsFocused()
+        repeat(9) { press(Key.DirectionDown) }
+        rule.onNodeWithTag("synced-10").assertIsFocused()
+    }
+
+    @Test fun aMessageSaysHowAnAnswerWent() {
+        rule.setContent { LoomTestTheme { QueueContent(withSaves, actions, message = "RomM now has the Thor's save of Pokemon X") } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText("RomM now has the Thor's save of Pokemon X").assertExists()
     }
 }

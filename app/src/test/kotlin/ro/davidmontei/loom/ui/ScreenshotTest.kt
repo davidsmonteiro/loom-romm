@@ -46,14 +46,15 @@ class ScreenshotTest {
     }
 
     @Test fun queue() {
-        rule.setContent { LoomTestTheme { ro.davidmontei.loom.ui.queue.QueueContent(QueueScreenTest.sample, object : ro.davidmontei.loom.ui.queue.QueueActions {
-            override fun pause(jobId: Long) = Unit
-            override fun resume(jobId: Long) = Unit
-            override fun retry(jobId: Long) = Unit
-            override fun cancel(jobId: Long) = Unit
-        }) } }
+        rule.setContent { LoomTestTheme { ro.davidmontei.loom.ui.queue.QueueContent(QueueScreenTest.sample, NoopQueueActions) } }
         settle()
         rule.saveScreenshot("queue")
+    }
+
+    @Test fun queueWithSaves() {
+        rule.setContent { LoomTestTheme { ro.davidmontei.loom.ui.queue.QueueContent(QueueScreenTest.withSaves, NoopQueueActions) } }
+        settle()
+        rule.saveScreenshot("queue-saves")
     }
 
     @Test fun settingsMapping() {
@@ -104,4 +105,13 @@ object NoopLibraryActions : ro.davidmontei.loom.ui.library.LibraryActions {
     override fun showAllFolders() = Unit
     override fun showSuggestedFolders() = Unit
     override fun dismissFolderQuestion() = Unit
+}
+
+object NoopQueueActions : ro.davidmontei.loom.ui.queue.QueueActions {
+    override fun pause(jobId: Long) = Unit
+    override fun resume(jobId: Long) = Unit
+    override fun retry(jobId: Long) = Unit
+    override fun cancel(jobId: Long) = Unit
+    override fun resolveConflict(romId: Int, title: String, choice: ro.davidmontei.loom.data.saves.ConflictChoice) = Unit
+    override fun restoreSave(romId: Int, title: String) = Unit
 }

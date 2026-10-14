@@ -43,15 +43,25 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import ro.davidmontei.loom.data.db.RecentInstall
+import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.download.status
+import ro.davidmontei.loom.data.saves.ConflictChoice
+import ro.davidmontei.loom.data.saves.SaveRepository
+import ro.davidmontei.loom.data.saves.ServerSaveInfo
+import ro.davidmontei.loom.data.saves.emulatorName
 import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.WaitReason
 import ro.davidmontei.loom.storage.engine.formatBytes
@@ -67,6 +77,7 @@ import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.StatusBadge
 import ro.davidmontei.loom.ui.input.PadAction
 import ro.davidmontei.loom.ui.input.onPadAction
+import ro.davidmontei.loom.ui.saves.ReplaceSaveDialog
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 import javax.inject.Inject
@@ -90,14 +101,23 @@ data class QueueItem(
     val canCancel get() = phase != JobPhase.PROMOTING
 }
 
-data class QueueUiState(val active: List<QueueItem>, val failed: List<QueueItem>, val finished: List<RecentInstall>)
+data class QueueUiState(
+    val active: List<QueueItem>,
+    val failed: List<QueueItem>,
+    val finished: List<RecentInstall>,
+    val conflicts: List<ConflictItem> = emptyList(),
+    val restorable: List<RestorableSave> = emptyList(),
+    val recentSaves: List<RecentSave> = emptyList(),
+)
 
-/** A row of the jobs list: a section header or a job. */
-private sealed interface JobListRow {
+/** A row of the queue: a section header, a save to settle or restore, or a job. */
+private sealed interface QueueRow {
     val key: Any
 
-    data class Header(val text: String) : JobListRow { override val key get() = text }
-    data class Job(val item: QueueItem) : JobListRow { override val key get() = item.jobId }
+    data class Header(val text: String) : QueueRow { override val key get() = text }
+    data class Conflict(val item: ConflictItem) : QueueRow { override val key get() = "conflict-${item.romId}" }
+    data class Restorable(val item: RestorableSave) : QueueRow { override val key get() = "restore-${item.romId}" }
+    data class Job(val item: QueueItem) : QueueRow { override val key get() = item.jobId }
 }
 
 interface QueueActions {
@@ -105,11 +125,23 @@ interface QueueActions {
     fun resume(jobId: Long)
     fun retry(jobId: Long)
     fun cancel(jobId: Long)
+    /** The user's answer to a game's save conflict. Keep server and Keep both are asked again first. */
+    fun resolveConflict(romId: Int, title: String, choice: ConflictChoice)
+    /** Puts RomM's save on the Thor, once the user said the emulator is closed. */
+    fun restoreSave(romId: Int, title: String)
 }
 
 @HiltViewModel
-class QueueViewModel @Inject constructor(private val downloads: DownloadRepository) : ViewModel(), QueueActions {
-    val state: StateFlow<QueueUiState> = combine(downloads.jobs, downloads.progress, downloads.recentInstalls) { jobs, live, recent ->
+class QueueViewModel @Inject constructor(private val downloads: DownloadRepository, private val saves: SaveRepository) : ViewModel(), QueueActions {
+    /** What RomM said about each conflict's server save (Loom doesn't keep its size or origin), by save id. */
+    private val serverSaves = MutableStateFlow<Map<Int, ServerSaveInfo>>(emptyMap())
+    /** Games an answer or a restore is being carried out for. */
+    private val busy = MutableStateFlow<Set<Int>>(emptySet())
+
+    private val _messages = Channel<String>(Channel.BUFFERED)
+    val messages: Flow<String> = _messages.receiveAsFlow()
+
+    private val jobRows = combine(downloads.jobs, downloads.progress, downloads.recentInstalls) { jobs, live, recent ->
         val items = jobs.filter { it.phase != JobPhase.CANCELLING.name }.map { job ->
             val status = job.status()
             val p = live[job.id]
@@ -136,48 +168,110 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
             )
         }
         QueueUiState(items.filterNot { it.failed }, items.filter { it.failed }, recent)
+    }
+
+    val state: StateFlow<QueueUiState> = combine(
+        jobRows, saves.observeConflicts(), saves.observeRestorable(), saves.observeRecentSyncs(), combine(serverSaves, busy, ::Pair),
+    ) { jobs, conflicts, restorable, recent, (server, working) ->
+        jobs.copy(
+            conflicts = conflicts.map { it.toItem(server, working) },
+            restorable = restorable.map { RestorableSave(it.romId, it.title, it.state == SaveSyncState.LOCAL_MISSING, it.emulator, it.romId in working) },
+            recentSaves = recent.map { RecentSave(it.romId, it.title, it.syncedAtMs) },
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), QueueUiState(emptyList(), emptyList(), emptyList()))
+
+    init {
+        // Each conflict's server save is asked about once; a conflict that changes names a new one.
+        viewModelScope.launch {
+            val asked = mutableSetOf<Int>()
+            saves.observeConflicts().collect { conflicts ->
+                for (c in conflicts) {
+                    val saveId = c.conflict.serverSaveId ?: continue
+                    if (!asked.add(saveId)) continue
+                    saves.serverSaveInfo(c.conflict.romId, saveId)?.let { info -> serverSaves.update { it + (saveId to info) } }
+                }
+            }
+        }
+    }
 
     override fun pause(jobId: Long) { viewModelScope.launch { downloads.pause(jobId) } }
     override fun resume(jobId: Long) { viewModelScope.launch { downloads.resume(jobId) } }
     override fun retry(jobId: Long) { viewModelScope.launch { downloads.retry(jobId) } }
     override fun cancel(jobId: Long) { viewModelScope.launch { downloads.cancel(jobId) } }
+
+    override fun resolveConflict(romId: Int, title: String, choice: ConflictChoice) = carryOut(romId) { saves.resolve(romId, title, choice) }
+
+    override fun restoreSave(romId: Int, title: String) = carryOut(romId) { saves.restore(romId, title) }
+
+    /** One request per game at a time: a second press while it runs does nothing. */
+    private fun carryOut(romId: Int, request: suspend () -> String) {
+        if (romId in busy.value) return
+        busy.update { it + romId }
+        viewModelScope.launch {
+            try {
+                _messages.send(request())
+            } finally {
+                busy.update { it - romId }
+            }
+        }
+    }
 }
 
 @Composable
 fun QueueScreen(focusJobId: Long?, onBack: () -> Unit, vm: QueueViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
-    QueueContent(state, vm, focusJobId)
+    var message by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { vm.messages.collect { message = it; delay(4000); message = null } }
+    QueueContent(state, vm, focusJobId, message)
 }
 
-private val queueHints = listOf(ButtonHint("A", "Pause / resume / retry"), ButtonHint("X", "Cancel"), ButtonHint("B", "Back"))
-
-/** [focusJobId]: the job focus starts on (the game the library opened the queue for), else the first. */
+/**
+ * [focusJobId]: the job focus starts on (the game the library opened the queue for), else the first
+ * row to act on: a save conflict, a save to restore, then the jobs.
+ */
 @Composable
-fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? = null) {
-    // The job X acts on: only while it has focus, and as it is now.
-    var focusedId by remember { mutableStateOf<Long?>(null) }
+fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? = null, message: String? = null) {
+    // The row X acts on: only while it has focus, and as it is now.
+    var focusedKey by remember { mutableStateOf<Any?>(null) }
     var confirmCancel by remember { mutableStateOf<QueueItem?>(null) }
+    var choosing by remember { mutableStateOf<Int?>(null) }
+    var replacing by remember { mutableStateOf<Pair<ConflictItem, ConflictChoice>?>(null) }
+    var restoring by remember { mutableStateOf<RestorableSave?>(null) }
     var listHasFocus by remember { mutableStateOf(false) }
     val first = remember { FocusRequester() }
     val listFocus = remember { FocusRequester() }
     val listState = rememberLazyListState()
     val jobs = state.active + state.failed
-    val startItem = jobs.firstOrNull { it.jobId == focusJobId } ?: state.active.firstOrNull() ?: state.failed.firstOrNull()
-    // Where focus goes back into the list: the job last focused, or the one now in its place once that
-    // one has left (finished or cancelled), rather than the top of the queue.
-    var lastJobIndex by remember { mutableStateOf<Int?>(null) }
-    val entryItem = lastJobIndex?.let { jobs.getOrNull(it.coerceAtMost(jobs.lastIndex)) } ?: startItem
-    val entry = remember { FocusRequester() }
-
-    fun trackFocus(item: QueueItem, focused: Boolean) {
-        if (focused) {
-            focusedId = item.jobId
-            lastJobIndex = jobs.indexOfFirst { it.jobId == item.jobId }.takeIf { it >= 0 }
-        } else if (focusedId == item.jobId) focusedId = null
+    val rows = buildList {
+        if (state.conflicts.isNotEmpty()) add(QueueRow.Header("Save conflicts"))
+        state.conflicts.forEach { add(QueueRow.Conflict(it)) }
+        if (state.restorable.isNotEmpty()) add(QueueRow.Header("Saves to restore from RomM"))
+        state.restorable.forEach { add(QueueRow.Restorable(it)) }
+        if (state.active.isNotEmpty()) add(QueueRow.Header("In progress"))
+        state.active.forEach { add(QueueRow.Job(it)) }
+        if (state.failed.isNotEmpty()) add(QueueRow.Header("Needs attention"))
+        state.failed.forEach { add(QueueRow.Job(it)) }
     }
-    // A focused job that leaves the list takes focus with it; the job now in its place takes over.
-    val focusedLeft = focusedId != null && jobs.none { it.jobId == focusedId }
+    // The rows A acts on, in screen order.
+    val keys = rows.filterNot { it is QueueRow.Header }.map { it.key }
+    val startKey = jobs.firstOrNull { it.jobId == focusJobId }?.jobId ?: keys.firstOrNull()
+    // Where focus goes back into the list: the row last focused, or the one now in its place once that
+    // one has left (a job finished or cancelled, a conflict settled), rather than the top of the queue.
+    var lastIndex by remember { mutableStateOf<Int?>(null) }
+    val entryKey = lastIndex?.let { keys.getOrNull(it.coerceAtMost(keys.lastIndex)) } ?: startKey
+    val entry = remember { FocusRequester() }
+    // With nothing to act on, the first row the pad can scroll from: the newest finished game, else the newest synced save.
+    val readOnlyFirst: Any? = state.finished.firstOrNull()?.let { "done-${it.romId}-${it.installedAt}" }
+        ?: state.recentSaves.firstOrNull()?.let { "synced-${it.romId}" }
+
+    fun trackFocus(key: Any, focused: Boolean) {
+        if (focused) {
+            focusedKey = key
+            lastIndex = keys.indexOf(key).takeIf { it >= 0 }
+        } else if (focusedKey == key) focusedKey = null
+    }
+    // A focused row that leaves the list takes focus with it; the row now in its place takes over.
+    val focusedLeft = focusedKey != null && focusedKey !in keys
     LaunchedEffect(focusedLeft) { if (focusedLeft) runCatching { entry.requestFocus() } }
 
     fun primary(item: QueueItem) = when {
@@ -187,31 +281,34 @@ fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? =
         else -> Unit
     }
 
-    // Focus coming into the screen from outside (the cancel question's button that just went away)
-    // lands on the list, which restores the job last focused: the one X was pressed on.
+    fun Modifier.focusTargets(key: Any) = this
+        .then(if (key == startKey) Modifier.focusRequester(first) else Modifier)
+        .then(if (key == entryKey) Modifier.focusRequester(entry) else Modifier)
+
+    val hasSaves = state.conflicts.isNotEmpty() || state.restorable.isNotEmpty()
+    val hints = listOf(ButtonHint("A", if (hasSaves) "Choose / pause / resume / retry" else "Pause / resume / retry"),
+        ButtonHint("X", "Cancel"), ButtonHint("B", "Back"))
+
+    // Focus coming into the screen from outside (a dialog's button that just went away) lands on the
+    // list, which restores the row last focused: the one A or X was pressed on.
     Box(Modifier.fillMaxSize().focusProperties { onEnter = { runCatching { listFocus.requestFocus() } } }.focusGroup().onPadAction { action ->
         when (action) {
-            PadAction.X -> (state.active + state.failed).firstOrNull { it.jobId == focusedId && it.canCancel }?.let { confirmCancel = it } != null
+            PadAction.X -> jobs.firstOrNull { it.jobId == focusedKey && it.canCancel }?.let { confirmCancel = it } != null
             else -> false
         }
     }) {
-        ScreenScaffold(title = "Downloads", hints = queueHints) {
-            if (startItem == null && state.finished.isEmpty()) {
+        ScreenScaffold(title = "Downloads", hints = hints) {
+            message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = LoomColors.Accent, modifier = Modifier.padding(horizontal = 8.dp)) }
+            if (startKey == null && readOnlyFirst == null) {
                 Text("Nothing downloading. Press X on a game in the library to add it here.", color = LoomColors.TextMuted)
                 return@ScreenScaffold
             }
-            // The start job, or the newest finished game when nothing is queued, so the pad can scroll the list.
+            // The start row, or the first read-only one when there's nothing to act on, so the pad can scroll the list.
             // Only while the list has no focus: the first job finishing mustn't pull it off the row the user is on.
-            InitialFocus(first, startItem?.jobId, state.finished.isEmpty(), unless = { listHasFocus })
-            val jobRows = buildList {
-                if (state.active.isNotEmpty()) add(JobListRow.Header("In progress"))
-                state.active.forEach { add(JobListRow.Job(it)) }
-                if (state.failed.isNotEmpty()) add(JobListRow.Header("Needs attention"))
-                state.failed.forEach { add(JobListRow.Job(it)) }
-            }
+            InitialFocus(first, startKey, readOnlyFirst, unless = { listHasFocus })
             // A job far down a long queue isn't composed until it is scrolled to, and can't take focus before.
             LaunchedEffect(focusJobId) {
-                val index = jobRows.indexOfFirst { it is JobListRow.Job && it.item.jobId == focusJobId }
+                val index = rows.indexOfFirst { it is QueueRow.Job && it.item.jobId == focusJobId }
                 if (index >= 0) listState.scrollToItem(index)
             }
             LazyColumn(
@@ -221,15 +318,20 @@ fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? =
                 contentPadding = PaddingValues(8.dp),
                 verticalArrangement = Arrangement.spacedBy(Space.s),
             ) {
-                // Headers and jobs in one items(), so a job that fails or is retried keeps its row, and
+                // Headers, saves and jobs in one items(), so a job that fails or is retried keeps its row, and
                 // focus, as it moves between sections.
-                items(jobRows, key = { it.key }) { row ->
+                items(rows, key = { it.key }) { row ->
                     when (row) {
-                        is JobListRow.Header -> SectionHeader(row.text)
-                        is JobListRow.Job -> JobRow(row.item,
-                            (if (row.item == startItem) Modifier.focusRequester(first) else Modifier)
-                                .then(if (row.item.jobId == entryItem?.jobId) Modifier.focusRequester(entry) else Modifier),
-                            onFocus = ::trackFocus) { primary(row.item) }
+                        is QueueRow.Header -> SectionHeader(row.text)
+                        is QueueRow.Conflict -> ConflictRow(row.item, Modifier.focusTargets(row.key), onFocus = { trackFocus(row.key, it) }) {
+                            if (!row.item.busy) choosing = row.item.romId
+                        }
+                        is QueueRow.Restorable -> RestorableRow(row.item, Modifier.focusTargets(row.key), onFocus = { trackFocus(row.key, it) }) {
+                            if (!row.item.busy) restoring = row.item
+                        }
+                        is QueueRow.Job -> JobRow(row.item, Modifier.focusTargets(row.key), onFocus = { item, focused -> trackFocus(item.jobId, focused) }) {
+                            primary(row.item)
+                        }
                     }
                 }
                 if (state.finished.isNotEmpty()) item { SectionHeader("Finished") }
@@ -238,7 +340,7 @@ fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? =
                     val interaction = remember { MutableInteractionSource() }
                     Column(
                         Modifier.fillMaxWidth()
-                            .then(if (startItem == null && done == state.finished.first()) Modifier.focusRequester(first).focusRequester(entry) else Modifier)
+                            .then(if (startKey == null && done == state.finished.first()) Modifier.focusRequester(first).focusRequester(entry) else Modifier)
                             .background(LoomColors.Surface, RoundedCornerShape(12.dp))
                             .focusable(interactionSource = interaction)
                             .indication(interaction, FocusRingIndication(cornerRadius = 12.dp))
@@ -250,6 +352,11 @@ fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? =
                             style = MaterialTheme.typography.labelMedium.tabular(), color = LoomColors.TextMuted, maxLines = 1,
                             overflow = TextOverflow.Ellipsis)
                     }
+                }
+                if (state.recentSaves.isNotEmpty()) item { SectionHeader("Saves synced lately") }
+                items(state.recentSaves, key = { "synced-${it.romId}" }) { saved ->
+                    val takesFocus = startKey == null && state.finished.isEmpty() && saved == state.recentSaves.first()
+                    RecentSaveRow(saved, if (takesFocus) Modifier.focusRequester(first).focusRequester(entry) else Modifier)
                 }
             }
         }
@@ -263,6 +370,41 @@ fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? =
                     LoomButton(if (item.failed) "Remove" else "Cancel download", primary = true, destructive = true,
                         onClick = { actions.cancel(item.jobId); confirmCancel = null })
                 },
+            )
+        }
+        choosing?.let { romId ->
+            // Settled meanwhile (in the background, or from the library): nothing left to choose.
+            val item = state.conflicts.firstOrNull { it.romId == romId }
+            LaunchedEffect(item == null) { if (item == null) choosing = null }
+            if (item != null) {
+                ConflictDialog(item) { choice ->
+                    choosing = null
+                    when (choice) {
+                        // These replace the Thor's save: asked again, with the emulator to close first.
+                        ConflictChoice.KEEP_SERVER, ConflictChoice.KEEP_BOTH -> replacing = item to choice
+                        else -> actions.resolveConflict(item.romId, item.title, choice)
+                    }
+                }
+            }
+        }
+        replacing?.let { (item, choice) ->
+            ReplaceSaveDialog(
+                title = if (choice == ConflictChoice.KEEP_SERVER) "Put RomM's save of ${item.title} on the Thor?"
+                    else "Upload the Thor's save of ${item.title} as a copy, then take RomM's?",
+                emulator = emulatorName(item.emulator),
+                confirm = if (choice == ConflictChoice.KEEP_SERVER) "Keep server" else "Keep both",
+                onConfirm = { actions.resolveConflict(item.romId, item.title, choice); replacing = null },
+                // Back to the choice, not past it: nothing has been decided yet.
+                onDismiss = { replacing = null; choosing = item.romId },
+            )
+        }
+        restoring?.let { item ->
+            ReplaceSaveDialog(
+                title = "Restore ${item.title}'s save from RomM?",
+                emulator = emulatorName(item.emulator),
+                confirm = "Restore",
+                onConfirm = { actions.restoreSave(item.romId, item.title); restoring = null },
+                onDismiss = { restoring = null },
             )
         }
     }

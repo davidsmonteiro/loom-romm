@@ -29,7 +29,7 @@
         <item quantity="one">RomM has a newer save for a game</item>
         <item quantity="other">RomM has newer saves for %1$d games</item>
     </plurals>
-    <string name="saves_server_newer_text">Close the emulator, then sync those games in Loom to get them.</string>
+    <string name="saves_server_newer_text">Close the emulator, then restore them from Loom\'s queue.</string>
 
     <!-- Launcher shortcuts -->
     <string name="shortcut_sync_short">Sync library</string>
