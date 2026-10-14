@@ -513,6 +513,19 @@ class LibraryScreenTest {
         rule.onNodeWithText("Close").assertIsFocused()
     }
 
+    /** As with the details: a folder question arriving (a download started just before) takes over, and leaves nothing behind. */
+    @Test fun theFolderQuestionTakesOverTheRestoreQuestion() {
+        state = withSave(1, azahar(SaveSyncState.SERVER_NEWER))
+        show()
+        press(Key.DirectionCenter); press(Key.DirectionUp); press(Key.DirectionCenter) // details, Restore server save
+        rule.onNodeWithText("Restore Chrono Trigger's save from RomM?").assertExists()
+        update { it.copy(folderQuestion = arcadeQuestion) }
+        update { it.copy(folderQuestion = null) } // answered
+        rule.onNodeWithText("Restore Chrono Trigger's save from RomM?").assertDoesNotExist()
+        rule.onNodeWithTag("game-1").assertIsFocused()
+        assertThat(calls.filter { it.startsWith("restore") }).isEmpty()
+    }
+
     @Test fun aSaveConflictLeadsToTheQueue() {
         state = withSave(1, azahar(SaveSyncState.CONFLICT))
         show()

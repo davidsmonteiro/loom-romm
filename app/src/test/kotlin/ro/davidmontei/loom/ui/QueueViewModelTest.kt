@@ -12,6 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -89,7 +91,6 @@ class QueueViewModelTest : SaveSyncTestBase() {
         val message = async { vm.messages.first() }
 
         vm.resolveConflict(7, "Pokemon X", ConflictChoice.KEEP_THOR)
-        vm.resolveConflict(7, "Pokemon X", ConflictChoice.KEEP_THOR) // pressed again while the first is running
 
         assertThat(withTimeout(10_000) { message.await() })
             .isEqualTo("RomM now has the Thor's save of Pokemon X; its old one stays in RomM's history")
@@ -106,8 +107,17 @@ class QueueViewModelTest : SaveSyncTestBase() {
         val listed = withTimeout(5_000) { vm.state.first { it.restorable.isNotEmpty() } }.restorable
         assertThat(listed).containsExactly(RestorableSave(8, "Pokemon Omega Ruby", missing = false, emulator = "azahar"))
 
+        val messages = mutableListOf<String>()
+        val collecting = launch(Dispatchers.IO) { vm.messages.collect { messages += it } }
         vm.restoreSave(8, "Pokemon Omega Ruby")
+        vm.restoreSave(8, "Pokemon Omega Ruby") // pressed again while the first is running
         withTimeout(10_000) { vm.state.first { it.restorable.isEmpty() } }
+        withTimeout(10_000) { while (messages.isEmpty()) delay(20) }
+        delay(1_000) // a second request, had it gone through, would have answered by now
+        collecting.cancel()
+
         assertThat(localMain(omegaRuby)).isEqualTo(bytes(3))
+        assertThat(messages).containsExactly("Restored Pokemon Omega Ruby's save from RomM")
+        assertThat(romm.requests.count { it.url.encodedPath.endsWith("/content") }).isEqualTo(1)
     }
 }

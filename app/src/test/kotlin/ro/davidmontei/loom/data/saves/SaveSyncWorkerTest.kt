@@ -11,6 +11,7 @@ import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.workDataOf
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.runBlocking
+import mockwebserver3.MockResponse
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -114,6 +115,15 @@ class SaveSyncWorkerTest : SaveSyncTestBase() {
         pair(deviceId = null)
         run(SaveSyncKind.PUSH)
         assertThat(settings.snapshot().lastSaveSync!!.copy(atEpochMs = 0)).isEqualTo(SaveSyncOutcome(0, SaveSyncEngine.NO_DEVICE, failed = true))
+    }
+
+    @Test fun aRejectedTokenIsRecordedWithWhatToDo() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.uploadAnswer = { MockResponse.Builder().code(401).body("""{"detail":"Invalid token"}""").build() }
+        run(SaveSyncKind.PUSH)
+        assertThat(settings.snapshot().lastSaveSync!!.copy(atEpochMs = 0))
+            .isEqualTo(SaveSyncOutcome(0, "RomM rejected Loom's token. Pair again in Settings.", failed = true))
     }
 
     @Test fun aRunThatDidNothingIsNotRecorded() = runBlocking<Unit> {

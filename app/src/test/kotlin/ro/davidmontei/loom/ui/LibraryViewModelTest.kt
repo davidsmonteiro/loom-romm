@@ -19,6 +19,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -201,6 +203,19 @@ class LibraryViewModelTest {
         val genesis = gamesOnScreen { games -> games.any { it.id == 20 && it.save != null } }
         assertThat(genesis.single().save)
             .isEqualTo(GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Loom syncs 3DS saves (Azahar) only, for now", null))
+    }
+
+    /** Upload save and Restore server save say they started, then how it went (here: Loom isn't paired). */
+    @Test fun saveRequestsSayHowTheyWent() = runBlocking<Unit> {
+        val game = gameOn(2)
+        val upload = async { vm.messages.take(2).toList() }
+        vm.uploadSave(game).join()
+        assertThat(withTimeout(5_000) { upload.await() }).containsExactly("Checking Sonic the Hedgehog's save…", "Loom isn't paired with a RomM server yet").inOrder()
+
+        val restore = async { vm.messages.take(2).toList() }
+        vm.restoreSave(game).join()
+        assertThat(withTimeout(5_000) { restore.await() })
+            .containsExactly("Restoring Sonic the Hedgehog's save from RomM…", "Didn't restore Sonic the Hedgehog's save: Loom isn't paired with a RomM server yet").inOrder()
     }
 
     /** Found by review: the folder was decided for the platform on screen, not the game's. */
