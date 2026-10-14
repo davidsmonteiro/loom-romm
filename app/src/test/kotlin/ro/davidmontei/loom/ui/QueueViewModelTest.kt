@@ -26,6 +26,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.shadows.ShadowEnvironment
+import ro.davidmontei.loom.data.db.DownloadJobEntity
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.download.QueueKicker
@@ -36,6 +37,7 @@ import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.SaveSyncRequest
 import ro.davidmontei.loom.data.saves.SaveSyncTestBase
 import ro.davidmontei.loom.net.ActiveServer
+import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import ro.davidmontei.loom.ui.queue.QueueViewModel
 import ro.davidmontei.loom.ui.queue.RestorableSave
@@ -163,6 +165,17 @@ class QueueViewModelTest : SaveSyncTestBase() {
         assertThat(db.saveDao().switchTitle(wonder.romId)!!.titleId).isEqualTo(wonder.titleId)
         assertThat(db.saveDao().unit(wonder.romId)!!.state).isEqualTo(SaveSyncState.IN_SYNC) // the same save as RomM's
         assertThat(romm.uploads()).isEmpty()
+    }
+
+    /** Found by review: the queue said "Moving into place" where the library says "Finishing…" of the same download. */
+    @Test fun aDownloadBeingMovedIntoPlaceIsFinishingAsInTheLibrary() = runBlocking<Unit> {
+        db.downloadDao().insertJobWithParts(
+            DownloadJobEntity(romId = 7, platformId = 1, title = "Pokemon X", phase = JobPhase.PROMOTING.name, planJson = "{}",
+                fingerprint = "f", volumeUuid = "6365-3230", stagingRoot = "/staging", romsRoot = "/roms", bytesTotal = 1,
+                queueOrder = 1, updatedAt = 1),
+        ) { emptyList() }
+        val job = withTimeout(5_000) { vm.state.first { it.active.isNotEmpty() } }.active.single()
+        assertThat(job.label).isEqualTo("Finishing…")
     }
 
     @Test fun aNewerSaveOnRommIsListedAndRestored() = runBlocking<Unit> {

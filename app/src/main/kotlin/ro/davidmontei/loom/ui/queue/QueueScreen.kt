@@ -102,7 +102,7 @@ data class QueueItem(
     val canPause get() = phase == JobPhase.QUEUED || phase == JobPhase.WAITING || phase == JobPhase.DOWNLOADING ||
         phase == JobPhase.VERIFYING || phase == JobPhase.EXTRACTING
     val failed get() = phase == JobPhase.FAILED
-    /** Moving into place can't be stopped half way. */
+    /** Moving into place (finishing) can't be stopped half way. */
     val canCancel get() = phase != JobPhase.PROMOTING
 }
 
@@ -172,7 +172,7 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
                     JobPhase.DOWNLOADING -> "Downloading"
                     JobPhase.VERIFYING -> "Checking files"
                     JobPhase.EXTRACTING -> "Unpacking"
-                    JobPhase.PROMOTING -> "Moving into place"
+                    JobPhase.PROMOTING -> "Finishing…"
                     JobPhase.FAILED -> "Failed"
                     else -> status.phase.name
                 },
