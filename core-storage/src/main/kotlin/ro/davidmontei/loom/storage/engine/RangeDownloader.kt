@@ -1,7 +1,11 @@
 package ro.davidmontei.loom.storage.engine
 
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -11,6 +15,7 @@ import okhttp3.Request
 import okhttp3.Response
 import ro.davidmontei.loom.storage.plan.PartCheck
 import java.io.IOException
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Files
@@ -28,8 +33,9 @@ import java.nio.file.StandardOpenOption
  *   keeps streaming the same response from byte 0.
  * - The file is fsync'd every [syncEveryBytes]/[syncEveryMs]; only then is the new
  *   `durableBytes` reported, so after a crash anything past it is truncated, never trusted.
- * - The hash named by the part's check is computed while streaming and re-primed from the
- *   durable prefix on resume.
+ * - The hash named by the part's check is computed while streaming. On resume the durable
+ *   prefix is read back and hashed alongside the request, not before it, and the bytes that
+ *   arrive meanwhile are hashed after it, so the digest still covers the file in order.
  */
 class RangeDownloader(
     private val client: OkHttpClient,
@@ -37,6 +43,8 @@ class RangeDownloader(
     private val syncEveryBytes: Long = 64L * 1024 * 1024,
     private val syncEveryMs: Long = 30_000,
     private val crash: CrashPoints = CrashPoints.None,
+    /** Opens a staged file to hash what is already in it. */
+    private val readBack: (Path) -> InputStream = { Files.newInputStream(it) },
 ) {
     data class Result(val bytes: Long, val digest: String?, val validator: String?)
 
@@ -83,7 +91,7 @@ class RangeDownloader(
         hashAlgo: String?,
         onDurable: suspend (Long, String?) -> Unit,
         onProgress: (Long) -> Unit,
-    ): Result {
+    ): Result = coroutineScope {
         Files.createDirectories(file.parent)
         // Never trust bytes past the last fsync: a crash can leave a torn tail.
         val onDisk = if (Files.exists(file)) Files.size(file) else 0L
@@ -92,11 +100,14 @@ class RangeDownloader(
         if (onDisk != offset) truncate(file, offset)
 
         if (expected > 0 && offset == expected) {
-            return Result(offset, hashAlgo?.let { hashPrefix(file, offset, it) }, part.validator)
+            return@coroutineScope Result(offset, hashAlgo?.let { hashPrefix(file, offset, it) }, part.validator)
         }
 
+        // What is already on the card is hashed while RomM is asked for the rest, not before: read back
+        // at the card's speed (about 90 MB/s on the Thor), it held a resumed download back by a second
+        // for every 90 MB already downloaded.
         val hasher = hashAlgo?.let { Hasher(it) }
-        if (hasher != null && offset > 0) primeFrom(file, offset, hasher)
+        val prefix = if (hasher != null && offset > 0) async { hashRange(file, 0, offset, hasher) } else null
 
         val request = Request.Builder().url(url)
             .header("Accept-Encoding", "identity")
@@ -113,6 +124,8 @@ class RangeDownloader(
         try {
             call.execute().use { response ->
                 var position = offset
+                var activeHasher = hasher
+                var pending = prefix
                 when (response.code) {
                     206 -> {
                         val range = parseContentRange(response.header("Content-Range"))
@@ -120,21 +133,26 @@ class RangeDownloader(
                     }
                     200 -> if (offset > 0) {
                         // Range ignored: start over, reusing this response's body.
+                        prefix?.cancelAndJoin()
                         truncate(file, 0)
                         position = 0
+                        activeHasher = hashAlgo?.let { Hasher(it) }
+                        pending = null
                     }
                     416 -> {
                         val total = parseContentRange(response.header("Content-Range"))?.second
-                        if (total != null && total == offset) return Result(offset, hashAlgo?.let { hashPrefix(file, offset, it) }, part.validator)
+                        if (total != null && total == offset) {
+                            prefix?.await()
+                            return@coroutineScope Result(offset, hasher?.hex(), part.validator)
+                        }
                         throw RestartPart()
                     }
                     else -> throw httpFailure(response)
                 }
                 checkBody(response, part)
                 val validator = part.validator ?: response.header("Last-Modified") ?: strongEtag(response)
-                val activeHasher = if (response.code == 200 && offset > 0) hashAlgo?.let { Hasher(it) } else hasher
                 if (response.code == 200 && offset > 0) onDurable(0, validator)
-                return stream(response, file, position, expected, activeHasher, validator, onDurable, onProgress)
+                stream(response, file, position, expected, activeHasher, pending, validator, onDurable, onProgress)
             }
         } finally {
             cancelHook?.dispose()
@@ -147,10 +165,14 @@ class RangeDownloader(
         start: Long,
         expected: Long,
         hasher: Hasher?,
+        prefix: Deferred<Unit>?,
         validator: String?,
         onDurable: suspend (Long, String?) -> Unit,
         onProgress: (Long) -> Unit,
     ): Result {
+        // Where [hasher] has got to: -1 while [prefix], the bytes before [start], is still being hashed.
+        // What arrives meanwhile is only written, and read back from the file once the prefix is done.
+        var hashedTo = if (prefix == null) start else -1L
         val source = response.body.source()
         val buffer = ByteArray(256 * 1024)
         var written = start
@@ -173,7 +195,17 @@ class RangeDownloader(
                 } catch (e: IOException) {
                     throw LocalWriteFailure(e)
                 }
-                hasher?.update(buffer, 0, n)
+                if (hasher != null) {
+                    if (hashedTo < 0 && prefix!!.isCompleted) {
+                        prefix.await()
+                        hashedTo = start
+                    }
+                    if (hashedTo >= 0) {
+                        if (hashedTo < written) hashRange(file, hashedTo, written, hasher)
+                        hasher.update(buffer, 0, n)
+                        hashedTo = written + n
+                    }
+                }
                 written += n
                 if (expected > 0 && written > expected) throw RestartPart()
                 onProgress(written)
@@ -190,6 +222,13 @@ class RangeDownloader(
         }
         if (expected > 0 && written != expected) {
             throw EngineException.Transient("Connection closed after $written of $expected bytes")
+        }
+        if (hasher != null) {
+            if (hashedTo < 0) {
+                prefix!!.await()
+                hashedTo = start
+            }
+            if (hashedTo < written) hashRange(file, hashedTo, written, hasher)
         }
         onDurable(written, validator)
         return Result(written, hasher?.hex(), validator)
@@ -223,21 +262,29 @@ class RangeDownloader(
         FileChannel.open(file, StandardOpenOption.WRITE).use { it.truncate(size) }
     }
 
-    private fun primeFrom(file: Path, length: Long, hasher: Hasher) {
-        Files.newInputStream(file).use { input ->
+    /** Feeds bytes [from] to [to] of [file] to [hasher], stopping as soon as the download is. */
+    private suspend fun hashRange(file: Path, from: Long, to: Long, hasher: Hasher) {
+        readBack(file).use { input ->
+            var skipped = 0L
+            while (skipped < from) {
+                val n = input.skip(from - skipped)
+                if (n <= 0) throw IOException("${file.fileName} is shorter than the $from bytes already downloaded")
+                skipped += n
+            }
             val buf = ByteArray(1024 * 1024)
-            var left = length
+            var left = to - from
             while (left > 0) {
+                currentCoroutineContext().ensureActive()
                 val n = input.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
-                if (n < 0) break
+                if (n < 0) throw IOException("${file.fileName} is shorter than the $to bytes already downloaded")
                 hasher.update(buf, 0, n)
                 left -= n
             }
         }
     }
 
-    private fun hashPrefix(file: Path, length: Long, algo: String): String =
-        Hasher(algo).also { primeFrom(file, length, it) }.hex()
+    private suspend fun hashPrefix(file: Path, length: Long, algo: String): String =
+        Hasher(algo).also { hashRange(file, 0, length, it) }.hex()
 
     private class RestartPart : IOException("restart part")
     private class LocalWriteFailure(cause: IOException) : IOException(cause.message, cause)
