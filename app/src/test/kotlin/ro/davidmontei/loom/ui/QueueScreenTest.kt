@@ -323,8 +323,32 @@ class QueueScreenTest {
         show(sample.copy(conflicts = listOf(pokemonX.copy(thorModifiedMs = null, thorBytes = null))))
         press(Key.DirectionCenter)
         rule.onNodeWithText("Keep Thor").assertIsNotEnabled()
+        rule.onNodeWithText("Keep both").assertIsNotEnabled()
         press(Key.DirectionRight)
         rule.onNodeWithText("Keep server").assertIsFocused()
+    }
+
+    /** RomM's save gone from the slot: there is nothing on RomM to keep, alone or beside the Thor's. */
+    @Test fun aServerSideWithoutASaveCantBeKept() {
+        show(sample.copy(conflicts = listOf(pokemonX.copy(serverUpdatedMs = null, serverEmulator = null, serverBytes = null, serverDevice = null))))
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Keep server").assertIsNotEnabled()
+        rule.onNodeWithText("Keep both").assertIsNotEnabled()
+        press(Key.DirectionRight)
+        rule.onNodeWithText("Keep Thor").assertIsFocused()
+    }
+
+    /** Settled meanwhile (in the background, or from the library): the choice closes, and a later conflict doesn't reopen it. */
+    @Test fun aConflictSettledWhileChoosingClosesTheChoice() {
+        show(withSaves)
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Pokemon X: which save to keep?").assertExists()
+        update { it.copy(conflicts = emptyList()) }
+        rule.onNodeWithText("Pokemon X: which save to keep?").assertDoesNotExist()
+        rule.onNodeWithTag("restore-8").assertIsFocused() // the row now in the conflict's place
+        update { it.copy(conflicts = listOf(pokemonX.copy(reason = "RomM's newer save was made by another emulator"))) }
+        rule.onNodeWithText("Pokemon X: which save to keep?").assertDoesNotExist()
+        assertThat(calls).isEmpty()
     }
 
     @Test fun aNewerSaveOnRommIsRestoredOnceTheEmulatorIsClosed() {
@@ -333,6 +357,8 @@ class QueueScreenTest {
         rule.onNodeWithTag("restore-8").assertIsFocused()
         press(Key.DirectionCenter)
         rule.onNodeWithText("Restore Pokemon Omega Ruby's save from RomM?").assertExists()
+        rule.onNodeWithText("Close Azahar completely first (swipe it away in Recents). Loom backs up the save on the Thor before replacing it.")
+            .assertExists()
         button("Cancel").assertIsFocused()
         press(Key.DirectionCenter)
         assertThat(calls).isEmpty()
@@ -353,6 +379,13 @@ class QueueScreenTest {
         show(withSaves.copy(conflicts = listOf(pokemonX.copy(busy = true))))
         press(Key.DirectionCenter)
         rule.onNodeWithText("Pokemon X: which save to keep?").assertDoesNotExist()
+    }
+
+    @Test fun aSaveBeingRestoredIgnoresA() {
+        show(sample.copy(restorable = listOf(omegaRuby.copy(busy = true))))
+        rule.onNodeWithTag("restore-8").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Restore Pokemon Omega Ruby's save from RomM?").assertDoesNotExist()
     }
 
     @Test fun xLeavesSavesAlone() {

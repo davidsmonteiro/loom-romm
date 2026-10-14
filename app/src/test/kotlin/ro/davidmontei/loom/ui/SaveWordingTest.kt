@@ -2,7 +2,10 @@ package ro.davidmontei.loom.ui
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import ro.davidmontei.loom.data.db.SaveConflictEntity
 import ro.davidmontei.loom.data.db.SaveSyncState
+import ro.davidmontei.loom.data.db.TitledConflict
+import ro.davidmontei.loom.data.saves.ServerSaveInfo
 import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.data.saves.emulatorName
 import ro.davidmontei.loom.storage.engine.formatBytes
@@ -11,8 +14,11 @@ import ro.davidmontei.loom.storage.saves.SyncOutcome
 import ro.davidmontei.loom.ui.components.dateTime
 import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.saveLine
+import ro.davidmontei.loom.ui.queue.ConflictItem
 import ro.davidmontei.loom.ui.queue.serverSide
 import ro.davidmontei.loom.ui.queue.thorSide
+import ro.davidmontei.loom.ui.queue.toItem
+import java.time.Instant
 
 /** What the screens say about a save: the details' line for each state, and both sides of a conflict. */
 class SaveWordingTest {
@@ -61,6 +67,25 @@ class SaveWordingTest {
         assertThat(serverSide(elsewhere)).containsExactly("Uploaded ${dateTime(item.serverUpdatedMs!!)}", "citra").inOrder()
         assertThat(serverSide(item.copy(serverEmulator = null, serverBytes = null))[1]).isEqualTo("emulator unknown")
         assertThat(serverSide(item.copy(serverUpdatedMs = null))).containsExactly("No save")
+    }
+
+    /** A conflict as Loom recorded it, with what RomM said of its save (by save id) and whether an answer is running. */
+    @Test fun aConflictAsTheQueueListsIt() {
+        val recorded = SaveConflictEntity(7, "autosave", SyncDecision.BOTH_CHANGED.name, "aa", 1_792_000_000_000, 524_288,
+            serverSaveId = 501, serverHash = "bb", serverUpdatedAt = "2026-10-14T10:00:00Z", serverEmulator = "azahar", detectedAtMs = 0)
+        val item = TitledConflict(recorded, "Pokemon X", "azahar")
+            .toItem(mapOf(501 to ServerSaveInfo(530_000, "Steam Deck"), 502 to ServerSaveInfo(1, "elsewhere")), busy = setOf(7))
+        assertThat(item).isEqualTo(
+            ConflictItem(7, "Pokemon X", "Both the Thor and RomM have changed this save since the last sync", 1_792_000_000_000, 524_288,
+                Instant.parse("2026-10-14T10:00:00Z").toEpochMilli(), "azahar", 530_000, "Steam Deck", "azahar", skipped = false, busy = true),
+        )
+
+        val gone = TitledConflict(recorded.copy(serverSaveId = null, serverUpdatedAt = null, skipped = true), title = null, localEmulator = null)
+            .toItem(emptyMap(), busy = emptySet())
+        assertThat(gone.title).isEqualTo("ROM 7") // the game has left the catalog
+        assertThat(gone.serverHasSave).isFalse()
+        assertThat(gone.skipped).isTrue()
+        assertThat(gone.busy).isFalse()
     }
 
     @Test fun emulatorsAreNamedAsTheUserKnowsThem() {

@@ -415,6 +415,14 @@ class SettingsScreenTest {
         assertThat(calls).contains("autoUpload:false")
     }
 
+    @Test fun aTurnsAutomaticUploadBackOn() {
+        state = sample.copy(settings = sample.settings!!.copy(autoUploadSaves = false))
+        show()
+        toTheSaveSwitch()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("autoUpload:true")
+    }
+
     @Test fun theLastSaveSyncSaysWhenAndHowItWent() {
         state = sample.copy(settings = sample.settings!!.copy(lastSaveSync = SaveSyncOutcome(System.currentTimeMillis() - 5 * 60_000, "2 uploaded · 1 conflict", false)))
         show()

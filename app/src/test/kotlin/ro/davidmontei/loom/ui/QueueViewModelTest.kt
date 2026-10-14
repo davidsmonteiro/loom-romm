@@ -115,6 +115,24 @@ class QueueViewModelTest : SaveSyncTestBase() {
         assertThat(romm.uploads()).hasSize(1)
     }
 
+    /** An answer that changed nothing (the Thor's save moved on since) leaves the conflict to answer again. */
+    @Test fun anAnswerThatChangedNothingCanBeGivenAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.addSave(7, archiveOf(bytes(2)))
+        engine().sync(SaveSyncRequest.PUSH)
+        writeSave(pokemonX, bytes(3), minutesAgo = 5)
+        withTimeout(5_000) { vm.state.first { it.conflicts.isNotEmpty() } }
+        val message = async { vm.messages.first() }
+
+        vm.resolveConflict(7, "Pokemon X", ConflictChoice.KEEP_SERVER)
+
+        assertThat(withTimeout(10_000) { message.await() }).startsWith("Nothing changed for Pokemon X: ")
+        val after = withTimeout(5_000) { vm.state.first { s -> s.conflicts.none { it.busy } } }
+        assertThat(after.conflicts.map { it.romId }).containsExactly(7)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(3))
+    }
+
     @Test fun aNewerSaveOnRommIsListedAndRestored() = runBlocking<Unit> {
         install(omegaRuby)
         romm.addSave(8, archiveOf(bytes(3)))
