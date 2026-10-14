@@ -97,4 +97,27 @@ class StoresTest {
         assertThat(first).startsWith("loom-")
         assertThat(store.deviceIdentifier()).isEqualTo(first)
     }
+
+    /** A reinstall wipes Loom's data but not ANDROID_ID: pairing again reuses the same RomM device. */
+    @Test fun aNewInstallDerivesItsIdentifierFromAndroidId() = runBlocking<Unit> {
+        val first = SettingsStore(prefs("install1")) { "A1B2C3D4E5F60718" }.deviceIdentifier()
+        val reinstalled = SettingsStore(prefs("install2")) { "a1b2c3d4e5f60718" }.deviceIdentifier()
+        assertThat(first).isEqualTo("loom-a1b2c3d4e5f60718")
+        assertThat(reinstalled).isEqualTo(first)
+    }
+
+    /** An install that already paired keeps the device it paired as, whatever ANDROID_ID says. */
+    @Test fun anExistingIdentifierIsKept() = runBlocking<Unit> {
+        val store = prefs("settings")
+        val paired = SettingsStore(store).deviceIdentifier()
+        assertThat(SettingsStore(store) { "a1b2c3d4e5f60718" }.deviceIdentifier()).isEqualTo(paired)
+    }
+
+    @Test fun anUnusableAndroidIdFallsBackToARandomIdentifier() = runBlocking<Unit> {
+        for ((i, bad) in listOf(null, "", "0000000000000000", "9774d56d682e549c", "not-hex!").withIndex()) {
+            val id = SettingsStore(prefs("bad$i")) { bad }.deviceIdentifier()
+            assertThat(id).startsWith("loom-")
+            assertThat(id.removePrefix("loom-")).hasLength(36) // a UUID
+        }
+    }
 }

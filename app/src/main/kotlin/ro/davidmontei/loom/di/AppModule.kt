@@ -1,6 +1,8 @@
 package ro.davidmontei.loom.di
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.provider.Settings
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
@@ -43,8 +45,11 @@ object AppModule {
     fun credentialPrefs(@ApplicationContext context: Context): DataStore<Preferences> =
         PreferenceDataStoreFactory.create { context.preferencesDataStoreFile("credentials") }
 
+    /** ANDROID_ID only names this Thor to the user's own RomM server, so a reinstall stays the same device there. */
+    @SuppressLint("HardwareIds")
     @Provides @Singleton
-    fun settingsStore(@SettingsPrefs prefs: DataStore<Preferences>) = SettingsStore(prefs)
+    fun settingsStore(@SettingsPrefs prefs: DataStore<Preferences>, @ApplicationContext context: Context) =
+        SettingsStore(prefs) { Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) }
 
     @Provides @Singleton
     fun mappingRepository(@SettingsPrefs prefs: DataStore<Preferences>) = MappingRepository(prefs)

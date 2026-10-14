@@ -38,8 +38,15 @@ data class Settings(
     val catalogFields: Int = 1,
 )
 
-/** User settings in Preferences DataStore. Credentials live separately in CredentialStore. */
-class SettingsStore(private val dataStore: DataStore<Preferences>) {
+/**
+ * User settings in Preferences DataStore. Credentials live separately in CredentialStore.
+ * [androidId] is the device's `Settings.Secure.ANDROID_ID`, which stays the same for Loom across
+ * reinstalls (same signing key, device and user); null where there is none.
+ */
+class SettingsStore(
+    private val dataStore: DataStore<Preferences>,
+    private val androidId: () -> String? = { null },
+) {
 
     val settings: Flow<Settings> = dataStore.data.map { p ->
         Settings(
@@ -57,10 +64,15 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
 
     suspend fun snapshot(): Settings = settings.first()
 
-    /** Random per-install id sent to RomM when pairing; reused so re-pairing updates one Device. */
+    /**
+     * The id Loom pairs with, so RomM keeps one Device for this Thor: re-pairing with the same id
+     * reuses it, with its save sync history. Derived from ANDROID_ID, which survives reinstalling
+     * Loom, so a reinstall pairs as the same device; random where there is no usable ANDROID_ID.
+     * Once stored it never changes, so an install that already paired keeps its device.
+     */
     suspend fun deviceIdentifier(): String {
         dataStore.data.first()[DEVICE_IDENTIFIER]?.let { return it }
-        val id = "loom-" + UUID.randomUUID().toString()
+        val id = "loom-" + (androidId()?.trim()?.lowercase()?.takeIf(::usableAndroidId) ?: UUID.randomUUID().toString())
         dataStore.edit { if (it[DEVICE_IDENTIFIER] == null) it[DEVICE_IDENTIFIER] = id }
         return dataStore.data.first()[DEVICE_IDENTIFIER]!!
     }
@@ -91,6 +103,13 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
     suspend fun resetCatalogWatermark() = dataStore.edit { it.remove(WATERMARK) }
 
     private companion object {
+        /** A hex id that isn't the emulator's well-known shared value or all zeros. */
+        fun usableAndroidId(id: String): Boolean =
+            id.length in 8..64 && id.all { it in '0'..'9' || it in 'a'..'f' } && id.any { it != '0' } && id != BROKEN_ANDROID_ID
+
+        /** The ANDROID_ID many old emulators and builds share. */
+        const val BROKEN_ANDROID_ID = "9774d56d682e549c"
+
         val SERVER_URL = stringPreferencesKey("server_url")
         val SERVER_VERSION = stringPreferencesKey("server_version")
         val ROMS_ROOT = stringPreferencesKey("roms_root")
