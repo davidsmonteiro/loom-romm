@@ -1,10 +1,15 @@
 package ro.davidmontei.loom.data.saves
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import ro.davidmontei.loom.data.db.RecentSaveSync
 import ro.davidmontei.loom.data.db.SaveDao
 import ro.davidmontei.loom.data.db.SaveSyncState
@@ -15,6 +20,14 @@ import ro.davidmontei.loom.romm.RommException
 import ro.davidmontei.loom.storage.saves.AzaharSaveLocator
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
+
+/** A look at one game's save that its details asked for: still running, or done without RomM. */
+sealed interface SaveLook {
+    data object Looking : SaveLook
+
+    /** RomM couldn't be asked ([reason]): the game's state shows the Thor's side as it is now, RomM's as last seen. */
+    data class ThorOnly(val reason: String) : SaveLook
+}
 
 /**
  * What the screens show of saves, and what the user asks for one game, each answer in words for
@@ -27,7 +40,53 @@ class SaveRepository(
     private val saves: SaveDao,
     private val eden: EdenSaves,
     private val scope: CoroutineScope,
+    /** A clock that only moves forward, in milliseconds, for how soon a game's save is looked at again. */
+    private val now: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
+    private val _looks = MutableStateFlow<Map<Int, SaveLook>>(emptyMap())
+    private val lookedAt = mutableMapOf<Int, Long>()
+
+    /** The looks games' details asked for, by ROM id: those running, and those that couldn't ask RomM. */
+    val looks: StateFlow<Map<Int, SaveLook>> = _looks
+
+    /**
+     * Looks at [romId]'s save, as its details open, so they show where it stands now rather than at
+     * the last background run: a check that moves nothing either way. It waits for a run in
+     * progress like any other, in [scope], so the screen never waits on it. Not while one is
+     * running, nor again within [LOOK_AGAIN_AFTER_MS] of the last; returns whether it started one.
+     */
+    fun look(romId: Int): Boolean {
+        synchronized(lookedAt) {
+            val at = now()
+            val last = lookedAt[romId]
+            if (_looks.value[romId] == SaveLook.Looking || (last != null && at - last < LOOK_AGAIN_AFTER_MS)) return false
+            lookedAt[romId] = at
+            _looks.update { it + (romId to SaveLook.Looking) }
+        }
+        scope.launch {
+            var outcome: SaveLook.ThorOnly? = null
+            try {
+                outcome = lookWithRomm(romId)
+            } finally {
+                val thorOnly = outcome
+                _looks.update { if (thorOnly != null) it + (romId to thorOnly) else it - romId }
+            }
+        }
+        return true
+    }
+
+    /** One game's check: null when RomM answered, else why only the Thor's side could be looked at. */
+    private suspend fun lookWithRomm(romId: Int): SaveLook.ThorOnly? = try {
+        engine.sync(SaveSyncRequest.CHECK.copy(romIds = setOf(romId))).unavailable?.let { SaveLook.ThorOnly(NOT_ASKED) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: RommException.Unreachable) {
+        SaveLook.ThorOnly("Couldn't reach RomM")
+    } catch (e: RommException.Unauthorized) {
+        SaveLook.ThorOnly("RomM rejected Loom's token")
+    } catch (e: Exception) {
+        SaveLook.ThorOnly(NOT_ASKED)
+    }
 
     /** Every installed game Loom syncs saves for, by ROM id. */
     fun observeGames(): Flow<Map<Int, SaveUnitEntity>> = engine.observeGames().map { units -> units.associateBy { it.romId } }
@@ -150,6 +209,11 @@ class SaveRepository(
     companion object {
         /** How many recently synced games the queue lists. */
         const val RECENT_SYNCS = 5
+
+        /** A game's details opened again this soon after its last look don't look again. */
+        const val LOOK_AGAIN_AFTER_MS = 5_000L
+
+        private const val NOT_ASKED = "Couldn't check with RomM"
     }
 }
 

@@ -53,6 +53,7 @@ import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.saves.EdenSaves
+import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.SaveSyncEngine
 import ro.davidmontei.loom.data.saves.SaveUnitResolver
@@ -251,6 +252,21 @@ class LibraryViewModelTest {
         settings.setAutoUploadSaves(false)
         val off = gamesOnScreen { games -> games.any { it.save?.autoUpload == false } }
         assertThat(off.single().save).isEqualTo(GameSave(supported = true, SaveSyncState.WRITING, null, "azahar", autoUpload = false))
+    }
+
+    /** A game's details look at its save: the games on screen carry how that look went (here: Loom isn't paired). */
+    @Test fun aLookAtASaveReachesTheGamesDetails() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(3, "3ds", "3ds", "Nintendo 3DS", "Nintendo 3DS", 1, "t")))
+        db.catalogDao().upsertRoms(listOf(rom(30, 3, "3ds", "Pokemon X", "Pokemon X.3ds")))
+        installed(30, 3, "n3ds/Pokemon X.3ds")
+        vm.selectPlatform(3)
+        val game = gamesOnScreen { games -> games.any { it.save != null } }.single()
+        assertThat(game.save!!.look).isNull()
+
+        vm.lookAtSave(game)
+
+        val looked = gamesOnScreen { games -> games.single().save?.look is SaveLook.ThorOnly }.single()
+        assertThat(looked.save!!.look).isEqualTo(SaveLook.ThorOnly("Couldn't check with RomM"))
     }
 
     /** Upload save and Restore server save say they started, then how it went (here: Loom isn't paired). */

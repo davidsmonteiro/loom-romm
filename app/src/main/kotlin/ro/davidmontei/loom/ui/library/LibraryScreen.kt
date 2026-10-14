@@ -123,6 +123,8 @@ interface LibraryActions {
     fun offload(game: GameItem)
     fun retry(game: GameItem)
     fun cancel(game: GameItem)
+    /** The game's details opened: looks at where its save stands now, moving nothing. */
+    fun lookAtSave(game: GameItem)
     /** Uploads the game's save if it changed on the Thor only. */
     fun uploadSave(game: GameItem)
     /** Puts RomM's save in place of the Thor's; asked only once the user said the emulator is closed. */
@@ -176,6 +178,7 @@ fun LibraryScreen(
             override fun offload(game: GameItem) { vm.offload(game) }
             override fun retry(game: GameItem) { vm.retry(game) }
             override fun cancel(game: GameItem) { vm.cancel(game) }
+            override fun lookAtSave(game: GameItem) = vm.lookAtSave(game)
             override fun uploadSave(game: GameItem) { vm.uploadSave(game) }
             override fun restoreSave(game: GameItem) { vm.restoreSave(game) }
             override fun openQueue(focusJobId: Long?, focusConflictRomId: Int?) = openQueue(focusJobId, focusConflictRomId)
@@ -297,6 +300,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                 onOffload = { confirmOffload = it; detailsFor = null },
                 onRetry = { actions.retry(it); detailsFor = null },
                 onCancel = { actions.cancel(it); detailsFor = null },
+                onLookAtSave = actions::lookAtSave,
                 onUploadSave = { actions.uploadSave(it); detailsFor = null },
                 onRestoreSave = { confirmRestore = it; detailsFor = null },
                 onChooseSave = { actions.openQueue(focusConflictRomId = game.id); detailsFor = null },
@@ -721,11 +725,16 @@ private fun GameDialog(
     onOffload: (GameItem) -> Unit,
     onRetry: (GameItem) -> Unit,
     onCancel: (GameItem) -> Unit,
+    onLookAtSave: (GameItem) -> Unit,
     onUploadSave: (GameItem) -> Unit,
     onRestoreSave: (GameItem) -> Unit,
     onChooseSave: () -> Unit,
     onChooseSaveFolder: (GameItem) -> Unit,
 ) {
+    // Where the save stands now, not at the last background run: looked at once as the details open
+    // (or once the game is installed while they're open), never on a mere recomposition.
+    val looksAtSave = game.state == InstallState.INSTALLED && game.save?.supported == true
+    LaunchedEffect(game.id, looksAtSave) { if (looksAtSave) onLookAtSave(game) }
     // A save button can go while it has focus (a background sync changing the save's state), which
     // would leave nothing focused in the dialog: focus then goes back to its first button.
     val firstButton = remember { FocusRequester() }
@@ -787,6 +796,10 @@ private fun GameDialog(
             // composition, because branches there (each lambda in a composable is remembered) can
             // still move the buttons to a new place in it.
             val (main, other) = detailsButtons(game, onDismiss, onDownload, onOffload, onRetry, onCancel)
+            // How the look at the save is going, left of the buttons, which set the row's height:
+            // its words coming and going move nothing.
+            Text(lookLine(game.save?.look), style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = 2,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).align(Alignment.CenterVertically).testTag("save-look"))
             val notASave = Modifier.onFocusChanged { if (it.isFocused) focusedSaveAction = null }
             LoomButton(main.label, main.onClick, Modifier.focusRequester(first).focusRequester(firstButton).then(notASave), primary = main.primary)
             other?.let { LoomButton(it.label, it.onClick, notASave, destructive = it.destructive) }

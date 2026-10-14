@@ -5,6 +5,7 @@ import org.junit.Test
 import ro.davidmontei.loom.data.db.SaveConflictEntity
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.db.TitledConflict
+import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.data.saves.ServerSaveInfo
 import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.data.saves.emulatorName
@@ -13,6 +14,7 @@ import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.storage.saves.SyncOutcome
 import ro.davidmontei.loom.ui.components.dateTime
 import ro.davidmontei.loom.ui.library.GameSave
+import ro.davidmontei.loom.ui.library.lookLine
 import ro.davidmontei.loom.ui.library.saveLine
 import ro.davidmontei.loom.ui.queue.ConflictItem
 import ro.davidmontei.loom.ui.queue.serverSide
@@ -37,6 +39,13 @@ class SaveWordingTest {
         assertThat(line(SaveSyncState.UNSUPPORTED, "Loom can't read this game's title ID"))
             .isEqualTo("Save: not synced. Loom can't read this game's title ID")
         assertThat(line(SaveSyncState.ERROR, "Couldn't read the save")).isEqualTo("Save: the last sync failed. Couldn't read the save")
+    }
+
+    /** How the details' look at a save is going, beside their buttons: nothing once RomM answered. */
+    @Test fun theDetailsSayHowTheirLookIsGoing() {
+        assertThat(lookLine(null)).isEmpty()
+        assertThat(lookLine(SaveLook.Looking)).isEqualTo("Checking the save…")
+        assertThat(lookLine(SaveLook.ThorOnly("Couldn't reach RomM"))).isEqualTo("Couldn't reach RomM: checked the Thor's side only")
     }
 
     /** With automatic upload off nothing uploads by itself: the details don't promise it, and name what does. */

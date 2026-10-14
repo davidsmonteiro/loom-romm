@@ -39,6 +39,7 @@ import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.saves.EdenSaves
+import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.ui.library.FolderQuestion
 import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.GameItem
@@ -75,6 +76,7 @@ class LibraryScreenTest {
         override fun offload(game: GameItem) { calls += "offload:${game.id}" }
         override fun retry(game: GameItem) { calls += "retry:${game.id}" }
         override fun cancel(game: GameItem) { calls += "cancel:${game.id}" }
+        override fun lookAtSave(game: GameItem) { calls += "look:${game.id}" }
         override fun uploadSave(game: GameItem) { calls += "upload:${game.id}" }
         override fun restoreSave(game: GameItem) { calls += "restore:${game.id}" }
         override fun openQueue(focusJobId: Long?, focusConflictRomId: Int?) {
@@ -678,6 +680,95 @@ class LibraryScreenTest {
         changeGame(1, state.games.first { it.id == 1 }.copy(save = azahar(SaveSyncState.IN_SYNC)))
         rule.onNodeWithText("Upload save").assertDoesNotExist()
         rule.onNodeWithText("Close").assertIsFocused()
+    }
+
+    // --- the look at a game's save as its details open ---
+
+    private fun looks() = calls.filter { it.startsWith("look") }
+
+    private fun withLook(save: GameSave, look: SaveLook?) = games.first { it.id == 1 }.copy(save = save.copy(look = look))
+
+    /**
+     * Found on the Thor: the details said "in sync" for a save moved away by hand, until the next
+     * background run. They look at the save as they open: once, not each time they're drawn again.
+     */
+    @Test fun openingTheDetailsLooksAtTheSaveOnce() {
+        state = withSave(1, azahar(SaveSyncState.IN_SYNC))
+        show()
+        press(Key.DirectionCenter)
+        assertThat(looks()).containsExactly("look:1")
+        changeGame(1, withLook(azahar(SaveSyncState.IN_SYNC), SaveLook.Looking))
+        changeGame(1, withLook(azahar(SaveSyncState.LOCAL_MISSING), null))
+        assertThat(looks()).containsExactly("look:1")
+
+        back()
+        press(Key.DirectionCenter) // opened again: whether that's too soon to look again is the repository's call
+        assertThat(looks()).containsExactly("look:1", "look:1")
+    }
+
+    /** Only an installed game on a platform whose saves Loom syncs is looked at; one installed while its details are open, then. */
+    @Test fun onlyAnInstalledGameWhoseSavesLoomSyncsIsLookedAt() {
+        state = withSave(1, GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Loom syncs 3DS and Switch saves only, for now", null))
+        show()
+        press(Key.DirectionCenter) // Chrono Trigger, on a platform Loom doesn't sync saves for
+        rule.onNodeWithText("Remove from device").assertExists()
+        back()
+        press(Key.DirectionRight); press(Key.DirectionCenter) // EarthBound, not on the device
+        rule.onNodeWithText("Download").assertExists()
+        assertThat(looks()).isEmpty()
+
+        // Its download finishes while the details are open: now there's a save to look at.
+        changeGame(2, games.first { it.id == 2 }.copy(state = InstallState.INSTALLED, installPath = "n3ds/EarthBound.3ds", save = azahar(null)))
+        assertThat(looks()).containsExactly("look:2")
+    }
+
+    /** While Loom looks, the details say so where the words move nothing; the answer moves no focus but a vanished button's. */
+    @Test fun whileTheSaveIsLookedAtNothingMovesAndFocusStaysPut() {
+        state = withSave(1, azahar(SaveSyncState.IN_SYNC))
+        show()
+        press(Key.DirectionCenter)
+        fun bounds() = listOf(rule.onNodeWithTag("save-line", useUnmergedTree = true), rule.onNodeWithText("Close"), rule.onNodeWithText("Remove from device"))
+            .map { it.fetchSemanticsNode().boundsInRoot }
+        val idle = bounds()
+
+        changeGame(1, withLook(azahar(SaveSyncState.IN_SYNC), SaveLook.Looking))
+        rule.onNodeWithTag("save-look", useUnmergedTree = true).assertTextEquals("Checking the save…")
+        assertThat(bounds()).isEqualTo(idle) // the line and the buttons where they were
+        rule.onNodeWithText("Close").assertIsFocused()
+
+        // The save was moved away: Restore server save appears, and focus stays on Close.
+        changeGame(1, withLook(azahar(SaveSyncState.LOCAL_MISSING), null))
+        rule.onNodeWithTag("save-line", useUnmergedTree = true).assertTextEquals("Save: missing on the Thor; RomM has a copy")
+        rule.onNodeWithText("Restore server save").assertExists()
+        rule.onNodeWithText("Checking the save…").assertDoesNotExist()
+        rule.onNodeWithText("Close").assertIsFocused()
+    }
+
+    /** A save button the answer keeps keeps focus; one it takes away hands focus back to the details' first button. */
+    @Test fun aSaveButtonKeepsFocusThroughTheLook() {
+        state = withSave(1, azahar(null))
+        show()
+        press(Key.DirectionCenter); press(Key.DirectionUp)
+        rule.onNodeWithText("Upload save").assertIsFocused()
+        changeGame(1, withLook(azahar(null), SaveLook.Looking))
+        rule.onNodeWithText("Upload save").assertIsFocused()
+        changeGame(1, withLook(azahar(SaveSyncState.LOCAL_NEWER), null))
+        rule.onNodeWithText("Upload save").assertIsFocused()
+        changeGame(1, withLook(azahar(SaveSyncState.SERVER_NEWER), null))
+        rule.onNodeWithText("Upload save").assertDoesNotExist()
+        rule.onNodeWithText("Close").assertIsFocused()
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Restore server save").assertIsFocused()
+    }
+
+    /** Without RomM, the line is the Thor's side as it is now, and the details say RomM's wasn't checked. */
+    @Test fun aLookWithoutRommSaysOnlyTheThorWasChecked() {
+        state = withSave(1, azahar(SaveSyncState.IN_SYNC))
+        show()
+        press(Key.DirectionCenter)
+        changeGame(1, withLook(azahar(SaveSyncState.LOCAL_MISSING), SaveLook.ThorOnly("Couldn't reach RomM")))
+        rule.onNodeWithTag("save-line", useUnmergedTree = true).assertTextEquals("Save: missing on the Thor; RomM has a copy")
+        rule.onNodeWithTag("save-look", useUnmergedTree = true).assertTextEquals("Couldn't reach RomM: checked the Thor's side only")
     }
 
     // --- a Switch game's save, in Eden ---

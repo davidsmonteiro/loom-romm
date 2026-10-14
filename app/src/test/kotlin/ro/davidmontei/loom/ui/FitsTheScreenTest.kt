@@ -30,6 +30,7 @@ import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.data.saves.EdenSaves
+import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.ui.library.FolderQuestion
 import ro.davidmontei.loom.ui.library.SaveFolderOption
 import ro.davidmontei.loom.ui.library.SaveFolderQuestion
@@ -243,6 +244,11 @@ class FitsTheScreenTest {
             "00000000000000000000000000000000/00000000000000000000000000000000/title/00040000/0011c400/data (Permission denied)", "azahar")
         state = state.copy(games = listOf(game.copy(save = failed)))
         assertThat(overflow(title)).isEqualTo(0f)
+        // A look that couldn't ask RomM says so in full beside the buttons.
+        state = state.copy(games = listOf(game.copy(save = failed.copy(look = SaveLook.ThorOnly("RomM rejected Loom's token")))))
+        assertThat(overflow(title)).isEqualTo(0f)
+        assertThat(cutShort("checked the Thor's side only")).isFalse()
+        rule.saveScreenshot("library-details-save-look")
     }
 
     /**

@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -22,6 +23,7 @@ import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import ro.davidmontei.loom.storage.saves.SyncDecision
+import java.io.File
 import java.time.Duration
 
 /** What the screens ask of one game's save, and the answer the user reads. */
@@ -62,6 +64,94 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         val empty = SwitchTitleId.parse(arceus.titleId)!!
         assertThat(repository.chooseSaveFolder(arceus.romId, arceus.title, empty))
             .isEqualTo("Pokemon Legends Arceus's save is Eden's 01002B300C1D2000 folder. Neither the Thor nor RomM has a save of it yet")
+    }
+
+    // --- the look a game's details ask for ---
+
+    private var lookClockMs = 1_000_000L
+    private fun lookingRepository() = SaveRepository(engine(), db.saveDao(), eden(), scope, now = { lookClockMs })
+    private fun negotiations() = romm.requests.filter { it.url.encodedPath == "/api/sync/negotiate" }
+    private suspend fun SaveRepository.lookDone(romId: Int) = withTimeout(10_000) { looks.first { it[romId] != SaveLook.Looking } }
+
+    /** Found on the Thor: a save moved away by hand read "in sync" until the next background run. A look sees it at once, moving nothing. */
+    @Test fun aLookChecksThatGameAloneAndMovesNoSave() = runBlocking<Unit> {
+        install(pokemonX)
+        install(omegaRuby)
+        writeSave(pokemonX, bytes(1))
+        writeSave(omegaRuby, bytes(2))
+        engine().sync(SaveSyncRequest.PUSH)
+        File(tmp.root, "aside").also { saveFolder(pokemonX).renameTo(it) } // moved away by hand
+        romm.addSave(8, archiveOf(bytes(3))) // and Omega Ruby played elsewhere: not this game, not looked at
+        val repository = lookingRepository()
+
+        assertThat(repository.look(7)).isTrue()
+        assertThat(repository.looks.value[7]).isEqualTo(SaveLook.Looking)
+        assertThat(repository.lookDone(7)).doesNotContainKey(7)
+
+        assertThat(db.saveDao().unit(7)!!.state).isEqualTo(SaveSyncState.LOCAL_MISSING)
+        assertThat(db.saveDao().unit(8)!!.state).isEqualTo(SaveSyncState.IN_SYNC)
+        assertThat(negotiations().last().body!!.utf8()).contains("\"rom_ids\":[7]")
+        assertThat(romm.uploads()).hasSize(2) // the first sync's
+        assertThat(romm.requests.none { it.url.encodedPath.endsWith("/content") }).isTrue()
+        assertThat(localMain(omegaRuby)).isEqualTo(bytes(2))
+    }
+
+    /** Opening a game's details again and again looks once while a look runs, and not again within a few seconds. */
+    @Test fun aLookIsntRepeatedWhileItRunsNorWithinAFewSeconds() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        val repository = lookingRepository()
+
+        assertThat(repository.look(7)).isTrue()
+        repository.lookDone(7)
+        lookClockMs += SaveRepository.LOOK_AGAIN_AFTER_MS - 1
+        assertThat(repository.look(7)).isFalse() // looked moments ago
+        lookClockMs += 1
+        assertThat(repository.look(7)).isTrue()
+        repository.lookDone(7)
+
+        romm.negotiateDelayMs = 1_000 // a look that takes a while (it waited for a run in progress, say)
+        lookClockMs += SaveRepository.LOOK_AGAIN_AFTER_MS
+        assertThat(repository.look(7)).isTrue()
+        lookClockMs += SaveRepository.LOOK_AGAIN_AFTER_MS
+        assertThat(repository.look(7)).isFalse() // still looking
+        repository.lookDone(7)
+
+        assertThat(negotiations()).hasSize(3)
+    }
+
+    /** A look waits for a run in progress, as every save request does: never two sessions at once. */
+    @Test fun aLookWaitsForARunInProgress() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.negotiateDelayMs = 500
+        val run = scope.async { engine().sync(SaveSyncRequest.PUSH) }
+        withTimeout(5_000) { while (negotiations().isEmpty()) delay(10) } // the run is talking to RomM
+        val repository = lookingRepository()
+
+        assertThat(repository.look(7)).isTrue()
+        assertThat(repository.looks.value[7]).isEqualTo(SaveLook.Looking)
+        withTimeout(10_000) { run.await() }
+        repository.lookDone(7)
+
+        assertThat(negotiations()).hasSize(2)
+        assertThat(romm.mostOpenSessions).isEqualTo(1)
+        assertThat(db.saveDao().unit(7)!!.state).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
+    /** Without RomM, a look still shows the Thor's side as it is now, and says RomM's wasn't checked. */
+    @Test fun aLookWithoutRommSaysSoAndShowsTheThorsSide() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        settings.setServer(ServerConfig("http://127.0.0.1:1/".toHttpUrl()), "5.3.1")
+        saveFolder(pokemonX).deleteRecursively()
+        val repository = lookingRepository()
+
+        repository.look(7)
+
+        assertThat(repository.lookDone(7)[7]).isEqualTo(SaveLook.ThorOnly("Couldn't reach RomM"))
+        assertThat(db.saveDao().unit(7)!!.state).isEqualTo(SaveSyncState.LOCAL_MISSING)
     }
 
     /** Replacing a save needs the emulator closed, which only the restore question asks: Upload never downloads. */

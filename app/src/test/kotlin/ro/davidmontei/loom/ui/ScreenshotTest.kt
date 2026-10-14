@@ -113,6 +113,7 @@ object NoopLibraryActions : ro.davidmontei.loom.ui.library.LibraryActions {
     override fun offload(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
     override fun retry(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
     override fun cancel(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
+    override fun lookAtSave(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
     override fun uploadSave(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
     override fun restoreSave(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
     override fun openQueue(focusJobId: Long?, focusConflictRomId: Int?) = Unit

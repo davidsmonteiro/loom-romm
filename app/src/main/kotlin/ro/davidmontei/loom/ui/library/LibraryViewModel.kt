@@ -119,10 +119,11 @@ class LibraryViewModel @Inject constructor(
             if (platform == null) flowOf(emptyList())
             else combine(
                 catalog.observeGames(platform.platform.id, f.ordinal, CatalogSyncer.fold(q)), downloads.progress, saves.observeGames(),
-                settings.settings.map { it.autoUploadSaves }.distinctUntilChanged(), saves.observeChosenFolders(),
-            ) { rows, live, units, autoUpload, chosen ->
+                settings.settings.map { it.autoUploadSaves }.distinctUntilChanged(), combine(saves.observeChosenFolders(), saves.looks, ::Pair),
+            ) { rows, live, units, autoUpload, (chosen, looks) ->
                 rows.map { row ->
-                    row.toItem(row.jobId?.let { live[it]?.bytesDone }).withSave(platform.platform.slug, units[row.id], autoUpload, row.id in chosen)
+                    row.toItem(row.jobId?.let { live[it]?.bytesDone })
+                        .withSave(platform.platform.slug, units[row.id], autoUpload, row.id in chosen, looks[row.id])
                 }
             }
         }
@@ -217,6 +218,14 @@ class LibraryViewModel @Inject constructor(
             OffloadResult.NotInstalled -> Unit
             is OffloadResult.Failed -> _messages.send(r.message)
         }
+    }
+
+    /**
+     * A game's details opened: Loom looks at its save (moving nothing), so they say where it stands
+     * now. The repository skips a look already running, or one made moments ago.
+     */
+    fun lookAtSave(game: GameItem) {
+        if (game.save?.supported == true) saves.look(game.id)
     }
 
     /** "Upload save" in the details. The answer arrives once the save has been checked twice, a few seconds apart. */

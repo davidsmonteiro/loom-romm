@@ -3,6 +3,7 @@ package ro.davidmontei.loom.ui.library
 import ro.davidmontei.loom.data.db.GameRow
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.db.SaveUnitEntity
+import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.data.saves.SaveUnitResolver
 import ro.davidmontei.loom.data.saves.emulatorName
 import ro.davidmontei.loom.storage.engine.JobPhase
@@ -48,22 +49,33 @@ data class GameSave(
     val autoUpload: Boolean = true,
     /** The user chose the game's save folder (Loom couldn't read its title ID): they can choose another. */
     val folderChosen: Boolean = false,
+    /** The look at the save its details asked for, while it runs or when it couldn't ask RomM. */
+    val look: SaveLook? = null,
 )
 
 /**
  * Adds where the game's save stands, once it's installed: [unit] (null before Loom first looked)
  * on a platform Loom syncs saves for, else why it doesn't. [autoUpload]: the automatic upload
- * setting; [folderChosen]: the user chose the game's save folder.
+ * setting; [folderChosen]: the user chose the game's save folder; [look]: the details' look at it.
  */
-fun GameItem.withSave(platformSlug: String, unit: SaveUnitEntity?, autoUpload: Boolean = true, folderChosen: Boolean = false): GameItem = copy(
+fun GameItem.withSave(
+    platformSlug: String, unit: SaveUnitEntity?, autoUpload: Boolean = true, folderChosen: Boolean = false, look: SaveLook? = null,
+): GameItem = copy(
     save = when {
         state != InstallState.INSTALLED -> null
         !SaveUnitResolver.supportsPlatform(platformSlug) ->
             GameSave(supported = false, SaveSyncState.UNSUPPORTED, SaveUnitResolver.unsupportedReason(platformSlug), emulator = null)
         else -> GameSave(supported = true, unit?.state, unit?.detail, unit?.emulator ?: SaveUnitResolver.emulatorForPlatform(platformSlug),
-            autoUpload, folderChosen)
+            autoUpload, folderChosen, look)
     },
 )
+
+/** What the details say of their look at the save: running, or why it only looked at the Thor's side. Empty otherwise. */
+fun lookLine(look: SaveLook?): String = when (look) {
+    null -> ""
+    SaveLook.Looking -> "Checking the save…"
+    is SaveLook.ThorOnly -> "${look.reason}: checked the Thor's side only"
+}
 
 /** The details' line about a game's save. With automatic upload off, nothing uploads by itself: it names Upload save. */
 fun saveLine(save: GameSave): String = "Save: " + when (save.state) {
