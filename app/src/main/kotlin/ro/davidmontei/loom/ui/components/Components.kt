@@ -245,6 +245,8 @@ fun LoomTextField(
     isError: Boolean = false,
     tag: String? = null,
     editRequest: Int = 0,
+    /** Told when typing starts and stops: the field itself has focus, not just its frame. */
+    onEditingChange: (Boolean) -> Unit = {},
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -286,6 +288,8 @@ fun LoomTextField(
         }
     }
     LaunchedEffect(innerFocused) { if (innerFocused) submitted = false else editing = false }
+    val latestOnEditingChange by rememberUpdatedState(onEditingChange)
+    LaunchedEffect(innerFocused) { latestOnEditingChange(innerFocused) }
 
     val textStyle = MaterialTheme.typography.bodyLarge.copy(color = LoomColors.Text)
     val options = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction, autoCorrectEnabled = false)

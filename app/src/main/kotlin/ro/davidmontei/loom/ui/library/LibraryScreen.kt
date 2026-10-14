@@ -208,7 +208,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     var confirmOffload by remember { mutableStateOf<GameItem?>(null) }
     var confirmRestore by remember { mutableStateOf<GameItem?>(null) }
     var searchEdits by remember { mutableIntStateOf(0) }
-    var searchFocused by remember { mutableStateOf(false) }
+    var searchEditing by remember { mutableStateOf(false) }
     // The game last focused and its place, kept while the queue or settings is on top so B comes
     // back to it. If it has left the list meanwhile (its download finished under "Not on device"),
     // the game now in its place is on screen to take over. A new platform, filter, layout or search
@@ -235,8 +235,9 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
 
     // Into the games when they first appear and whenever the platform, filter or layout changes,
     // but never while a search is being typed: results that vanish and come back as the query
-    // changes must not pull focus out of the field.
-    InitialFocus(entryGame, state.selected?.platform?.id, state.filter, state.gridMode, state.games.isNotEmpty(), unless = { searchFocused })
+    // changes must not pull focus out of the field. The box merely having focus doesn't count: at launch
+    // it can take the window's first focus before the games arrive.
+    InitialFocus(entryGame, state.selected?.platform?.id, state.filter, state.gridMode, state.games.isNotEmpty(), unless = { searchEditing })
     // A focused game that leaves the list takes focus with it before the game now in its place can
     // take over (Compose then picks the top-left card on screen), so that one asks once it can.
     val focusedLeft = focusedId != null && state.games.none { it.id == focusedId }
@@ -266,7 +267,8 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                     Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                         LoomTextField(
                             value = state.query, onValueChange = actions::setQuery, label = null,
-                            placeholder = "Search", modifier = Modifier.weight(1f).onFocusChanged { searchFocused = it.hasFocus }, tag = "search", editRequest = searchEdits,
+                            placeholder = "Search", modifier = Modifier.weight(1f), tag = "search", editRequest = searchEdits,
+                            onEditingChange = { searchEditing = it },
                             onImeAction = { runCatching { entryGame.requestFocus() } },
                         )
                         LibraryFilter.entries.forEach { f ->

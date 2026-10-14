@@ -25,6 +25,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.test.requestFocus
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
@@ -316,6 +317,21 @@ class LibraryScreenTest {
         update { it.copy(query = "Alley M", games = emptyList()) }
         update { it.copy(query = "Alley", games = games.take(2)) }
         rule.onNode(hasSetTextAction()).assertIsFocused()
+    }
+
+    /**
+     * Found on the Thor: at launch the search box took the window's first focus before the games
+     * arrived, and Loom left focus there because it took that for typing, so the first A opened the
+     * keyboard instead of a game.
+     */
+    @Test fun gamesThatLoadAfterTheSearchBoxGotFocusStillTakeIt() {
+        state = state.copy(games = emptyList())
+        show()
+        rule.onNodeWithTag("search").requestFocus()
+        rule.waitForIdle()
+        rule.onNodeWithTag("search").assertIsFocused()
+        update { it.copy(games = games) }
+        rule.onNodeWithTag("game-1").assertIsFocused()
     }
 
     @Test fun gamesThatLoadLateStillGetFocus() {
