@@ -223,12 +223,41 @@ class PlatformMappingTest {
         assertThat(FolderNames.validate("Saves")).isNotNull()
         assertThat(FolderNames.validate("savestates")).isNull()
         val stored = MappingJson.encode(PlatformMappingFile(platforms = listOf(PlatformMappingEntry(PlatformMatch(fsSlug = "switch"), folder = "saves"))))
-        assertThat(MappingJson.parseOverrides(stored)).isEmpty()
-        assertThrows(InvalidMappingException::class.java) {
-            MappingJson.parse("""{"schemaVersion":1,"platforms":[{"match":{"slug":"switch"},"folder":"saves"}]}""")
-        }
+        assertThat(MappingJson.parseOverrides(stored)).isEmpty() // nothing else was set
         // A RomM platform whose own folder is called saves gets another one.
         assertThat(PlatformMapper(shipped).resolve("saves", "saves").folder).isEqualTo("saves_games")
         assertThat(PlatformMapper(shipped).resolve("saves", "SAVES").candidates).doesNotContain("SAVES")
+    }
+
+    /**
+     * An older Loom accepted `saves` as a platform's folder or alias. Stored, only that is dropped:
+     * the entry's other settings stay. So does a category Loom no longer knows, alone.
+     */
+    @Test fun aStoredSavesFolderLosesOnlyThatSetting() {
+        val stored = MappingJson.encode(PlatformMappingFile(platforms = listOf(
+            PlatformMappingEntry(PlatformMatch(fsSlug = "psx"), folder = "saves", archive = ArchivePolicy.KEEP, multiDisc = MultiDiscLayout.FOLDER,
+                detected = true),
+            PlatformMappingEntry(PlatformMatch(fsSlug = "genesis"), aliases = listOf("Saves", "md"), include = listOf("game", "ringtone")),
+            PlatformMappingEntry(PlatformMatch(fsSlug = "arcade"), aliases = listOf("saves")),
+        )))
+        assertThat(MappingJson.parseOverrides(stored)).containsExactly(
+            PlatformMappingEntry(PlatformMatch(fsSlug = "psx"), archive = ArchivePolicy.KEEP, multiDisc = MultiDiscLayout.FOLDER),
+            PlatformMappingEntry(PlatformMatch(fsSlug = "genesis"), aliases = listOf("md"), include = listOf("game")),
+        ).inOrder()
+    }
+
+    /** An export from an older Loom naming `saves` imports, without that folder. Other bad names are still refused. */
+    @Test fun anOlderExportNamingSavesImportsWithoutIt() {
+        val file = MappingJson.parse(
+            """{"schemaVersion":1,"platforms":[{"match":{"slug":"psx"},"folder":"saves","archive":"keep"},""" +
+                """{"match":{"slug":"genesis"},"aliases":["saves","md"]}]}""",
+        )
+        assertThat(file.platforms).containsExactly(
+            PlatformMappingEntry(PlatformMatch(slug = "psx"), archive = ArchivePolicy.KEEP),
+            PlatformMappingEntry(PlatformMatch(slug = "genesis"), aliases = listOf("md")),
+        ).inOrder()
+        assertThrows(InvalidMappingException::class.java) {
+            MappingJson.parse("""{"schemaVersion":1,"platforms":[{"match":{"slug":"psx"},"folder":"a/b"}]}""")
+        }
     }
 }

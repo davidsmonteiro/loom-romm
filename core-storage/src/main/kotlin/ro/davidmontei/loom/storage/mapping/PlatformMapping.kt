@@ -217,8 +217,18 @@ object MappingJson {
         if (file.schemaVersion > PlatformMappingFile.SCHEMA_VERSION) {
             throw InvalidMappingException("Mapping file version ${file.schemaVersion} is newer than this Loom understands")
         }
-        file.platforms.forEach { entry -> problem(entry)?.let { throw InvalidMappingException("${entry.match}: $it") } }
-        return file
+        // An older Loom accepted `saves` as a folder: that field is left out, the rest of the entry kept.
+        val platforms = file.platforms.map { entry ->
+            entry.copy(folder = entry.folder?.takeUnless(EmulatorData::isSavesFolder), aliases = entry.aliases?.withoutSaves())
+        }
+        platforms.forEach { entry -> problem(entry)?.let { throw InvalidMappingException("${entry.match}: $it") } }
+        return file.copy(platforms = platforms)
+    }
+
+    /** Without `saves`; null (the defaults' aliases) when that was the only one. */
+    private fun List<String>.withoutSaves(): List<String>? {
+        val kept = filterNot(EmulatorData::isSavesFolder)
+        return if (kept.isEmpty() && isNotEmpty()) null else kept
     }
 
     /** Why [entry] can't be used, or null when it's fine. */
@@ -227,12 +237,25 @@ object MappingJson {
             ?: entry.include?.firstOrNull { it !in ROM_FILE_CATEGORIES }?.let { "unknown file category '$it'" }
 
     /**
-     * The user's stored overrides: unlike [parse], an entry that can't be used is dropped on its own,
-     * so one bad entry never loses the rest.
+     * The user's stored overrides: unlike [parse], a setting that can't be used (a folder name no
+     * longer allowed, such as `saves`, or an unknown file category) is dropped on its own, keeping
+     * the rest of its entry and every other entry.
      */
     fun parseOverrides(text: String): List<PlatformMappingEntry> =
         runCatching { json.decodeFromString(PlatformMappingFile.serializer(), text).platforms }.getOrDefault(emptyList())
-            .filter { problem(it) == null }
+            .map(::usablePart)
+            .filter { it.folder != null || it.aliases != null || it.archive != null || it.multiDisc != null || it.include != null || it.saveDir != null }
+
+    /** [entry] without the folder, aliases and categories that can't be used; null where nothing usable is left. */
+    private fun usablePart(entry: PlatformMappingEntry): PlatformMappingEntry {
+        val folder = entry.folder?.takeIf { FolderNames.validate(it) == null }
+        return entry.copy(
+            folder = folder,
+            aliases = entry.aliases?.let { all -> all.filter { FolderNames.validate(it) == null }.takeIf { it.isNotEmpty() || all.isEmpty() } },
+            include = entry.include?.let { all -> all.filter { it in ROM_FILE_CATEGORIES }.takeIf { it.isNotEmpty() || all.isEmpty() } },
+            detected = entry.detected.takeIf { folder != null },
+        )
+    }
 
     fun encode(file: PlatformMappingFile): String = json.encodeToString(PlatformMappingFile.serializer(), file)
 
