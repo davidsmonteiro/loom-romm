@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -793,9 +794,12 @@ private fun SaveSyncSection(
     picking?.let { which ->
         val current = if (which == SaveFolderFor.AZAHAR) azahar else eden
         val start = current ?: state.storage.romsRoot?.let { java.io.File(it) }
-        FolderPicker(actions.volumes(), start?.parentFile, which.highlighted, focusOn = start, note = which.note,
-            onPick = { if (which == SaveFolderFor.AZAHAR) actions.setAzaharFolder(it) else actions.setEdenFolder(it); picking = null },
-            modifier = Modifier.heightIn(max = 360.dp).onFocusChanged { pickerFocused = it.hasFocus })
+        // One browser per emulator: what one remembers (the folder open in it) mustn't carry over to the other.
+        key(which) {
+            FolderPicker(actions.volumes(), start?.parentFile, which.highlighted, focusOn = start, note = which.note,
+                onPick = { if (which == SaveFolderFor.AZAHAR) actions.setAzaharFolder(it) else actions.setEdenFolder(it); picking = null },
+                modifier = Modifier.heightIn(max = 360.dp).onFocusChanged { pickerFocused = it.hasFocus })
+        }
     }
 }
 

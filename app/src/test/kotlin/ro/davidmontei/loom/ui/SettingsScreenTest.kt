@@ -846,6 +846,23 @@ class SettingsScreenTest {
         rule.onNodeWithText("Eden profile synced:").assertExists()
     }
 
+    /** Eden's browser opens beside Eden's folder, even right after Azahar's was open: each remembers its own place. */
+    @Test fun edensBrowserNeverOpensWhereAzaharsWas() {
+        val card = tmp.newFolder("6365-3230")
+        val n3ds = File(card, "ROMs/n3ds").apply { File(this, "sdmc/Nintendo 3DS").mkdirs() }
+        val eden = File(card, "ROMs/saves/Eden").apply { File(this, "user/save").mkdirs() }
+        state = sample.copy(storage = sample.storage.copy(romsRoot = File(card, "ROMs").path, azaharFound = n3ds.path, edenFound = eden.path))
+        show()
+        toTheSaveSwitch()
+        press(Key.DirectionDown); press(Key.DirectionCenter) // Azahar's browser, in ROMs
+        rule.onNodeWithText("n3ds").assertIsFocused()
+        rule.onNodeWithTag("eden-change-folder").performClick() // straight to Eden's
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText(File(card, "ROMs/saves").path).assertExists() // the browser is in saves, beside Eden
+        rule.onNodeWithText("Eden").assertExists()
+        rule.onNodeWithText("n3ds").assertDoesNotExist()
+    }
+
     /** Whether Loom can read Switch title IDs, without a word of the key itself. */
     @Test fun theSectionSaysWhetherLoomCanReadSwitchTitleIds() {
         show()
