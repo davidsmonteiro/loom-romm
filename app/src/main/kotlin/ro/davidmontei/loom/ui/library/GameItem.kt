@@ -1,6 +1,10 @@
 package ro.davidmontei.loom.ui.library
 
 import ro.davidmontei.loom.data.db.GameRow
+import ro.davidmontei.loom.data.db.SaveSyncState
+import ro.davidmontei.loom.data.db.SaveUnitEntity
+import ro.davidmontei.loom.data.saves.SaveUnitResolver
+import ro.davidmontei.loom.data.saves.emulatorName
 import ro.davidmontei.loom.storage.engine.JobPhase
 
 /** What the catalog shows per ROM (the brief's five states). */
@@ -24,7 +28,48 @@ data class GameItem(
     /** False for a failed download that retrying can't fix (a card that can't hold the file). */
     val retryable: Boolean = true,
     val platformId: Int = 0,
+    /** Where the save stands, for an installed game; null otherwise. */
+    val save: GameSave? = null,
 )
+
+/** Where an installed game's save stands, as its details show it. */
+data class GameSave(
+    /** Whether Loom syncs saves for the game's platform at all. */
+    val supported: Boolean,
+    /** Null until Loom has looked at this game's save. */
+    val state: SaveSyncState?,
+    /** Why it isn't synced or failed, in words. */
+    val detail: String?,
+    /** The emulator id the save is synced as, once known. */
+    val emulator: String?,
+)
+
+/**
+ * Adds where the game's save stands, once it's installed: [unit] (null before Loom first looked)
+ * on a platform Loom syncs saves for, else why it doesn't.
+ */
+fun GameItem.withSave(platformSlug: String, unit: SaveUnitEntity?): GameItem = copy(
+    save = when {
+        state != InstallState.INSTALLED -> null
+        !SaveUnitResolver.supportsPlatform(platformSlug) ->
+            GameSave(supported = false, SaveSyncState.UNSUPPORTED, SaveUnitResolver.unsupportedReason(platformSlug), emulator = null)
+        else -> GameSave(supported = true, unit?.state, unit?.detail, unit?.emulator)
+    },
+)
+
+/** The details' line about a game's save. */
+fun saveLine(save: GameSave): String = "Save: " + when (save.state) {
+    null -> "not checked yet"
+    SaveSyncState.IN_SYNC -> "in sync with RomM"
+    SaveSyncState.NO_SAVE -> "none yet"
+    SaveSyncState.LOCAL_NEWER -> "newer on the Thor"
+    SaveSyncState.WRITING -> "newer on the Thor; Loom uploads it once ${emulatorName(save.emulator)} has left it alone for a minute"
+    SaveSyncState.SERVER_NEWER -> "newer on RomM"
+    SaveSyncState.LOCAL_MISSING -> "missing on the Thor; RomM has a copy"
+    SaveSyncState.CONFLICT -> "changed on the Thor and on RomM. Choose which to keep."
+    SaveSyncState.UNSUPPORTED -> "not synced. " + save.detail.orEmpty()
+    SaveSyncState.ERROR -> "the last sync failed. " + save.detail.orEmpty()
+}
 
 /**
  * Derives the install state from the install row and the download job (stored separately, so the

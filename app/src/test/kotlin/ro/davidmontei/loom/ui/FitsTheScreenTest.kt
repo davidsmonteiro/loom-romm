@@ -21,7 +21,9 @@ import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.SystemFolder
+import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.ui.library.FolderQuestion
+import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.InstallState
 import ro.davidmontei.loom.ui.library.LibraryContent
@@ -89,6 +91,26 @@ class FitsTheScreenTest {
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
         rule.onNodeWithText("PlayStation").performClick() // with Reset, and the other Cocoon folders under the field
         assertThat(overflow("Files to download")).isEqualTo(0f)
+    }
+
+    /**
+     * A 3DS game's details at their tallest: a title and install path long enough to wrap, the
+     * save's line at its longest, and a row of save buttons above the dialog's own.
+     */
+    @Test fun aGamesDetailsWithItsSaveFit() {
+        val title = "Pokémon Omega Ruby (USA) (En,Ja,Fr,De,Es,It,Ko) (Rev 2) [Special Demo Edition]"
+        val game = GameItem(30, title, 3_900_000_000, null, listOf("USA"), InstallState.INSTALLED, null, null, null, adopted = true,
+            removedOnServer = false, installPath = "n3ds/$title.3ds", save = GameSave(true, SaveSyncState.SERVER_NEWER, null, "azahar"))
+        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game)))
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("game-30").performClick()
+        assertThat(overflow(title)).isEqualTo(0f)
+        rule.saveScreenshot("library-details-save")
+        val failed = GameSave(true, SaveSyncState.ERROR, "Couldn't read the save: /storage/6365-3230/ROMs/n3ds/sdmc/Nintendo 3DS/" +
+            "00000000000000000000000000000000/00000000000000000000000000000000/title/00040000/0011c400/data (Permission denied)", "azahar")
+        state = state.copy(games = listOf(game.copy(save = failed)))
+        assertThat(overflow(title)).isEqualTo(0f)
     }
 
     /** The question at a platform's first download, with its few options and with every folder of the Thor's ES-DE template. */

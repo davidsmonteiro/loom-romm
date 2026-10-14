@@ -34,7 +34,9 @@ import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.storage.mapping.SystemFolder
+import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.ui.library.FolderQuestion
+import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.InstallState
 import ro.davidmontei.loom.ui.library.LibraryActions
@@ -66,6 +68,8 @@ class LibraryScreenTest {
         override fun offload(game: GameItem) { calls += "offload:${game.id}" }
         override fun retry(game: GameItem) { calls += "retry:${game.id}" }
         override fun cancel(game: GameItem) { calls += "cancel:${game.id}" }
+        override fun uploadSave(game: GameItem) { calls += "upload:${game.id}" }
+        override fun restoreSave(game: GameItem) { calls += "restore:${game.id}" }
         override fun openQueue(focusJobId: Long?) { calls += if (focusJobId == null) "queue" else "queue:$focusJobId" }
         override fun openSettings() { calls += "settings" }
         override fun repair() { calls += "repair" }
@@ -440,6 +444,105 @@ class LibraryScreenTest {
         rule.onNodeWithText("Sync now").assertIsFocused()
         press(Key.DirectionCenter)
         assertThat(calls).contains("sync")
+    }
+
+    // --- a game's save ---
+
+    private fun withSave(id: Int, save: GameSave) = state.copy(games = games.map { if (it.id == id) it.copy(save = save) else it })
+
+    private fun azahar(state: SaveSyncState?, detail: String? = null) = GameSave(supported = true, state, detail, "azahar")
+
+    /** An installed game's details say where its save stands; Up from the first button reaches what can be done with it. */
+    @Test fun theDetailsShowTheSaveAndUploadIt() {
+        state = withSave(1, azahar(SaveSyncState.LOCAL_NEWER))
+        show()
+        press(Key.DirectionCenter) // Chrono Trigger's details
+        rule.onNodeWithTag("save-line", useUnmergedTree = true).assertTextEquals("Save: newer on the Thor")
+        rule.onNodeWithText("Close").assertIsFocused() // the safe choice still has focus
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Upload save").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("upload:1")
+        rule.onNodeWithText("Upload save").assertDoesNotExist()
+        rule.onNodeWithTag("game-1").assertIsFocused()
+    }
+
+    /** Replacing a save needs the emulator closed, which Loom can't see: Restore asks first, on Cancel. */
+    @Test fun restoringAsksToCloseTheEmulatorFirst() {
+        state = withSave(1, azahar(SaveSyncState.SERVER_NEWER))
+        show()
+        press(Key.DirectionCenter)
+        rule.onNodeWithTag("save-line", useUnmergedTree = true).assertTextEquals("Save: newer on RomM")
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Restore server save").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Restore Chrono Trigger's save from RomM?").assertExists()
+        rule.onNodeWithText("Close Azahar completely first (swipe it away in Recents). Loom backs up the save on the Thor before replacing it.")
+            .assertExists()
+        rule.onNodeWithText("Cancel").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls.filter { it.startsWith("restore") }).isEmpty()
+        rule.onNodeWithTag("game-1").assertIsFocused()
+
+        press(Key.DirectionCenter); press(Key.DirectionUp); press(Key.DirectionCenter) // details, Restore server save
+        press(Key.DirectionRight); press(Key.DirectionCenter) // Restore
+        assertThat(calls).contains("restore:1")
+        rule.onNodeWithTag("game-1").assertIsFocused()
+    }
+
+    @Test fun bOnTheRestoreQuestionRestoresNothing() {
+        state = withSave(1, azahar(SaveSyncState.LOCAL_MISSING))
+        show()
+        press(Key.DirectionCenter); press(Key.DirectionUp)
+        rule.onNodeWithText("Restore server save").assertIsFocused()
+        press(Key.DirectionCenter)
+        back()
+        rule.onNodeWithText("Restore Chrono Trigger's save from RomM?").assertDoesNotExist()
+        assertThat(calls.filter { it.startsWith("restore") }).isEmpty()
+        rule.onNodeWithTag("game-1").assertIsFocused()
+    }
+
+    /** A background sync can take a save button away while it has focus: focus stays in the dialog. */
+    @Test fun aSaveButtonGoingKeepsFocusInTheDetails() {
+        state = withSave(1, azahar(SaveSyncState.SERVER_NEWER))
+        show()
+        press(Key.DirectionCenter); press(Key.DirectionUp)
+        rule.onNodeWithText("Restore server save").assertIsFocused()
+        changeGame(1, state.games.first { it.id == 1 }.copy(save = azahar(SaveSyncState.IN_SYNC))) // PULL_SAVES restored it meanwhile
+        rule.onNodeWithText("Restore server save").assertDoesNotExist()
+        rule.onNodeWithText("Close").assertIsFocused()
+    }
+
+    @Test fun aSaveConflictLeadsToTheQueue() {
+        state = withSave(1, azahar(SaveSyncState.CONFLICT))
+        show()
+        press(Key.DirectionCenter)
+        rule.onNodeWithTag("save-line", useUnmergedTree = true).assertTextEquals("Save: changed on the Thor and on RomM. Choose which to keep.")
+        rule.onNodeWithText("Upload save").assertDoesNotExist()
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Choose which to keep").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("queue")
+    }
+
+    @Test fun aGameWhoseSavesLoomCantReachSaysWhy() {
+        state = withSave(1, GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Eden keeps its saves in Android/data, where Loom can't reach them", null))
+        show()
+        press(Key.DirectionCenter)
+        rule.onNodeWithTag("save-line", useUnmergedTree = true)
+            .assertTextEquals("Save: not synced. Eden keeps its saves in Android/data, where Loom can't reach them")
+        rule.onNodeWithText("Upload save").assertDoesNotExist()
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Close").assertIsFocused() // nothing above it to go to
+    }
+
+    @Test fun aGameNotYetLookedAtCanStillBeUploaded() {
+        state = withSave(1, azahar(null))
+        show()
+        press(Key.DirectionCenter)
+        rule.onNodeWithTag("save-line", useUnmergedTree = true).assertTextEquals("Save: not checked yet")
+        press(Key.DirectionUp); press(Key.DirectionCenter)
+        assertThat(calls).contains("upload:1")
     }
 
     // --- the folder question, at a platform's first download when the card has several candidates ---

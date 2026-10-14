@@ -72,6 +72,8 @@ import okhttp3.HttpUrl
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.catalog.CoverRef
 import ro.davidmontei.loom.data.db.PlatformSummary
+import ro.davidmontei.loom.data.db.SaveSyncState
+import ro.davidmontei.loom.data.saves.emulatorName
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.ui.components.ButtonHint
 import ro.davidmontei.loom.ui.components.FocusRingIndication
@@ -88,6 +90,7 @@ import ro.davidmontei.loom.ui.components.StatusBadge
 import ro.davidmontei.loom.ui.components.gameCount
 import ro.davidmontei.loom.ui.input.PadAction
 import ro.davidmontei.loom.ui.input.onPadAction
+import ro.davidmontei.loom.ui.saves.ReplaceSaveDialog
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 
@@ -116,6 +119,10 @@ interface LibraryActions {
     fun offload(game: GameItem)
     fun retry(game: GameItem)
     fun cancel(game: GameItem)
+    /** Uploads the game's save if it changed on the Thor only. */
+    fun uploadSave(game: GameItem)
+    /** Puts RomM's save in place of the Thor's; asked only once the user said the emulator is closed. */
+    fun restoreSave(game: GameItem)
     /** Opens the queue, on [focusJobId]'s row when given. */
     fun openQueue(focusJobId: Long? = null)
     fun openSettings()
@@ -159,6 +166,8 @@ fun LibraryScreen(
             override fun offload(game: GameItem) { vm.offload(game) }
             override fun retry(game: GameItem) { vm.retry(game) }
             override fun cancel(game: GameItem) { vm.cancel(game) }
+            override fun uploadSave(game: GameItem) { vm.uploadSave(game) }
+            override fun restoreSave(game: GameItem) { vm.restoreSave(game) }
             override fun openQueue(focusJobId: Long?) = openQueue(focusJobId)
             override fun openSettings() = openSettings()
             override fun repair() = onRepair()
@@ -182,6 +191,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     var focusedId by remember { mutableStateOf<Int?>(null) }
     var detailsFor by remember { mutableStateOf<GameItem?>(null) }
     var confirmOffload by remember { mutableStateOf<GameItem?>(null) }
+    var confirmRestore by remember { mutableStateOf<GameItem?>(null) }
     var searchEdits by remember { mutableIntStateOf(0) }
     var searchFocused by remember { mutableStateOf(false) }
     // The game last focused and its place, kept while the queue or settings is on top so B comes
@@ -270,6 +280,18 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                 onOffload = { confirmOffload = it; detailsFor = null },
                 onRetry = { actions.retry(it); detailsFor = null },
                 onCancel = { actions.cancel(it); detailsFor = null },
+                onUploadSave = { actions.uploadSave(it); detailsFor = null },
+                onRestoreSave = { confirmRestore = it; detailsFor = null },
+                onChooseSave = { actions.openQueue(); detailsFor = null },
+            )
+        }
+        confirmRestore?.let { game ->
+            ReplaceSaveDialog(
+                title = "Restore ${game.title}'s save from RomM?",
+                emulator = emulatorName(game.save?.emulator),
+                confirm = "Restore",
+                onConfirm = { actions.restoreSave(game); confirmRestore = null },
+                onDismiss = { confirmRestore = null },
             )
         }
         confirmOffload?.let { game ->
@@ -294,7 +316,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
         }
         // The question can arrive after another dialog opened (the card scan takes a moment): it takes over.
         LaunchedEffect(state.folderQuestion != null) {
-            if (state.folderQuestion != null) { detailsFor = null; confirmOffload = null }
+            if (state.folderQuestion != null) { detailsFor = null; confirmOffload = null; confirmRestore = null }
         }
         state.folderQuestion?.let { FolderQuestionDialog(it, actions) }
     }
@@ -622,14 +644,29 @@ private fun GameDialog(
     onOffload: (GameItem) -> Unit,
     onRetry: (GameItem) -> Unit,
     onCancel: (GameItem) -> Unit,
+    onUploadSave: (GameItem) -> Unit,
+    onRestoreSave: (GameItem) -> Unit,
+    onChooseSave: () -> Unit,
 ) {
+    // A save button can go while it has focus (a background sync changing the save's state), which
+    // would leave nothing focused in the dialog: focus then goes back to its first button.
+    val firstButton = remember { FocusRequester() }
+    var focusedSaveAction by remember { mutableStateOf<String?>(null) }
+    val saveActions = game.save?.let { saveButtons(game, it, onUploadSave, onRestoreSave, onChooseSave) }.orEmpty()
+    val saveLabels = saveActions.map { it.label }
+    LaunchedEffect(saveLabels) {
+        if (focusedSaveAction != null && focusedSaveAction !in saveLabels) {
+            focusedSaveAction = null
+            runCatching { firstButton.requestFocus() }
+        }
+    }
     LoomDialog(
         title = game.title,
         onDismiss = onDismiss,
         body = {
             val lines = buildList {
-                platform?.let { add(it.platform.displayName) }
-                add(formatBytes(game.sizeBytes) + (game.regions.takeIf { it.isNotEmpty() }?.let { " · ${it.joinToString()}" } ?: ""))
+                add(listOfNotNull(platform?.platform?.displayName, formatBytes(game.sizeBytes), game.regions.takeIf { it.isNotEmpty() }?.joinToString())
+                    .joinToString(" · "))
                 when (game.state) {
                     InstallState.INSTALLED -> add("On this device at ${game.installPath}" + if (game.adopted) " (already there before Loom)" else "")
                     InstallState.QUEUED, InstallState.DOWNLOADING -> add(game.stateDetail ?: "Downloading")
@@ -640,8 +677,26 @@ private fun GameDialog(
                     InstallState.NOT_INSTALLED -> add(if (game.removedOnServer) "No longer on the RomM server" else "Not on this device")
                 }
             }
-            lines.forEach { Text(it, style = MaterialTheme.typography.bodyLarge, color = LoomColors.TextMuted) }
+            // Grouped, rather than spaced like the dialog's parts: a 3DS game's details have to fit
+            // the screen with a long title and path, its save and a row of save buttons.
+            Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                lines.forEach { Text(it, style = MaterialTheme.typography.bodyLarge, color = LoomColors.TextMuted) }
+            }
             game.progress?.let { LoomProgressBar(it) }
+            game.save?.let { save ->
+                Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                    Text(saveLine(save), style = MaterialTheme.typography.bodyLarge, color = saveColor(save), maxLines = 2,
+                        overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("save-line"))
+                    if (saveActions.isNotEmpty()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                            saveActions.forEach { action ->
+                                LoomButton(action.label, action.onClick,
+                                    Modifier.onFocusChanged { if (it.isFocused) focusedSaveAction = action.label })
+                            }
+                        }
+                    }
+                }
+            }
         },
         buttons = { first ->
             // Each button is drawn from one place whatever the state, so a download finishing or
@@ -650,12 +705,41 @@ private fun GameDialog(
             // composition, because branches there (each lambda in a composable is remembered) can
             // still move the buttons to a new place in it.
             val (main, other) = detailsButtons(game, onDismiss, onDownload, onOffload, onRetry, onCancel)
-            LoomButton(main.label, main.onClick, Modifier.focusRequester(first), primary = main.primary)
-            other?.let { LoomButton(it.label, it.onClick, destructive = it.destructive) }
+            val notASave = Modifier.onFocusChanged { if (it.isFocused) focusedSaveAction = null }
+            LoomButton(main.label, main.onClick, Modifier.focusRequester(first).focusRequester(firstButton).then(notASave), primary = main.primary)
+            other?.let { LoomButton(it.label, it.onClick, notASave, destructive = it.destructive) }
             // The second button can go too (a failure retrying can't fix), taking focus with it: back to the first.
             InitialFocus(first, other == null, delayMs = 0)
         },
     )
+}
+
+/**
+ * What the details offer for an installed game's save: nothing where Loom doesn't sync the
+ * platform's saves, the queue for a conflict, else an upload, and a restore when RomM's copy is
+ * newer or the Thor's is gone.
+ */
+private fun saveButtons(
+    game: GameItem,
+    save: GameSave,
+    upload: (GameItem) -> Unit,
+    restore: (GameItem) -> Unit,
+    choose: () -> Unit,
+): List<DialogAction> = when {
+    !save.supported -> emptyList()
+    save.state == SaveSyncState.CONFLICT -> listOf(DialogAction("Choose which to keep") { choose() })
+    else -> listOfNotNull(
+        DialogAction("Upload save") { upload(game) },
+        DialogAction("Restore server save") { restore(game) }
+            .takeIf { save.state == SaveSyncState.SERVER_NEWER || save.state == SaveSyncState.LOCAL_MISSING },
+    )
+}
+
+private fun saveColor(save: GameSave) = when (save.state) {
+    SaveSyncState.IN_SYNC -> LoomColors.Installed
+    SaveSyncState.CONFLICT, SaveSyncState.ERROR -> LoomColors.Error
+    SaveSyncState.SERVER_NEWER, SaveSyncState.LOCAL_MISSING -> LoomColors.Accent
+    else -> LoomColors.TextMuted
 }
 
 private class DialogAction(val label: String, val primary: Boolean = false, val destructive: Boolean = false, val onClick: () -> Unit)

@@ -31,6 +31,7 @@ import ro.davidmontei.loom.data.download.EnqueueResult
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.install.OffloadResult
 import ro.davidmontei.loom.data.mapping.FolderChooser
+import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.storage.engine.formatBytes
@@ -80,6 +81,7 @@ class LibraryViewModel @Inject constructor(
     private val server: ActiveServer,
     settings: SettingsStore,
     private val folders: FolderChooser,
+    private val saves: SaveRepository,
 ) : ViewModel() {
 
     val platforms: StateFlow<List<PlatformSummary>> = catalog.observePlatformSummaries()
@@ -97,8 +99,10 @@ class LibraryViewModel @Inject constructor(
     val games: StateFlow<List<GameItem>> = combine(selected, filter, query.debounce(150)) { p, f, q -> Triple(p, f, q) }
         .flatMapLatest { (platform, f, q) ->
             if (platform == null) flowOf(emptyList())
-            else combine(catalog.observeGames(platform.platform.id, f.ordinal, CatalogSyncer.fold(q)), downloads.progress) { rows, live ->
-                rows.map { row -> row.toItem(row.jobId?.let { live[it]?.bytesDone }) }
+            else combine(
+                catalog.observeGames(platform.platform.id, f.ordinal, CatalogSyncer.fold(q)), downloads.progress, saves.observeGames(),
+            ) { rows, live, units ->
+                rows.map { row -> row.toItem(row.jobId?.let { live[it]?.bytesDone }).withSave(platform.platform.slug, units[row.id]) }
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -189,6 +193,18 @@ class LibraryViewModel @Inject constructor(
             OffloadResult.NotInstalled -> Unit
             is OffloadResult.Failed -> _messages.send(r.message)
         }
+    }
+
+    /** "Upload save" in the details. The answer arrives once the save has been checked twice, a few seconds apart. */
+    fun uploadSave(game: GameItem) = viewModelScope.launch {
+        _messages.send("Checking ${game.title}'s save…")
+        _messages.send(saves.upload(game.id, game.title))
+    }
+
+    /** "Restore server save", once the user confirmed the emulator is closed. */
+    fun restoreSave(game: GameItem) = viewModelScope.launch {
+        _messages.send("Restoring ${game.title}'s save from RomM…")
+        _messages.send(saves.restore(game.id, game.title))
     }
 
     fun retry(game: GameItem) = viewModelScope.launch { game.jobId?.let { downloads.retry(it) } }

@@ -13,7 +13,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -32,18 +35,29 @@ import org.robolectric.shadows.ShadowEnvironment
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.TokenCipher
 import ro.davidmontei.loom.data.catalog.CatalogSyncScheduler
+import ro.davidmontei.loom.data.db.InstallEntity
+import ro.davidmontei.loom.data.db.InstallKind
+import ro.davidmontei.loom.data.db.InstallSource
 import ro.davidmontei.loom.data.db.LoomDatabase
 import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.RomEntity
+import ro.davidmontei.loom.data.db.SaveSyncState
+import ro.davidmontei.loom.data.db.SaveUnitEntity
+import ro.davidmontei.loom.data.db.VerifiedBy
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.download.QueueKicker
 import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.mapping.MappingRepository
+import ro.davidmontei.loom.data.saves.SaveRepository
+import ro.davidmontei.loom.data.saves.SaveSyncEngine
+import ro.davidmontei.loom.data.saves.SaveUnitResolver
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.storage.mapping.MappingSource
+import ro.davidmontei.loom.ui.library.GameItem
+import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.LibraryViewModel
 import ro.davidmontei.loom.ui.library.toItem
 import java.io.File
@@ -54,6 +68,7 @@ import java.io.File
 class LibraryViewModelTest {
     @get:Rule val tmp = TemporaryFolder()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val main = UnconfinedTestDispatcher()
     private lateinit var db: LoomDatabase
     private lateinit var settings: SettingsStore
     private lateinit var mapping: MappingRepository
@@ -61,7 +76,7 @@ class LibraryViewModelTest {
     private lateinit var roms: File
 
     @Before fun setUp() = runBlocking {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        Dispatchers.setMain(main)
         ShadowEnvironment.addExternalDir(tmp.newFolder("sdcard").path) // Android's all-files check needs a volume
         val context = ApplicationProvider.getApplicationContext<Context>()
         WorkManagerTestInitHelper.initializeTestWorkManager(context)
@@ -87,11 +102,14 @@ class LibraryViewModelTest {
             rom(10, 1, "arcade", "Alley Master", "alleymas.zip"),
             rom(20, 2, "genesis", "Sonic the Hedgehog", "Sonic the Hedgehog (USA, Europe).zip"),
         ))
+        val engine = SaveSyncEngine(db.catalogDao(), db.saveDao(), server, credentials, settings, SaveUnitResolver(settings, volumes), volumes,
+            File(tmp.root, "cache"))
         vm = LibraryViewModel(
             db.catalogDao(),
             DownloadRepository(db.downloadDao(), db.catalogDao(), server, mapping, settings, volumes, QueueKicker(workManager)),
             InstallManager(db.catalogDao(), settings, mapping, volumes),
             CatalogSyncScheduler(workManager), server, settings, FolderChooser(settings, mapping),
+            SaveRepository(engine, db.saveDao(), scope),
         )
     }
 
@@ -108,6 +126,10 @@ class LibraryViewModelTest {
     )
 
     private fun folders(vararg names: String) = names.forEach { File(roms, it).mkdirs() }
+
+    private suspend fun installed(romId: Int, platform: Int, relPath: String) = db.catalogDao().upsertInstall(
+        InstallEntity(romId, "sd", roms.path, relPath, relPath.lowercase(), platform, InstallKind.FILE, 1, VerifiedBy.SIZE, InstallSource.ADOPTED, null, 0),
+    )
 
     /** The platform's one game, with that platform on screen (where X is pressed). */
     private suspend fun gameOn(platformId: Int) = run {
@@ -150,6 +172,35 @@ class LibraryViewModelTest {
         vm.download(gameOn(2)).join()
         assertThat(vm.folderQuestion.value).isNull()
         assertThat(mapping.currentMapper().resolve("genesis", "genesis").folderChosen).isFalse()
+    }
+
+    /**
+     * The games as the screen gets them. The search box's debounce waits on the test's Main
+     * dispatcher, whose clock only moves when told to, so it is moved on while waiting.
+     */
+    private suspend fun gamesOnScreen(until: (List<GameItem>) -> Boolean): List<GameItem> = coroutineScope {
+        val games = async(Dispatchers.IO) { vm.games.first(until) }
+        withTimeout(5_000) { while (games.isActive) { main.scheduler.advanceTimeBy(200); delay(20) } }
+        games.await()
+    }
+
+    /** A game's details say where its save stands once it's installed; other platforms say why theirs aren't synced. */
+    @Test fun installedGamesCarryWhereTheirSaveStands() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(3, "3ds", "3ds", "Nintendo 3DS", "Nintendo 3DS", 2, "t")))
+        db.catalogDao().upsertRoms(listOf(rom(30, 3, "3ds", "Pokemon X", "Pokemon X.3ds"), rom(31, 3, "3ds", "Pokemon Y", "Pokemon Y.3ds")))
+        installed(30, 3, "n3ds/Pokemon X.3ds")
+        installed(20, 2, "megadrive/Sonic the Hedgehog (USA, Europe).zip")
+        db.saveDao().upsertUnit(SaveUnitEntity(30, "azahar", "/sdmc/data", "f", 2, 4096, 0, "h", SaveSyncState.SERVER_NEWER, null, 0))
+
+        vm.selectPlatform(3)
+        val n3ds = gamesOnScreen { games -> games.any { it.save != null } }
+        assertThat(n3ds.single { it.id == 30 }.save).isEqualTo(GameSave(supported = true, SaveSyncState.SERVER_NEWER, null, "azahar"))
+        assertThat(n3ds.single { it.id == 31 }.save).isNull() // not on the device
+
+        vm.selectPlatform(2)
+        val genesis = gamesOnScreen { games -> games.any { it.id == 20 && it.save != null } }
+        assertThat(genesis.single().save)
+            .isEqualTo(GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Loom syncs 3DS saves (Azahar) only, for now", null))
     }
 
     /** Found by review: the folder was decided for the platform on screen, not the game's. */
