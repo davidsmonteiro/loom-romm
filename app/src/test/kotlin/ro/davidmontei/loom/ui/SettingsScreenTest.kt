@@ -852,6 +852,8 @@ class SettingsScreenTest {
         toTheSaveSwitch()
         rule.onNodeWithTag("prod-keys").assertTextEquals("No prod.keys in the ROMs folder: each Switch game asks which save folder is its.")
         update { it.copy(storage = it.storage.copy(prodKeys = "/storage/6365-3230/ROMs/prod.keys")) }
-        rule.onNodeWithTag("prod-keys").assertTextEquals("Switch title IDs are read with your prod.keys, which never leaves the Thor.")
+        rule.onNodeWithTag("prod-keys").assertTextEquals("Switch title IDs are read with the header_key in your prod.keys, which never leaves the Thor.")
+        update { it.copy(storage = it.storage.copy(prodKeys = null, prodKeysWithoutKey = true)) }
+        rule.onNodeWithTag("prod-keys").assertTextEquals("Your prod.keys has no header_key: each Switch game asks which save folder is its.")
     }
 }

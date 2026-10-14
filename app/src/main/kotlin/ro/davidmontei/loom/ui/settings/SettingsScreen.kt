@@ -781,8 +781,11 @@ private fun SaveSyncSection(
             EdenProfiles(state.storage.edenProfiles, settings?.edenProfile, actions)
         } else {
             Text(
-                if (state.storage.prodKeys != null) "Switch title IDs are read with your prod.keys, which never leaves the Thor."
-                else "No prod.keys in the ROMs folder: each Switch game asks which save folder is its.",
+                when {
+                    state.storage.prodKeys != null -> "Switch title IDs are read with the header_key in your prod.keys, which never leaves the Thor."
+                    state.storage.prodKeysWithoutKey -> "Your prod.keys has no header_key: each Switch game asks which save folder is its."
+                    else -> "No prod.keys in the ROMs folder: each Switch game asks which save folder is its."
+                },
                 style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, modifier = Modifier.testTag("prod-keys"),
             )
         }

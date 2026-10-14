@@ -118,6 +118,20 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         assertThat((eden().folderChoice(wonder.romId) as EdenFolderChoice.Options).current.toString()).isEqualTo(wonder.titleId)
     }
 
+    /** A prod.keys without a usable header_key, or whose key opens nothing, doesn't hide a good one in the Switch folder. */
+    @Test fun aProdKeysWithoutAGoodKeyDoesntHideOneThatWorks() = runBlocking<Unit> {
+        File(volume, "ROMs/prod.keys").writeText("key_area_key_application_00 = ${"cd".repeat(16)}\n")
+        putProdKeys(at = File(volume, "ROMs/switch/prod.keys"))
+        installSwitch(wonder)
+        writeEdenSave(wonder, bytes(1))
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(wonder.romId)
+
+        putProdKeys(headerKey = switchFixture("other-header-key.txt").readText().trim()) // ROMs/prod.keys now has the wrong key
+        installSwitch(arceus)
+        writeEdenSave(arceus, bytes(2))
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(arceus.romId)
+    }
+
     /** Once another game has a folder, it isn't offered for this one. */
     @Test fun aFolderAnotherGameHasIsntOffered() = runBlocking<Unit> {
         putProdKeys()

@@ -73,8 +73,10 @@ data class StorageInfo(
     val edenFound: String? = null,
     /** The profiles in the Eden save folder in use: Settings asks whose saves to sync when there are several. */
     val edenProfiles: List<String> = emptyList(),
-    /** The owner's prod.keys Loom would read Switch title IDs with; null when there's none. Only its place, never its keys. */
+    /** The owner's prod.keys Loom would read Switch title IDs with: one holding a header_key. Only its place, never its keys. */
     val prodKeys: String? = null,
+    /** There is a prod.keys where Loom looks, but none holds a header_key it can use. */
+    val prodKeysWithoutKey: Boolean = false,
 )
 
 data class SettingsUiState(
@@ -142,10 +144,13 @@ class SettingsViewModel @Inject constructor(
             val volume = root?.let(volumes::forPath)
             val edenFound = root?.let(EdenSaves::defaultSaveDir)?.takeIf { EdenSaveLocator.holdsEdenData(it.toPath()) }
             val edenDir = settings.edenSaveDir?.let(::File) ?: edenFound
+            val keyFiles = root?.let { r -> switchFolders.ifEmpty { listOf("switch") }.flatMap { EdenSaves.keyFiles(r, it) }.distinct() }.orEmpty()
+                .filter(File::isFile)
+            val usable = EdenSaves.usableKeyFile(keyFiles)
             StorageInfo(root, volume?.label, volume?.let { volumes.freeBytes(it.root) }, volume?.let { volumes.totalBytes(it.root) },
                 findAzaharFolder(root, n3dsFolders)?.path, edenFound?.path,
                 edenDir?.let { runCatching { EdenSaveLocator(it.toPath()).profiles() }.getOrNull() }.orEmpty(),
-                root?.let { r -> (switchFolders.ifEmpty { listOf("switch") }).flatMap { EdenSaves.keyFiles(r, it) }.distinct().firstOrNull(File::isFile)?.path },
+                usable?.path, usable == null && keyFiles.isNotEmpty(),
             )
         }
     }

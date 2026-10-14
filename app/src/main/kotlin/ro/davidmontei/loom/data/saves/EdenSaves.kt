@@ -36,7 +36,7 @@ sealed interface EdenFolderChoice {
  * save folder is the game's.
  *
  * The key is read from the card only when a game's title ID isn't known yet, held for that one
- * read and wiped: it is never logged, stored or uploaded.
+ * read and dropped: it is never logged, stored or uploaded.
  */
 class EdenSaves(
     private val settings: SettingsStore,
@@ -124,43 +124,76 @@ class EdenSaves(
     }
 
     /**
-     * The game's title ID: the owner's pick, else the one read from its image while the image is
-     * as it was then, else read now with the owner's key, which is wiped once read.
+     * The game's title ID: the one read from its image while the image is as it was then, else
+     * read now with the owner's key, which is dropped once read. The owner's pick comes first.
      */
     private suspend fun titleId(rom: RomEntity, install: InstallEntity): Title {
         val recorded = saves.switchTitle(rom.id)
-        if (recorded?.source == SwitchTitleSource.OWNER) SwitchTitleId.parse(recorded.titleId)?.let { return Title.Known(it) }
         val images = imagesOf(File(install.romsRoot, install.relPath))
-        if (images.isEmpty()) return Title.Ask(NOT_AN_IMAGE)
-        val fingerprint = images.joinToString("\n") { "${it.path}\t${it.length()}\t${it.lastModified()}" }
-        if (recorded?.source == SwitchTitleSource.IMAGE && recorded.imageFingerprint == fingerprint) {
+        val imagesPrint = images.joinToString("\n") { "${it.path}\t${it.length()}\t${it.lastModified()}" }
+        val keyFiles = keyFiles(install.romsRoot, install.relPath.substringBefore('/')).filter(File::isFile)
+        if (recorded?.source == SwitchTitleSource.OWNER) {
             SwitchTitleId.parse(recorded.titleId)?.let { return Title.Known(it) }
         }
-        val keys = keyFiles(install.romsRoot, install.relPath.substringBefore('/')).firstOrNull(File::isFile)
-            ?: return Title.Ask(NO_KEYS)
-        val results = try {
-            val key = SwitchHeaderKey.fromProdKeys(keys.toPath()) ?: return Title.Ask(NO_HEADER_KEY)
-            key.use { k -> images.map { SwitchTitleIdReader.read(it.toPath(), k) } }
-        } catch (e: IOException) {
-            return Title.CantLook("Couldn't read the game's image or prod.keys: ${e.message}")
+        if (recorded?.source == SwitchTitleSource.IMAGE && recorded.imageFingerprint == imagesPrint) {
+            SwitchTitleId.parse(recorded.titleId)?.let { return Title.Known(it) }
+        }
+        val title = readTitle(images, keyFiles)
+        if (title is Title.Known) {
+            saves.upsertSwitchTitle(SwitchTitleEntity(rom.id, title.id.toString(), SwitchTitleSource.IMAGE, imagesPrint, now()))
+        }
+        return title
+    }
+
+    /** What the game's images say its title ID is, read with the owner's key. */
+    private fun readTitle(images: List<File>, keyFiles: List<File>): Title {
+        if (images.isEmpty()) return Title.Ask(NOT_AN_IMAGE)
+        val results = when (val read = readImages(images, keyFiles)) {
+            Read.NoKeys -> return Title.Ask(NO_KEYS)
+            Read.NoHeaderKey -> return Title.Ask(NO_HEADER_KEY)
+            is Read.Failed -> return Title.CantLook(read.reason)
+            is Read.Done -> read.results
         }
         val found = results.filterIsInstance<SwitchTitleIdResult.Found>().map { it.titleId }.distinct()
+        val unreadable = results.filterIsInstance<SwitchTitleIdResult.NotReadable>().firstOrNull()
+        val update = results.filterIsInstance<SwitchTitleIdResult.UpdateOnly>().firstOrNull()
         return when {
-            found.size == 1 -> {
-                saves.upsertSwitchTitle(SwitchTitleEntity(rom.id, found.single().toString(), SwitchTitleSource.IMAGE, fingerprint, now()))
-                Title.Known(found.single())
-            }
+            found.size == 1 -> Title.Known(found.single())
             found.size > 1 -> Title.Ask("Its files are of different games, so Loom can't tell which save is its")
             results.any { it is SwitchTitleIdResult.SeveralGames } -> Title.Ask("Its image holds several games, so Loom can't tell which save is its")
             results.any { it is SwitchTitleIdResult.WrongKey } -> Title.Ask(WRONG_KEY)
-            results.any { it is SwitchTitleIdResult.UpdateOnly } -> Title.NoSave(
-                "This is an update of ${results.filterIsInstance<SwitchTitleIdResult.UpdateOnly>().first().game}; the game itself keeps the save",
-            )
+            update != null -> Title.NoSave("This is an update of ${update.game}; the game itself keeps the save")
             results.all { it is SwitchTitleIdResult.NoProgram } -> Title.NoSave("It holds no game program (DLC?), so it keeps no save of its own")
-            else -> Title.Ask(
-                "Loom can't read its title ID: " + (results.filterIsInstance<SwitchTitleIdResult.NotReadable>().firstOrNull()?.reason ?: "unknown image"),
-            )
+            else -> Title.Ask("Loom can't read its title ID: " + (unreadable?.reason ?: "unknown image"))
         }
+    }
+
+    private sealed interface Read {
+        data object NoKeys : Read
+        data object NoHeaderKey : Read
+        data class Failed(val reason: String) : Read
+        data class Done(val results: List<SwitchTitleIdResult>) : Read
+    }
+
+    /**
+     * Reads [images] with the first header key that opens them, trying each prod.keys in turn: one
+     * without a usable header_key, or whose key opens nothing, doesn't hide a good one. Each key is
+     * dropped once its read is done.
+     */
+    private fun readImages(images: List<File>, keyFiles: List<File>): Read {
+        if (keyFiles.isEmpty()) return Read.NoKeys
+        var last: Read = Read.NoHeaderKey
+        try {
+            for (file in keyFiles) {
+                val key = SwitchHeaderKey.fromProdKeys(file.toPath()) ?: continue
+                val results = key.use { k -> images.map { SwitchTitleIdReader.read(it.toPath(), k) } }
+                last = Read.Done(results)
+                if (results.none { it is SwitchTitleIdResult.WrongKey }) break
+            }
+        } catch (e: IOException) {
+            return Read.Failed("Couldn't read the game's image or prod.keys: ${e.message}")
+        }
+        return last
     }
 
     /** The install's images: the install itself, or the ones at the top of an install folder (a game, its update, its DLC). */
@@ -179,7 +212,7 @@ class EdenSaves(
         const val SEVERAL_PROFILES = "Eden has several profiles: choose whose saves Loom syncs in Settings"
         const val NOT_AN_IMAGE = "It isn't an XCI or NSP, which Loom reads a Switch game's title ID from"
         const val NO_KEYS = "There's no prod.keys in the ROMs folder for Loom to read its title ID with"
-        const val NO_HEADER_KEY = "The prod.keys in the ROMs folder has no header_key to read its title ID with"
+        const val NO_HEADER_KEY = "No prod.keys in the ROMs folder has a header_key to read its title ID with"
         const val WRONG_KEY = "The header_key in prod.keys doesn't open its image, so Loom can't read its title ID"
 
         fun defaultSaveDir(romsRoot: String) = File(romsRoot, DEFAULT_FOLDER)
@@ -193,5 +226,13 @@ class EdenSaves(
             listOf(File(romsRoot, KEYS), File(File(romsRoot, systemFolder), KEYS), File(File(romsRoot, "switch"), KEYS)).distinctBy { it.path }
 
         private const val KEYS = "prod.keys"
+
+        /**
+         * The first of [files] holding a header_key Loom can use, for Settings to say whether Switch
+         * title IDs can be read. Each key is parsed only to tell, and dropped at once.
+         */
+        fun usableKeyFile(files: List<File>): File? = files.filter(File::isFile).firstOrNull { file ->
+            runCatching { SwitchHeaderKey.fromProdKeys(file.toPath())?.use { true } ?: false }.getOrDefault(false)
+        }
     }
 }

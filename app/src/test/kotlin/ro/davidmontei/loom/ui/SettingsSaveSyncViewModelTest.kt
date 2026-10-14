@@ -137,7 +137,24 @@ class SettingsSaveSyncViewModelTest {
         assertThat(storage.edenFound).isEqualTo(File(roms, "saves/Eden").path)
         assertThat(storage.edenProfiles).containsExactly("4E431822D6DEFD527268BA35B5C09533")
         assertThat(storage.prodKeys).isEqualTo(File(roms, "prod.keys").path)
+        assertThat(storage.prodKeysWithoutKey).isFalse()
         assertThat(storage.toString()).doesNotContain("abab") // where the keys are, never what they are
+        vm.viewModelScope.cancel()
+    }
+
+    /** Settings tells a prod.keys Loom can use from one without a header_key, and finds a good one behind a bad one. */
+    @Test fun aProdKeysWithoutAHeaderKeyIsToldApart() = runBlocking<Unit> {
+        File(roms, "prod.keys").writeText("key_area_key_application_00 = ${"cd".repeat(16)}\n")
+        val vm = viewModel()
+        val storage = withTimeout(5_000) { vm.state.first { it.storage.romsRoot != null } }.storage
+        assertThat(storage.prodKeys).isNull()
+        assertThat(storage.prodKeysWithoutKey).isTrue()
+        File(roms, "switch").mkdirs()
+        File(roms, "switch/prod.keys").writeText("header_key = ${"ab".repeat(32)}\n")
+        vm.refreshDevice().join()
+        val found = withTimeout(5_000) { vm.state.first { it.storage.prodKeys != null } }.storage
+        assertThat(found.prodKeys).isEqualTo(File(roms, "switch/prod.keys").path)
+        assertThat(found.prodKeysWithoutKey).isFalse()
         vm.viewModelScope.cancel()
     }
 
