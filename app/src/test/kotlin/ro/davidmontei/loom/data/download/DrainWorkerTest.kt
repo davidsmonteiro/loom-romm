@@ -17,15 +17,11 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.currentTime
-import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
@@ -58,15 +54,19 @@ import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.romm.pairing.PairedCredentials
 import ro.davidmontei.loom.storage.engine.JobPhase
+import ro.davidmontei.loom.storage.engine.PartState
+import ro.davidmontei.loom.storage.plan.NameSanitizer
 import java.io.File
-import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-@OptIn(ExperimentalCoroutinesApi::class)
+/**
+ * The download queue's worker, end to end against a fake RomM. Before a job downloads anything,
+ * RomM is asked for the game again and the job is planned afresh if its files or folder changed:
+ * found by review, checking that only alongside the download let a download finish or fail on a plan
+ * RomM no longer had (the old folder, a file RomM had moved or replaced), retry after retry.
+ */
 @RunWith(AndroidJUnit4::class)
 class DrainWorkerTest {
     private fun job(phase: JobPhase) = DownloadJobEntity(
@@ -82,52 +82,6 @@ class DrainWorkerTest {
         assertThat(DrainWorker.cancelTarget(null)).isNull() // installed meanwhile
     }
 
-    // --- checking a job's plan alongside its download, in virtual time ---
-
-    /** Found by review: a resumed download waited for RomM's answer about its plan, a round trip, before it started. */
-    @Test fun theWorkStartsWithoutWaitingForTheCheck() = runTest {
-        var startedAt = -1L
-        DrainWorker.workWhileChecking(
-            work = { startedAt = currentTime; delay(5_000) },
-            check = { delay(2_000); null },
-            act = { _: String -> error("nothing to act on") },
-        )
-        assertThat(startedAt).isEqualTo(0)
-        assertThat(currentTime).isEqualTo(5_000)
-    }
-
-    @Test fun anAnswerStopsTheWorkBeforeItIsActedOn() = runTest {
-        var finished = false
-        var stoppedAt = -1L
-        var acted: Pair<String, Long>? = null
-        DrainWorker.workWhileChecking(
-            work = { try { delay(10_000); finished = true } finally { stoppedAt = currentTime } },
-            check = { delay(2_000); "changed" },
-            act = { answer -> acted = answer to stoppedAt },
-        )
-        assertThat(finished).isFalse()
-        assertThat(acted).isEqualTo("changed" to 2_000L) // acted on only once the work had stopped
-        assertThat(currentTime).isEqualTo(2_000)
-    }
-
-    /** A download that finishes before RomM answers doesn't keep the queue waiting for the answer. */
-    @Test fun workEndingFirstDropsTheCheck() = runTest {
-        var acted = false
-        DrainWorker.workWhileChecking(work = { delay(1_000) }, check = { delay(10_000); "changed" }, act = { _: String -> acted = true })
-        assertThat(currentTime).isEqualTo(1_000)
-        assertThat(acted).isFalse()
-    }
-
-    @Test fun aCheckThatFailsLeavesTheWorkAlone() = runTest {
-        var finished = false
-        DrainWorker.workWhileChecking(
-            work = { delay(3_000); finished = true },
-            check = { delay(100); throw IOException("RomM can't be reached") },
-            act = { _: String -> error("nothing to act on") },
-        )
-        assertThat(finished).isTrue()
-    }
-
     // --- the worker, end to end ---
 
     @get:Rule val tmp = TemporaryFolder()
@@ -136,18 +90,20 @@ class DrainWorkerTest {
     private val romm = MockWebServer()
     private lateinit var db: LoomDatabase
     private lateinit var settings: SettingsStore
+    private lateinit var mapping: MappingRepository
     private lateinit var server: ActiveServer
     private lateinit var downloads: DownloadRepository
     private lateinit var card: File
 
-    /** What RomM is asked for, in order: "rom" (answered), "file:<id>" (asked for). */
+    /** What RomM is asked for, in order: "rom" (the game's details), "file:<id>" (a file's bytes). */
     private val events = CopyOnWriteArrayList<String>()
     private val romCalls = AtomicInteger()
-    private val fileAsked = CountDownLatch(1)
+    /** The files RomM serves, by id; any other is a 404. */
     private val served = mutableMapOf<Int, ByteArray>()
-    @Volatile private var throttleBytesPer100Ms: Long? = null
-    /** RomM's answers to the plan check (the second time the ROM is fetched): the ROM's files, or null for gone. */
+    /** What RomM lists for the game: its file's id and bytes; from the second time it's asked, [later] when set. */
+    private val original = 400 to ByteArray(600_000) { (it * 7).toByte() }
     @Volatile private var later: Pair<Int, ByteArray>? = null
+    /** RomM no longer has the game, from the second time it's asked. */
     @Volatile private var goneLater = false
 
     private fun sha1(bytes: ByteArray) = MessageDigest.getInstance("SHA-1").digest(bytes).joinToString("") { "%02x".format(it) }
@@ -173,27 +129,21 @@ class DrainWorkerTest {
         })))
     }
 
-    private val original = 400 to ByteArray(600_000) { (it * 7).toByte() }
-
     private val dispatcher = object : Dispatcher() {
         override fun dispatch(request: RecordedRequest): MockResponse {
             val path = request.url.encodedPath
             Regex("""/api/roms/(\d+)/files/content/""").find(path)?.let { m ->
                 val id = m.groupValues[1].toInt()
                 events += "file:$id"
-                fileAsked.countDown()
-                val data = served[id] ?: return MockResponse.Builder().code(404).build()
+                val data = served[id] ?: return MockResponse.Builder().code(404).body("""{"detail":"File not found"}""").build()
                 return MockResponse.Builder().code(200).setHeader("Last-Modified", "Wed, 01 Oct 2026 10:00:00 GMT")
-                    .apply { throttleBytesPer100Ms?.let { throttleBody(it, 100, TimeUnit.MILLISECONDS) } }
                     .body(Buffer().write(data)).build()
             }
             if (path == "/api/roms/10") {
-                val call = romCalls.incrementAndGet()
-                // The plan check: answered only once the download has asked for its file (or after 5 s).
-                if (call > 1) fileAsked.await(5, TimeUnit.SECONDS)
-                val (fileId, data) = if (call > 1) later ?: original else original
                 events += "rom"
-                if (call > 1 && goneLater) return MockResponse.Builder().code(404).body("""{"detail":"Rom not found"}""").build()
+                val later = romCalls.incrementAndGet() > 1
+                if (later && goneLater) return MockResponse.Builder().code(404).body("""{"detail":"Rom not found"}""").build()
+                val (fileId, data) = (if (later) this@DrainWorkerTest.later else null) ?: original
                 return MockResponse.Builder().code(200).setHeader("Content-Type", "application/json").body(rom(fileId, data).toString()).build()
             }
             return MockResponse.Builder().code(404).build()
@@ -225,7 +175,7 @@ class DrainWorkerTest {
         credentials.save(PairedCredentials(romm.url("/"), "rmm_x", "dev-thor", "david", null))
         credentials.current.filterNotNull().first()
         server = ActiveServer(settings, credentials, OkHttpClient(), scope)
-        val mapping = MappingRepository(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "m.preferences_pb") })
+        mapping = MappingRepository(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "m.preferences_pb") })
         downloads = DownloadRepository(db.downloadDao(), db.catalogDao(), server, mapping, settings, StorageVolumes(context),
             QueueKicker(WorkManager.getInstance(context)))
     }
@@ -237,9 +187,13 @@ class DrainWorkerTest {
         ShadowStatFs.reset()
     }
 
-    /** Queues the game as the library does (RomM is asked for its files once), then runs the queue. */
+    /** Queues the game as the library does: RomM is asked for its files once. */
+    private fun queue(): Long = runBlocking {
+        (downloads.enqueue(10) as EnqueueResult.Queued).jobId
+    }
+
+    /** Runs the queue until it's empty or every job is parked. */
     private fun drain(): ListenableWorker.Result = runBlocking {
-        assertThat(downloads.enqueue(10)).isInstanceOf(EnqueueResult.Queued::class.java)
         val worker = TestListenableWorkerBuilder<DrainWorker>(context).setWorkerFactory(object : WorkerFactory() {
             override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) = DrainWorker(
                 appContext, workerParameters, db.downloadDao(), RoomJobStore(db.downloadDao()), downloads, server, StorageVolumes(context),
@@ -249,28 +203,96 @@ class DrainWorkerTest {
         withTimeout(20_000) { worker.doWork() }
     }
 
-    private val installed get() = File(card, "ROMs/snes/Chrono Trigger.sfc")
+    private fun installedAt(folder: String) = File(card, "ROMs/$folder/Chrono Trigger.sfc")
+    private fun job() = runBlocking { db.downloadDao().jobForRom(10) }
 
-    /**
-     * Found by review: a download (a resumed one too) waited for RomM's answer about its plan, the
-     * ROM's full details, before it started. It now asks for its file first.
-     */
-    @Test fun aDownloadStartsBeforeRommAnswersForItsPlan() {
+    @Test fun rommIsAskedForTheGameAgainBeforeItsFileIsDownloaded() {
+        queue()
         assertThat(drain()).isEqualTo(ListenableWorker.Result.success())
-        assertThat(installed.readBytes()).isEqualTo(original.second)
-        // rom (queueing), the file asked for, then the plan check's answer
-        assertThat(events).containsExactly("rom", "file:400", "rom").inOrder()
+        assertThat(installedAt("snes").readBytes()).isEqualTo(original.second)
+        assertThat(events).containsExactly("rom", "rom", "file:400").inOrder() // queueing, the check, the download
     }
 
-    /** RomM no longer has the game: found out while it downloads, which stops, and the job fails. */
-    @Test fun aGameGoneFromRommStopsDownloadingAndFails() {
-        throttleBytesPer100Ms = 20_000 // three seconds for the file
+    /** Found by review: a platform's folder changed after its game was queued, and the game was installed in the old one. */
+    @Test fun aFolderChangedAfterQueueingIsWhereTheGameGoes() {
+        queue()
+        runBlocking { mapping.chooseFolder("snes", "sfc") }
+        drain()
+        assertThat(installedAt("sfc").readBytes()).isEqualTo(original.second)
+        assertThat(installedAt("snes").exists()).isFalse()
+    }
+
+    /** Found by review: RomM gave the game's file a new id after it was queued, and the download failed on the old one's 404. */
+    @Test fun aFileRommMovedAfterQueueingIsDownloadedFromItsNewPlace() {
+        queue()
+        served.remove(original.first) // the old URL is a 404 now
+        later = 401 to original.second
+        served[401] = original.second
+        drain()
+        assertThat(installedAt("snes").readBytes()).isEqualTo(original.second)
+        assertThat(events).containsExactly("rom", "rom", "file:401").inOrder()
+    }
+
+    /** Found by review: RomM's file was replaced after it was queued; Loom downloaded it twice, then failed on the old checksum. */
+    @Test fun aFileReplacedOnRommAfterQueueingIsDownloadedOnce() {
+        queue()
+        val replaced = ByteArray(500_000) { (it * 13).toByte() }
+        served[original.first] = replaced
+        later = original.first to replaced
+        drain()
+        assertThat(installedAt("snes").readBytes()).isEqualTo(replaced)
+        assertThat(events.count { it == "file:400" }).isEqualTo(1)
+    }
+
+    /**
+     * Found by review: a download that failed because RomM had moved its file failed the same way on
+     * every retry. Retry plans it afresh from what RomM has now.
+     */
+    @Test fun retryGetsWhatRommHasNow() {
+        val id = queue()
+        served.remove(original.first) // gone from RomM's disk, though RomM still lists it
+        drain()
+        assertThat(job()!!.phase).isEqualTo(JobPhase.FAILED.name)
+
+        later = 401 to original.second // RomM rescanned and found it under a new id
+        served[401] = original.second
+        runBlocking { downloads.retry(id) }
+        drain()
+        assertThat(installedAt("snes").readBytes()).isEqualTo(original.second)
+        assertThat(job()).isNull()
+    }
+
+    /** A game deleted from RomM after it was queued fails saying so, before anything is downloaded. */
+    @Test fun aGameGoneFromRommFailsBeforeDownloading() {
+        queue()
         goneLater = true
         drain()
-        assertThat(installed.exists()).isFalse()
-        val job = runBlocking { db.downloadDao().jobForRom(10)!! }
-        assertThat(job.phase).isEqualTo(JobPhase.FAILED.name)
-        assertThat(job.failureDetail).isEqualTo("This game is no longer on the RomM server")
+        assertThat(job()!!.phase).isEqualTo(JobPhase.FAILED.name)
+        assertThat(job()!!.failureDetail).isEqualTo("This game is no longer on the RomM server")
+        assertThat(events.filter { it.startsWith("file:") }).isEmpty()
+        assertThat(installedAt("snes").exists()).isFalse()
+    }
+
+    /**
+     * A game Loom had downloaded and checked, and was moving into place when it stopped, is finished
+     * whatever RomM says now: its files were checked against RomM's, and it may already be in the
+     * ROMs folder, which must never be left without its install.
+     */
+    @Test fun aGameBeingMovedIntoPlaceIsFinishedEvenIfRommNoLongerHasIt() {
+        val id = queue()
+        runBlocking {
+            // Where the previous run stopped: the file downloaded and checked, its place in the ROMs folder fixed.
+            val dao = db.downloadDao()
+            val job = dao.job(id)!!
+            File(job.stagingRoot, "jobs/$id-${job.generation}/dl/400.part").apply { parentFile!!.mkdirs() }.writeBytes(original.second)
+            val part = dao.parts(id).single()
+            dao.upsertPart(part.copy(durableBytes = original.second.size.toLong(), digest = sha1(original.second), state = PartState.VERIFIED.name))
+            dao.setFinalEntry(id, "snes/Chrono Trigger.sfc", NameSanitizer.key("snes/Chrono Trigger.sfc"), "FILE")
+        }
+        goneLater = true
+        drain()
+        assertThat(installedAt("snes").readBytes()).isEqualTo(original.second)
+        assertThat(job()).isNull()
     }
 
     // --- queueing a game: RomM is asked for its files first ---
@@ -285,20 +307,6 @@ class DrainWorkerTest {
     @Test fun queueingAGameRommNoLongerHasSaysSo() = runBlocking<Unit> {
         goneLater = true
         romCalls.set(1) // RomM's next answer is the "later" one: gone
-        fileAsked.countDown()
         assertThat(downloads.enqueue(10)).isEqualTo(EnqueueResult.Failed("RomM no longer has this game. Sync the library to update it."))
-    }
-
-    /** RomM's file changed since the game was queued: the download stops, is planned afresh and gets the new file. */
-    @Test fun filesThatChangedOnRommAreDownloadedAfresh() {
-        throttleBytesPer100Ms = 20_000
-        val changed = 401 to ByteArray(300_000) { (it * 13).toByte() }
-        served[changed.first] = changed.second
-        later = changed
-        drain()
-        assertThat(installed.readBytes()).isEqualTo(changed.second)
-        assertThat(events).contains("file:401")
-        assertThat(runBlocking { db.downloadDao().jobForRom(10) }).isNull()
-        assertThat(File(card, ".loom-staging/jobs").listFiles().orEmpty()).isEmpty() // the old plan's bytes are gone
     }
 }
