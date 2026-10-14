@@ -47,6 +47,13 @@ sealed interface ResolvedSave {
     data class NeedsFolder(override val romId: Int, val reason: String) : ResolvedSave
 
     /**
+     * The emulator keeps the game's save in two folders now, each holding a different save (a
+     * Switch game in Eden's console-wide folder and the profile's), and the user hasn't said which
+     * one Loom syncs: [reason] says which is which.
+     */
+    data class Moved(override val romId: Int, val reason: String) : ResolvedSave
+
+    /**
      * Loom can't look right now (the card is out, a folder can't be read): the game sits this run
      * out. Never read as "no save", which could let a download through.
      */

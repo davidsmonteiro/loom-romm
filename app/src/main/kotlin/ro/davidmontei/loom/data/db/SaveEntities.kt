@@ -98,6 +98,12 @@ enum class SaveSyncState {
     CONFLICT,
 
     /**
+     * Eden keeps the game's save in two folders now (its console-wide folder and the profile's),
+     * each holding a different save: the user says which one Loom syncs. The detail says which is which.
+     */
+    MOVED,
+
+    /**
      * Loom can't tell which of the emulator's save folders is the game's (it can't read a Switch
      * game's title ID): the user picks the folder. The detail says why.
      */
@@ -129,6 +135,19 @@ data class SwitchTitleEntity(
      */
     @ColumnInfo(name = "image_fingerprint") val imageFingerprint: String?,
     @ColumnInfo(name = "recorded_at") val recordedAtMs: Long,
+)
+
+/**
+ * The folder the owner chose to sync a Switch game's save from when Eden kept it in two, its
+ * console-wide folder and the profile's ([SaveSyncState.MOVED]). Loom syncs that one and leaves
+ * the other as it is. It stands while it is one of the game's two folders.
+ */
+@Entity(tableName = "synced_folders")
+data class SyncedFolderEntity(
+    @PrimaryKey @ColumnInfo(name = "rom_id") val romId: Int,
+    /** The save unit's folder, e.g. `<Eden>/user/save/0000000000000000/<profile>/<title ID>`. */
+    val folder: String,
+    @ColumnInfo(name = "chosen_at") val chosenAtMs: Long,
 )
 
 enum class SwitchTitleSource {

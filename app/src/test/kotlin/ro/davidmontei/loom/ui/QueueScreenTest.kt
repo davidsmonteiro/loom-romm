@@ -38,6 +38,8 @@ import ro.davidmontei.loom.ui.queue.QueueContent
 import ro.davidmontei.loom.ui.queue.QueueItem
 import ro.davidmontei.loom.ui.queue.QueueUiState
 import ro.davidmontei.loom.ui.queue.transferLine
+import ro.davidmontei.loom.ui.saves.SaveFolderOption
+import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 
 @OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
@@ -52,6 +54,9 @@ class QueueScreenTest {
         override fun cancel(jobId: Long) { calls += "cancel:$jobId" }
         override fun resolveConflict(romId: Int, title: String, choice: ConflictChoice) { calls += "resolve:$romId:$choice" }
         override fun restoreSave(romId: Int, title: String) { calls += "restore:$romId" }
+        override fun askSaveFolder(romId: Int, title: String, emulator: String?) { calls += "askSaveFolder:$romId:$emulator" }
+        override fun chooseSaveFolder(id: String) { calls += "saveFolder:$id" }
+        override fun dismissSaveFolderQuestion() { calls += "dismissSaveFolder" }
     }
 
     companion object {
@@ -467,6 +472,61 @@ class QueueScreenTest {
         rule.onNodeWithTag("synced-1").assertIsFocused()
         repeat(9) { press(Key.DirectionDown) }
         rule.onNodeWithTag("synced-10").assertIsFocused()
+    }
+
+    // --- a conflict over a save folder the user picked ---
+
+    private val wonder = pokemonX.copy(romId = 30, title = "Super Mario Bros Wonder", serverEmulator = "eden", emulator = "eden",
+        reason = "The Thor and RomM each have a different save, and they were never synced", folderChosen = true)
+    private val wonderFolders = SaveFolderQuestion(30, "Super Mario Bros Wonder", "eden", listOf(
+        SaveFolderOption("0100A0B00C0D0000", 2, 4_103, System.currentTimeMillis() - 60_000),
+        SaveFolderOption("01002B300C1D2000", 2, 4_103, System.currentTimeMillis() - 3_600_000),
+    ), current = "01002B300C1D2000")
+
+    /**
+     * A wrong pick of a Switch game's save folder ends in a conflict where neither save is the one to
+     * keep, and the queue offered only that choice. Left of Skip, apart from the answers, is Change
+     * save folder, which answers nothing: the conflict stays as it is until the folder question is settled.
+     */
+    @Test fun aConflictOverAPickedSaveFolderCanChangeTheFolder() {
+        show(sample.copy(conflicts = listOf(wonder)))
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Skip").assertIsFocused()
+        press(Key.DirectionLeft)
+        button("Change save folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("askSaveFolder:30:eden")
+        rule.onNodeWithText("Super Mario Bros Wonder: which save to keep?").assertDoesNotExist()
+    }
+
+    @Test fun onlyAPickedSaveFolderIsOfferedThere() {
+        show(withSaves)
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Change save folder").assertDoesNotExist()
+        press(Key.DirectionLeft)
+        rule.onNodeWithText("Skip").assertIsFocused() // nothing left of it
+    }
+
+    /** The same question as in the game's details: focus on the newest folder, and A takes the one focused. */
+    @Test fun theSaveFolderQuestionInTheQueueIsAnsweredByPad() {
+        show(sample.copy(conflicts = listOf(wonder)))
+        update { it.copy(saveFolderQuestion = wonderFolders) }
+        rule.onNodeWithText("Which Eden save folder is Super Mario Bros Wonder's?").assertExists()
+        rule.onNodeWithTag("save-folder-0100A0B00C0D0000", useUnmergedTree = true).assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("saveFolder:0100A0B00C0D0000")
+    }
+
+    /** B closes the question, changing nothing, and focus is back on the conflict it was asked from. */
+    @Test fun bClosesTheSaveFolderQuestionBackOnTheConflict() {
+        show(sample.copy(conflicts = listOf(wonder)))
+        press(Key.DirectionCenter); press(Key.DirectionLeft); press(Key.DirectionCenter) // Change save folder
+        update { it.copy(saveFolderQuestion = wonderFolders) }
+        back()
+        assertThat(calls).containsExactly("askSaveFolder:30:eden", "dismissSaveFolder").inOrder()
+        update { it.copy(saveFolderQuestion = null) }
+        rule.onNodeWithText("Which Eden save folder is Super Mario Bros Wonder's?").assertDoesNotExist()
+        rule.onNodeWithTag("conflict-30").assertIsFocused()
     }
 
     @Test fun aMessageSaysHowAnAnswerWent() {

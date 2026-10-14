@@ -40,6 +40,7 @@ import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.saves.EdenSaves
+import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.ui.library.FolderQuestion
 import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.GameItem
@@ -49,8 +50,8 @@ import ro.davidmontei.loom.ui.library.LibraryContent
 import ro.davidmontei.loom.ui.library.LibraryFilter
 import ro.davidmontei.loom.ui.library.LibraryHeader
 import ro.davidmontei.loom.ui.library.LibraryUiState
-import ro.davidmontei.loom.ui.library.SaveFolderOption
-import ro.davidmontei.loom.ui.library.SaveFolderQuestion
+import ro.davidmontei.loom.ui.saves.SaveFolderOption
+import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 
 @OptIn(ExperimentalTestApi::class)
 /**
@@ -76,6 +77,7 @@ class LibraryScreenTest {
         override fun offload(game: GameItem) { calls += "offload:${game.id}" }
         override fun retry(game: GameItem) { calls += "retry:${game.id}" }
         override fun cancel(game: GameItem) { calls += "cancel:${game.id}" }
+        override fun lookAtSave(game: GameItem) { calls += "look:${game.id}" }
         override fun uploadSave(game: GameItem) { calls += "upload:${game.id}" }
         override fun restoreSave(game: GameItem) { calls += "restore:${game.id}" }
         override fun openQueue(focusJobId: Long?, focusConflictRomId: Int?) {
@@ -88,7 +90,8 @@ class LibraryScreenTest {
         override fun showSuggestedFolders() { calls += "suggestedFolders" }
         override fun dismissFolderQuestion() { calls += "dismissFolder" }
         override fun askSaveFolder(game: GameItem) { calls += "askSaveFolder:${game.id}" }
-        override fun chooseSaveFolder(titleId: String) { calls += "saveFolder:$titleId" }
+        override fun askSyncedFolder(game: GameItem) { calls += "askSyncedFolder:${game.id}" }
+        override fun chooseSaveFolder(id: String) { calls += "saveFolder:$id" }
         override fun dismissSaveFolderQuestion() { calls += "dismissSaveFolder" }
     }
 
@@ -658,6 +661,7 @@ class LibraryScreenTest {
             SaveSyncState.LOCAL_MISSING to (listOf(restore) to listOf(upload, restore)),
             SaveSyncState.CONFLICT to (listOf(choose) to listOf(choose)),
             SaveSyncState.NEEDS_FOLDER to (listOf(folder) to listOf(folder)),
+            SaveSyncState.MOVED to (listOf(folder) to listOf(folder)),
             SaveSyncState.UNSUPPORTED to (emptyList<String>() to listOf(upload)),
             SaveSyncState.ERROR to (listOf(upload) to listOf(upload)),
         )
@@ -714,6 +718,95 @@ class LibraryScreenTest {
         rule.onNodeWithText("Close").assertIsFocused()
     }
 
+    // --- the look at a game's save as its details open ---
+
+    private fun looks() = calls.filter { it.startsWith("look") }
+
+    private fun withLook(save: GameSave, look: SaveLook?) = games.first { it.id == 1 }.copy(save = save.copy(look = look))
+
+    /**
+     * Found on the Thor: the details said "in sync" for a save moved away by hand, until the next
+     * background run. They look at the save as they open: once, not each time they're drawn again.
+     */
+    @Test fun openingTheDetailsLooksAtTheSaveOnce() {
+        state = withSave(1, azahar(SaveSyncState.IN_SYNC))
+        show()
+        press(Key.DirectionCenter)
+        assertThat(looks()).containsExactly("look:1")
+        changeGame(1, withLook(azahar(SaveSyncState.IN_SYNC), SaveLook.Looking))
+        changeGame(1, withLook(azahar(SaveSyncState.LOCAL_MISSING), null))
+        assertThat(looks()).containsExactly("look:1")
+
+        back()
+        press(Key.DirectionCenter) // opened again: whether that's too soon to look again is the repository's call
+        assertThat(looks()).containsExactly("look:1", "look:1")
+    }
+
+    /** Only an installed game on a platform whose saves Loom syncs is looked at; one installed while its details are open, then. */
+    @Test fun onlyAnInstalledGameWhoseSavesLoomSyncsIsLookedAt() {
+        state = withSave(1, GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Loom syncs 3DS and Switch saves only, for now", null))
+        show()
+        press(Key.DirectionCenter) // Chrono Trigger, on a platform Loom doesn't sync saves for
+        rule.onNodeWithText("Remove from device").assertExists()
+        back()
+        press(Key.DirectionRight); press(Key.DirectionCenter) // EarthBound, not on the device
+        rule.onNodeWithText("Download").assertExists()
+        assertThat(looks()).isEmpty()
+
+        // Its download finishes while the details are open: now there's a save to look at.
+        changeGame(2, games.first { it.id == 2 }.copy(state = InstallState.INSTALLED, installPath = "n3ds/EarthBound.3ds", save = azahar(null)))
+        assertThat(looks()).containsExactly("look:2")
+    }
+
+    /** While Loom looks, the details say so where the words move nothing; the answer moves no focus but a vanished button's. */
+    @Test fun whileTheSaveIsLookedAtNothingMovesAndFocusStaysPut() {
+        state = withSave(1, azahar(SaveSyncState.IN_SYNC))
+        show()
+        press(Key.DirectionCenter)
+        fun bounds() = listOf(rule.onNodeWithTag("save-line", useUnmergedTree = true), rule.onNodeWithText("Close"), rule.onNodeWithText("Remove from device"))
+            .map { it.fetchSemanticsNode().boundsInRoot }
+        val idle = bounds()
+
+        changeGame(1, withLook(azahar(SaveSyncState.IN_SYNC), SaveLook.Looking))
+        rule.onNodeWithTag("save-look", useUnmergedTree = true).assertTextEquals("Checking the save…")
+        assertThat(bounds()).isEqualTo(idle) // the line and the buttons where they were
+        rule.onNodeWithText("Close").assertIsFocused()
+
+        // The save was moved away: Restore server save appears, and focus stays on Close.
+        changeGame(1, withLook(azahar(SaveSyncState.LOCAL_MISSING), null))
+        rule.onNodeWithTag("save-line", useUnmergedTree = true).assertTextEquals("Save: missing on the Thor; RomM has a copy")
+        rule.onNodeWithText("Restore server save").assertExists()
+        rule.onNodeWithText("Checking the save…").assertDoesNotExist()
+        rule.onNodeWithText("Close").assertIsFocused()
+    }
+
+    /** A save button the answer keeps keeps focus; one it takes away hands focus back to the details' first button. */
+    @Test fun aSaveButtonKeepsFocusThroughTheLook() {
+        state = withSave(1, azahar(null))
+        show()
+        press(Key.DirectionCenter); press(Key.DirectionUp)
+        rule.onNodeWithText("Upload save").assertIsFocused()
+        changeGame(1, withLook(azahar(null), SaveLook.Looking))
+        rule.onNodeWithText("Upload save").assertIsFocused()
+        changeGame(1, withLook(azahar(SaveSyncState.LOCAL_NEWER), null))
+        rule.onNodeWithText("Upload save").assertIsFocused()
+        changeGame(1, withLook(azahar(SaveSyncState.SERVER_NEWER), null))
+        rule.onNodeWithText("Upload save").assertDoesNotExist()
+        rule.onNodeWithText("Close").assertIsFocused()
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Restore server save").assertIsFocused()
+    }
+
+    /** Without RomM, the line is the Thor's side as it is now, and the details say RomM's wasn't checked. */
+    @Test fun aLookWithoutRommSaysOnlyTheThorWasChecked() {
+        state = withSave(1, azahar(SaveSyncState.IN_SYNC))
+        show()
+        press(Key.DirectionCenter)
+        changeGame(1, withLook(azahar(SaveSyncState.LOCAL_MISSING), SaveLook.ThorOnly("Couldn't reach RomM")))
+        rule.onNodeWithTag("save-line", useUnmergedTree = true).assertTextEquals("Save: missing on the Thor; RomM has a copy")
+        rule.onNodeWithTag("save-look", useUnmergedTree = true).assertTextEquals("Couldn't reach RomM: checked the Thor's side only")
+    }
+
     // --- a Switch game's save, in Eden ---
 
     private fun eden(state: SaveSyncState?, detail: String? = null, chosen: Boolean = false) =
@@ -760,6 +853,75 @@ class LibraryScreenTest {
         assertThat(calls).contains("askSaveFolder:1")
     }
 
+    /**
+     * Found on the Thor: a game whose save Eden moved to the profile's folder, while the console-wide
+     * one still held the save Loom synced, stopped with nothing to do but move files by hand. Its
+     * details now ask which folder Loom syncs.
+     */
+    @Test fun aSaveInTwoFoldersAsksWhichOneToSync() {
+        state = withSave(1, eden(SaveSyncState.MOVED, "Eden now keeps this game's save in its profile folder"))
+        show()
+        press(Key.DirectionCenter)
+        rule.onNodeWithTag("save-line", useUnmergedTree = true)
+            .assertTextEquals("Save: in two Eden folders, each holding a different save. Choose which one Loom syncs.")
+        rule.onNodeWithText("Upload save").assertDoesNotExist()
+        rule.onNodeWithText("Close").assertIsFocused()
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Choose save folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("askSyncedFolder:1")
+        assertThat(calls).doesNotContain("askSaveFolder:1")
+    }
+
+    /** Once the owner said which folder, the details can change it; a chosen title folder asks that first (and this again). */
+    @Test fun aChosenSyncedFolderCanBeChanged() {
+        state = withSave(1, eden(SaveSyncState.IN_SYNC).copy(syncedFolderChosen = true))
+        show()
+        press(Key.DirectionCenter); press(Key.DirectionUp)
+        rule.onNodeWithText("Change save folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("askSyncedFolder:1")
+
+        changeGame(1, games.first { it.id == 1 }.copy(save = eden(SaveSyncState.IN_SYNC, chosen = true).copy(syncedFolderChosen = true)))
+        press(Key.DirectionCenter); press(Key.DirectionUp); press(Key.DirectionCenter)
+        assertThat(calls).contains("askSaveFolder:1")
+    }
+
+    private val consoleWideFolder = "/storage/6365-3230/ROMs/saves/Eden/user/save/0000000000000000/${"0".repeat(32)}/010015100B514000"
+    private val profileFolder = "/storage/6365-3230/ROMs/saves/Eden/user/save/0000000000000000/4E431822D6DEFD527268BA35B5C09533/010015100B514000"
+    private val bothFolders get() = SaveFolderQuestion(
+        romId = 1, title = "Chrono Trigger", emulator = "eden",
+        options = listOf(
+            SaveFolderOption(profileFolder, 2, 1_200_000, now - 60_000, name = "Profile folder"),
+            SaveFolderOption(consoleWideFolder, 4, 300_000, now - 86_400_000, name = "Console-wide folder"),
+        ),
+        current = consoleWideFolder, kind = SaveFolderQuestion.Kind.SYNCED,
+    )
+
+    /** Both folders, newest first with what each holds, the one synced so far marked; A takes the one focused. */
+    @Test fun theSyncedFolderQuestionShowsBothFolders() {
+        state = state.copy(saveFolderQuestion = bothFolders)
+        show()
+        rule.onNodeWithText("Which Eden folder should Loom sync Chrono Trigger's save from?").assertExists()
+        rule.onNodeWithText("Eden keeps this game's save in two folders, its console-wide one and the profile's, and they hold different " +
+            "saves. Loom syncs the one you pick from now on, and leaves the other as it is.").assertExists()
+        rule.onNodeWithText("Profile folder", useUnmergedTree = true).assertExists()
+        rule.onNodeWithText("4 files · 293 KB · synced so far", substring = true, useUnmergedTree = true).assertExists()
+        rule.onNodeWithTag("save-folder-$profileFolder", useUnmergedTree = true).assertIsFocused()
+        press(Key.DirectionRight)
+        rule.onNodeWithTag("save-folder-$consoleWideFolder", useUnmergedTree = true).assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("saveFolder:$consoleWideFolder")
+    }
+
+    @Test fun bLeavesTheSyncedFolderQuestionChoosingNothing() {
+        state = state.copy(saveFolderQuestion = bothFolders)
+        show()
+        back()
+        assertThat(calls).contains("dismissSaveFolder")
+        assertThat(calls.filter { it.startsWith("saveFolder:") }).isEmpty()
+    }
+
     @Test fun aSaveFolderLoomReadItselfCantBeChanged() {
         state = withSave(1, eden(SaveSyncState.LOCAL_NEWER))
         show()
@@ -780,7 +942,7 @@ class LibraryScreenTest {
 
     private val now = System.currentTimeMillis()
     private val wonderQuestion get() = SaveFolderQuestion(
-        game = games[0].copy(save = eden(SaveSyncState.NEEDS_FOLDER, EdenSaves.NO_KEYS)),
+        romId = 1, title = "Chrono Trigger", emulator = "eden",
         options = listOf(SaveFolderOption("010015100B514000", 4, 1_200_000, now - 60_000), SaveFolderOption("01001F5010DFA000", 2, 300_000, now - 86_400_000)),
         current = null,
     )

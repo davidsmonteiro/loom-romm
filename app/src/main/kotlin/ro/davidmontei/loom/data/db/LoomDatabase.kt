@@ -17,8 +17,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SaveConflictEntity::class,
         SaveUnitEntity::class,
         SwitchTitleEntity::class,
+        SyncedFolderEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class LoomDatabase : RoomDatabase() {
@@ -77,6 +78,19 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
         db.execSQL(
             "CREATE TABLE IF NOT EXISTS `switch_titles` (`rom_id` INTEGER NOT NULL, `title_id` TEXT NOT NULL, " +
                 "`source` TEXT NOT NULL, `image_fingerprint` TEXT, `recorded_at` INTEGER NOT NULL, PRIMARY KEY(`rom_id`))",
+        )
+    }
+}
+
+/**
+ * Version 5: the folder the owner chose to sync a Switch game's save from, when Eden kept it in
+ * both its console-wide folder and the profile's.
+ */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `synced_folders` (`rom_id` INTEGER NOT NULL, `folder` TEXT NOT NULL, " +
+                "`chosen_at` INTEGER NOT NULL, PRIMARY KEY(`rom_id`))",
         )
     }
 }

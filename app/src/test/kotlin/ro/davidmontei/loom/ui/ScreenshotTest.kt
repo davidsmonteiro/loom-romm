@@ -113,6 +113,7 @@ object NoopLibraryActions : ro.davidmontei.loom.ui.library.LibraryActions {
     override fun offload(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
     override fun retry(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
     override fun cancel(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
+    override fun lookAtSave(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
     override fun uploadSave(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
     override fun restoreSave(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
     override fun openQueue(focusJobId: Long?, focusConflictRomId: Int?) = Unit
@@ -123,7 +124,8 @@ object NoopLibraryActions : ro.davidmontei.loom.ui.library.LibraryActions {
     override fun showSuggestedFolders() = Unit
     override fun dismissFolderQuestion() = Unit
     override fun askSaveFolder(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
-    override fun chooseSaveFolder(titleId: String) = Unit
+    override fun askSyncedFolder(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
+    override fun chooseSaveFolder(id: String) = Unit
     override fun dismissSaveFolderQuestion() = Unit
 }
 
@@ -134,4 +136,7 @@ object NoopQueueActions : ro.davidmontei.loom.ui.queue.QueueActions {
     override fun cancel(jobId: Long) = Unit
     override fun resolveConflict(romId: Int, title: String, choice: ro.davidmontei.loom.data.saves.ConflictChoice) = Unit
     override fun restoreSave(romId: Int, title: String) = Unit
+    override fun askSaveFolder(romId: Int, title: String, emulator: String?) = Unit
+    override fun chooseSaveFolder(id: String) = Unit
+    override fun dismissSaveFolderQuestion() = Unit
 }

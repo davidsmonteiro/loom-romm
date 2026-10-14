@@ -45,6 +45,8 @@ import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.RomEntity
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.db.SaveUnitEntity
+import ro.davidmontei.loom.data.db.SwitchTitleEntity
+import ro.davidmontei.loom.data.db.SwitchTitleSource
 import ro.davidmontei.loom.data.db.VerifiedBy
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.download.QueueKicker
@@ -53,6 +55,7 @@ import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.saves.EdenSaves
+import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.SaveSyncEngine
 import ro.davidmontei.loom.data.saves.SaveUnitResolver
@@ -64,6 +67,7 @@ import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.LibraryViewModel
 import ro.davidmontei.loom.ui.library.saveLine
 import ro.davidmontei.loom.ui.library.toItem
+import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 import java.io.File
 
 /** A platform's first download: where its games go, decided from the card or asked. */
@@ -227,7 +231,7 @@ class LibraryViewModelTest {
 
         vm.askSaveFolder(game).join()
         val question = vm.saveFolderQuestion.value!!
-        assertThat(question.options.map { it.titleId }).containsExactly("0100AAAA00000000")
+        assertThat(question.options.map { it.id }).containsExactly("0100AAAA00000000")
         assertThat(question.options.single().fileCount).isEqualTo(1)
         assertThat(question.current).isNull()
 
@@ -237,6 +241,41 @@ class LibraryViewModelTest {
         assertThat(db.saveDao().switchTitle(40)!!.titleId).isEqualTo("0100AAAA00000000")
         assertThat(withTimeout(5_000) { message.await() }).startsWith("Wonder's save is Eden's 0100AAAA00000000 folder")
         assertThat(gamesOnScreen { games -> games.single().save?.folderChosen == true }.single().save!!.folderChosen).isTrue()
+    }
+
+    /**
+     * A Switch game whose save Eden keeps in its console-wide folder and the profile's: its details
+     * ask which one Loom syncs, and the answer is the game's, remembered, so they can change it later.
+     */
+    @Test fun theSyncedFolderQuestionListsBothFoldersAndRemembersTheAnswer() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(4, "switch", "switch", "Nintendo Switch", "Nintendo Switch", 1, "t")))
+        db.catalogDao().upsertRoms(listOf(rom(40, 4, "switch", "Wonder", "Wonder.xci")))
+        installed(40, 4, "switch/Wonder.xci")
+        db.saveDao().upsertSwitchTitle(SwitchTitleEntity(40, "0100AAAA00000000", SwitchTitleSource.OWNER, null, 0))
+        val users = File(roms, "saves/Eden/user/save/0000000000000000")
+        val profile = File(users, "4E431822D6DEFD527268BA35B5C09533/0100AAAA00000000").apply { mkdirs() }
+        File(profile, "game_data.sav").writeBytes(ByteArray(64))
+        val consoleWide = File(users, "${"0".repeat(32)}/0100AAAA00000000").apply { mkdirs() }
+        File(consoleWide, "device.bin").writeBytes(ByteArray(32))
+        File(consoleWide, "device.bin").setLastModified(System.currentTimeMillis() - 86_400_000)
+        db.saveDao().upsertUnit(SaveUnitEntity(40, "eden", null, null, 0, 0, null, null, SaveSyncState.MOVED, "Eden now keeps it elsewhere", 0))
+
+        vm.selectPlatform(4)
+        val game = gamesOnScreen { games -> games.any { it.save != null } }.single()
+        vm.askSyncedFolder(game).join()
+        val question = vm.saveFolderQuestion.value!!
+        assertThat(question.kind).isEqualTo(SaveFolderQuestion.Kind.SYNCED)
+        assertThat(question.options.map { it.name to it.fileCount }).containsExactly("Profile folder" to 1, "Console-wide folder" to 1).inOrder()
+        assertThat(question.options.map { it.id }).containsExactly(profile.path, consoleWide.path).inOrder()
+
+        val message = async { vm.messages.first() }
+        vm.chooseSaveFolder(profile.path).join()
+        assertThat(vm.saveFolderQuestion.value).isNull()
+        assertThat(db.saveDao().syncedFolder(40)!!.folder).isEqualTo(profile.path)
+        assertThat(withTimeout(5_000) { message.await() })
+            .startsWith("Loom now syncs Wonder's save from Eden's profile folder, and leaves the other as it is")
+        assertThat(gamesOnScreen { games -> games.single().save?.syncedFolderChosen == true }.single().save!!.syncedFolderChosen).isTrue()
+        assertThat(consoleWide.resolve("device.bin").exists() && profile.resolve("game_data.sav").exists()).isTrue()
     }
 
     /** The details' words for a save depend on whether Loom uploads it by itself. */
@@ -251,6 +290,21 @@ class LibraryViewModelTest {
         settings.setAutoUploadSaves(false)
         val off = gamesOnScreen { games -> games.any { it.save?.autoUpload == false } }
         assertThat(off.single().save).isEqualTo(GameSave(supported = true, SaveSyncState.WRITING, null, "azahar", autoUpload = false))
+    }
+
+    /** A game's details look at its save: the games on screen carry how that look went (here: Loom isn't paired). */
+    @Test fun aLookAtASaveReachesTheGamesDetails() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(3, "3ds", "3ds", "Nintendo 3DS", "Nintendo 3DS", 1, "t")))
+        db.catalogDao().upsertRoms(listOf(rom(30, 3, "3ds", "Pokemon X", "Pokemon X.3ds")))
+        installed(30, 3, "n3ds/Pokemon X.3ds")
+        vm.selectPlatform(3)
+        val game = gamesOnScreen { games -> games.any { it.save != null } }.single()
+        assertThat(game.save!!.look).isNull()
+
+        vm.lookAtSave(game)
+
+        val looked = gamesOnScreen { games -> games.single().save?.look is SaveLook.ThorOnly }.single()
+        assertThat(looked.save!!.look).isEqualTo(SaveLook.ThorOnly("Couldn't check with RomM"))
     }
 
     /** Upload save and Restore server save say they started, then how it went (here: Loom isn't paired). */

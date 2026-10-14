@@ -30,9 +30,10 @@ import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.data.saves.EdenSaves
+import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.ui.library.FolderQuestion
-import ro.davidmontei.loom.ui.library.SaveFolderOption
-import ro.davidmontei.loom.ui.library.SaveFolderQuestion
+import ro.davidmontei.loom.ui.saves.SaveFolderOption
+import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.InstallState
@@ -243,6 +244,11 @@ class FitsTheScreenTest {
             "00000000000000000000000000000000/00000000000000000000000000000000/title/00040000/0011c400/data (Permission denied)", "azahar")
         state = state.copy(games = listOf(game.copy(save = failed)))
         assertThat(overflow(title)).isEqualTo(0f)
+        // A look that couldn't ask RomM says so in full beside the buttons.
+        state = state.copy(games = listOf(game.copy(save = failed.copy(look = SaveLook.ThorOnly("RomM rejected Loom's token")))))
+        assertThat(overflow(title)).isEqualTo(0f)
+        assertThat(cutShort("checked the Thor's side only")).isFalse()
+        rule.saveScreenshot("library-details-save-look")
     }
 
     /**
@@ -273,10 +279,39 @@ class FitsTheScreenTest {
         val game = GameItem(40, title, 16_300_000_000, null, listOf("World"), InstallState.INSTALLED, null, null, null, adopted = true,
             removedOnServer = false, installPath = "switch/$title.xci", save = GameSave(true, SaveSyncState.NEEDS_FOLDER, EdenSaves.NO_KEYS, "eden"))
         val options = (1..12).map { SaveFolderOption("0100%012X".format(it * 0x1000L), 4, 1_200_000, System.currentTimeMillis() - it * 3_600_000L) }
-        val state = LibraryScreenTest().state.copy(games = listOf(game), saveFolderQuestion = SaveFolderQuestion(game, options, current = null))
+        val state = LibraryScreenTest().state.copy(games = listOf(game), saveFolderQuestion = SaveFolderQuestion(40, title, "eden", options, current = null))
         rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
         assertThat(overflow("Which Eden save folder is $title's?")).isEqualTo(0f)
         rule.saveScreenshot("library-save-folder-question")
+    }
+
+    /** Which of a game's two Eden folders Loom syncs: the question in full beside both folders, from details that fit too. */
+    @Test fun theSyncedFolderQuestionFits() {
+        val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"
+        val moved = GameSave(true, SaveSyncState.MOVED, "Eden now keeps this game's save in its profile folder", "eden")
+        val game = GameItem(40, title, 16_300_000_000, null, listOf("World"), InstallState.INSTALLED, null, null, null, adopted = true,
+            removedOnServer = false, installPath = "switch/$title.xci", save = moved)
+        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game)))
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("game-40").performClick()
+        assertThat(overflow(title)).isEqualTo(0f)
+        assertThat(cutShort("Choose which one Loom syncs.")).isFalse()
+
+        val eden = "/storage/6365-3230/ROMs/saves/Eden/user/save/0000000000000000"
+        val question = SaveFolderQuestion(40, title, "eden", listOf(
+            SaveFolderOption("$eden/4E431822D6DEFD527268BA35B5C09533/0100F2C0115B6000", 12, 41_000_000, System.currentTimeMillis() - 60_000,
+                name = "Profile folder"),
+            SaveFolderOption("$eden/${"0".repeat(32)}/0100F2C0115B6000", 3, 9_000_000, System.currentTimeMillis() - 86_400_000,
+                name = "Console-wide folder"),
+        ), current = "$eden/${"0".repeat(32)}/0100F2C0115B6000", kind = SaveFolderQuestion.Kind.SYNCED)
+        rule.onNodeWithText("Close").performClick() // as Choose save folder does
+        state = state.copy(saveFolderQuestion = question)
+        assertThat(overflow("Which Eden folder should Loom sync $title's save from?")).isEqualTo(0f)
+        rule.saveScreenshot("library-synced-folder-question")
+        // When it changed, then what it holds: a line each, in full.
+        assertThat(lineCount("synced so far")).isEqualTo(2)
+        assertThat(ellipsized("synced so far")).isFalse()
     }
 
     /** A save conflict's choice at its tallest: a long title, the longest reason, and RomM's side in full. */
@@ -289,6 +324,20 @@ class FitsTheScreenTest {
         rule.onNodeWithTag("conflict-7").performClick()
         assertThat(overflow("$title: which save to keep?")).isEqualTo(0f)
         rule.saveScreenshot("queue-conflict-choice")
+    }
+
+    /** The same, for a Switch game whose save folder the user picked: Change save folder fits beside the answers. */
+    @Test fun theSaveConflictChoiceWithChangeSaveFolderFits() {
+        val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"
+        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = conflictReason(SyncDecision.SERVER_WENT_BACK.name),
+            serverEmulator = "eden", emulator = "eden", serverDevice = "AYN Odin 2 Portal (Argosy)", folderChosen = true)
+        rule.setContent { LoomTestTheme { QueueContent(QueueScreenTest.sample.copy(conflicts = listOf(conflict)), NoopQueueActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("conflict-7").performClick()
+        rule.onNodeWithText("Change save folder").assertExists()
+        assertThat(overflow("$title: which save to keep?")).isEqualTo(0f)
+        assertThat(cutShort("Change save folder picks again.")).isFalse()
+        rule.saveScreenshot("queue-conflict-choice-change-folder")
     }
 
     /** The editor with arcade's other folders under the field, and what the card holds of each. */
