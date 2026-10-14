@@ -217,8 +217,8 @@ fun LoomRow(
 }
 
 @Composable
-fun LoomSwitchRow(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit, subtitle: String? = null) {
-    LoomRow(title = title, subtitle = subtitle, onClick = { onCheckedChange(!checked) }, trailing = {
+fun LoomSwitchRow(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit, subtitle: String? = null, subtitleLines: Int = 3) {
+    LoomRow(title = title, subtitle = subtitle, subtitleLines = subtitleLines, onClick = { onCheckedChange(!checked) }, trailing = {
         val shape = RoundedCornerShape(50)
         Box(
             Modifier.size(width = 52.dp, height = 30.dp)

@@ -39,6 +39,14 @@ class SaveWordingTest {
         assertThat(line(SaveSyncState.ERROR, "Couldn't read the save")).isEqualTo("Save: the last sync failed. Couldn't read the save")
     }
 
+    /** With automatic upload off nothing uploads by itself: the details don't promise it, and name what does. */
+    @Test fun withAutomaticUploadOffTheDetailsNameUploadSave() {
+        fun off(state: SaveSyncState) = saveLine(GameSave(supported = true, state, null, "azahar", autoUpload = false))
+        assertThat(off(SaveSyncState.WRITING)).isEqualTo("Save: newer on the Thor; Upload save sends it once Azahar has left it alone for a minute")
+        assertThat(off(SaveSyncState.LOCAL_NEWER)).isEqualTo("Save: newer on the Thor; Upload save sends it")
+        assertThat(off(SaveSyncState.IN_SYNC)).isEqualTo("Save: in sync with RomM")
+    }
+
     @Test fun eachConflictSaysWhy() {
         val reasons = SyncDecision.entries.filter { it.outcome == SyncOutcome.CONFLICT }
             .associateWith { conflictReason(it.name) }

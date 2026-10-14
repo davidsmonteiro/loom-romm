@@ -42,28 +42,31 @@ data class GameSave(
     val detail: String?,
     /** The emulator id the save is synced as, once known. */
     val emulator: String?,
+    /** Whether Loom uploads a changed save by itself (automatic upload); off, only Upload save does. */
+    val autoUpload: Boolean = true,
 )
 
 /**
  * Adds where the game's save stands, once it's installed: [unit] (null before Loom first looked)
- * on a platform Loom syncs saves for, else why it doesn't.
+ * on a platform Loom syncs saves for, else why it doesn't. [autoUpload]: the automatic upload setting.
  */
-fun GameItem.withSave(platformSlug: String, unit: SaveUnitEntity?): GameItem = copy(
+fun GameItem.withSave(platformSlug: String, unit: SaveUnitEntity?, autoUpload: Boolean = true): GameItem = copy(
     save = when {
         state != InstallState.INSTALLED -> null
         !SaveUnitResolver.supportsPlatform(platformSlug) ->
             GameSave(supported = false, SaveSyncState.UNSUPPORTED, SaveUnitResolver.unsupportedReason(platformSlug), emulator = null)
-        else -> GameSave(supported = true, unit?.state, unit?.detail, unit?.emulator)
+        else -> GameSave(supported = true, unit?.state, unit?.detail, unit?.emulator, autoUpload)
     },
 )
 
-/** The details' line about a game's save. */
+/** The details' line about a game's save. With automatic upload off, nothing uploads by itself: it names Upload save. */
 fun saveLine(save: GameSave): String = "Save: " + when (save.state) {
     null -> "not checked yet"
     SaveSyncState.IN_SYNC -> "in sync with RomM"
     SaveSyncState.NO_SAVE -> "none yet"
-    SaveSyncState.LOCAL_NEWER -> "newer on the Thor"
-    SaveSyncState.WRITING -> "newer on the Thor; Loom uploads it once ${emulatorName(save.emulator)} has left it alone for a minute"
+    SaveSyncState.LOCAL_NEWER -> if (save.autoUpload) "newer on the Thor" else "newer on the Thor; Upload save sends it"
+    SaveSyncState.WRITING -> "newer on the Thor; ${if (save.autoUpload) "Loom uploads" else "Upload save sends"} it once " +
+        "${emulatorName(save.emulator)} has left it alone for a minute"
     SaveSyncState.SERVER_NEWER -> "newer on RomM"
     SaveSyncState.LOCAL_MISSING -> "missing on the Thor; RomM has a copy"
     SaveSyncState.CONFLICT -> "changed on the Thor and on RomM. Choose which to keep."

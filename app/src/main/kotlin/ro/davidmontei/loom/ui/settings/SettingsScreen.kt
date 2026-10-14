@@ -536,8 +536,10 @@ private fun SaveSyncSection(state: SettingsUiState, actions: SettingsActions, mo
     SectionTop {
         Box(first) {
             LoomSwitchRow("Upload saves automatically", settings?.autoUploadSaves ?: true, actions::setAutoUploadSaves,
-                subtitle = "Loom uploads a 3DS save once Azahar has left it alone for a minute: every 15 minutes, and when Loom opens. " +
-                    "Saves from RomM always wait for you.")
+                subtitle = "Every 15 minutes and when Loom opens: uploads the 3DS saves Azahar has left alone for a minute, " +
+                    "and tells you of conflicts and newer saves on RomM. Off, Loom only looks when you press Upload save. " +
+                    "Saves from RomM always wait for you.",
+                subtitleLines = 4)
         }
         val last = settings?.lastSaveSync
         Text(

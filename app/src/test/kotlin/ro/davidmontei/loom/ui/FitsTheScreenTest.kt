@@ -3,7 +3,9 @@ package ro.davidmontei.loom.ui
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -81,6 +83,14 @@ class FitsTheScreenTest {
         return rule.onNodeWithTag("settings-content").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].maxValue()
     }
 
+    /** Whether the text holding [text] is cut short: an ellipsis, or lines left out. */
+    private fun cutShort(text: String): Boolean {
+        val node = rule.onNode(hasText(text, substring = true), useUnmergedTree = true).fetchSemanticsNode()
+        val layouts = mutableListOf<TextLayoutResult>()
+        node.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+        return layouts.single().hasVisualOverflow
+    }
+
     /** Found by audit: with the plain-HTTP warning showing, the Server step scrolled and cut off its title. */
     @Test fun theServerStepFitsWithTheHttpWarning() {
         val state = OnboardingState(
@@ -124,6 +134,7 @@ class FitsTheScreenTest {
         rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample.copy(settings = settings), SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
+        assertThat(cutShort("Saves from RomM always wait for you.")).isFalse() // the switch's explanation, in full
         rule.saveScreenshot("settings-saves-tallest")
     }
 

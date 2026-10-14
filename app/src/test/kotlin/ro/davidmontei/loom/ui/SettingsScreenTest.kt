@@ -409,6 +409,8 @@ class SettingsScreenTest {
     @Test fun aTurnsAutomaticUploadOff() {
         show()
         toTheSaveSwitch()
+        // Off, nothing happens in the background: no uploads, and no word of newer saves or conflicts either.
+        rule.onNodeWithText("Off, Loom only looks when you press Upload save", substring = true).assertExists()
         press(Key.DirectionCenter)
         assertThat(calls).contains("autoUpload:false")
     }

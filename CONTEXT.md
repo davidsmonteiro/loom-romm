@@ -115,7 +115,7 @@ One pass over some or all installed games' saves: read and hash each, negotiate 
 _Avoid_: sync session (that is RomM's record of one negotiate)
 
 **Automatic upload**:
-Uploading saves that changed on the Thor without being asked, in a save sync run every 15 minutes, when Loom opens and when the card mounts. Only once a save has been left alone for a minute (the quiet period) and reads the same twice a few seconds apart. On by default, with a switch in Settings.
+Uploading saves that changed on the Thor without being asked, in a save sync run every 15 minutes, when Loom opens and when the card mounts. Only once a save has been left alone for a minute (the quiet period) and reads the same twice a few seconds apart. On by default, with a switch in Settings; off, no run starts by itself, so Loom also stops noticing newer saves on RomM and new conflicts until asked.
 _Avoid_: auto sync (nothing comes down from RomM without the user)
 
 **Restore**:

@@ -205,6 +205,20 @@ class LibraryViewModelTest {
             .isEqualTo(GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Loom syncs 3DS saves (Azahar) only, for now", null))
     }
 
+    /** The details' words for a save depend on whether Loom uploads it by itself. */
+    @Test fun aGamesSaveKnowsWhetherAutomaticUploadIsOn() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(3, "3ds", "3ds", "Nintendo 3DS", "Nintendo 3DS", 2, "t")))
+        db.catalogDao().upsertRoms(listOf(rom(30, 3, "3ds", "Pokemon X", "Pokemon X.3ds")))
+        installed(30, 3, "n3ds/Pokemon X.3ds")
+        db.saveDao().upsertUnit(SaveUnitEntity(30, "azahar", "/sdmc/data", "f", 2, 4096, 0, "h", SaveSyncState.WRITING, null, 0))
+        vm.selectPlatform(3)
+        assertThat(gamesOnScreen { games -> games.any { it.save != null } }.single().save!!.autoUpload).isTrue()
+
+        settings.setAutoUploadSaves(false)
+        val off = gamesOnScreen { games -> games.any { it.save?.autoUpload == false } }
+        assertThat(off.single().save).isEqualTo(GameSave(supported = true, SaveSyncState.WRITING, null, "azahar", autoUpload = false))
+    }
+
     /** Upload save and Restore server save say they started, then how it went (here: Loom isn't paired). */
     @Test fun saveRequestsSayHowTheyWent() = runBlocking<Unit> {
         val game = gameOn(2)

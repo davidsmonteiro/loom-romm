@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -101,8 +102,11 @@ class LibraryViewModel @Inject constructor(
             if (platform == null) flowOf(emptyList())
             else combine(
                 catalog.observeGames(platform.platform.id, f.ordinal, CatalogSyncer.fold(q)), downloads.progress, saves.observeGames(),
-            ) { rows, live, units ->
-                rows.map { row -> row.toItem(row.jobId?.let { live[it]?.bytesDone }).withSave(platform.platform.slug, units[row.id]) }
+                settings.settings.map { it.autoUploadSaves }.distinctUntilChanged(),
+            ) { rows, live, units, autoUpload ->
+                rows.map { row ->
+                    row.toItem(row.jobId?.let { live[it]?.bytesDone }).withSave(platform.platform.slug, units[row.id], autoUpload)
+                }
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
