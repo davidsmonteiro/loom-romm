@@ -46,6 +46,7 @@ import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.romm.pairing.RommConnector
 import ro.davidmontei.loom.ui.settings.SettingsViewModel
+import ro.davidmontei.loom.ui.settings.edenFolderSaved
 import java.io.File
 
 /** Settings' save sync: where Azahar's data is found, choosing its folder, and the automatic upload switch. */
@@ -124,6 +125,47 @@ class SettingsSaveSyncViewModelTest {
         val found = withTimeout(5_000) { vm.state.first { it.storage.azaharFound != null } }.storage.azaharFound
         assertThat(found).isEqualTo(File(roms, "n3ds").path)
         vm.viewModelScope.cancel()
+    }
+
+    /** On the Thor: Eden's save folder in ROMs/saves/Eden with one profile, and the owner's prod.keys in the ROMs folder. */
+    @Test fun edensFolderItsProfilesAndProdKeysAreFound() = runBlocking<Unit> {
+        File(roms, "saves/Eden/user/save/0000000000000000/4E431822D6DEFD527268BA35B5C09533").mkdirs()
+        File(roms, "saves/Eden/user/save/0000000000000000/${"0".repeat(32)}").mkdirs() // device saves: no profile
+        File(roms, "prod.keys").writeText("header_key = ${"ab".repeat(32)}\n")
+        val vm = viewModel()
+        val storage = withTimeout(5_000) { vm.state.first { it.storage.edenFound != null } }.storage
+        assertThat(storage.edenFound).isEqualTo(File(roms, "saves/Eden").path)
+        assertThat(storage.edenProfiles).containsExactly("4E431822D6DEFD527268BA35B5C09533")
+        assertThat(storage.prodKeys).isEqualTo(File(roms, "prod.keys").path)
+        assertThat(storage.toString()).doesNotContain("abab") // where the keys are, never what they are
+        vm.viewModelScope.cancel()
+    }
+
+    @Test fun choosingEdensFolderIsKeptAndItsProfilesAreRead() = runBlocking<Unit> {
+        val vm = viewModel()
+        val chosen = tmp.newFolder("Eden").apply {
+            File(this, "user/save/0000000000000000/0123456789ABCDEF0123456789ABCDEF").mkdirs()
+            File(this, "user/save/0000000000000000/4E431822D6DEFD527268BA35B5C09533").mkdirs()
+        }
+        val message = async { vm.messages.first() }
+        vm.setEdenFolder(chosen).join()
+        assertThat(settings.snapshot().edenSaveDir).isEqualTo(chosen.path)
+        assertThat(withTimeout(5_000) { message.await() }).isEqualTo("Saved. Loom finds Switch saves in ${chosen.path}")
+        assertThat(withTimeout(5_000) { vm.state.first { it.storage.edenProfiles.size == 2 } }.storage.edenProfiles)
+            .containsExactly("0123456789ABCDEF0123456789ABCDEF", "4E431822D6DEFD527268BA35B5C09533").inOrder()
+        val chose = async { vm.messages.first() }
+        vm.setEdenProfile("4E431822D6DEFD527268BA35B5C09533").join()
+        assertThat(settings.snapshot().edenProfile).isEqualTo("4E431822D6DEFD527268BA35B5C09533")
+        assertThat(withTimeout(5_000) { chose.await() }).isEqualTo("Loom syncs the Switch saves of Eden's profile 4E43…9533")
+        vm.setEdenFolder(null).join()
+        assertThat(settings.snapshot().edenSaveDir).isNull()
+        vm.viewModelScope.cancel()
+    }
+
+    @Test fun choosingAFolderWithoutEdensSavesSaysSo() {
+        val empty = tmp.newFolder("Empty")
+        assertThat(edenFolderSaved(empty)).isEqualTo("Saved, but there's no user/save in ${empty.path} yet. Choose the folder Eden saves in.")
+        assertThat(edenFolderSaved(null)).isEqualTo("Loom looks for Eden's saves in the ROMs folder's saves/Eden again")
     }
 
     @Test fun theAutomaticUploadSwitchStartsAndStopsThePeriodicScan() = runBlocking<Unit> {

@@ -57,6 +57,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
@@ -120,6 +121,10 @@ interface SettingsActions {
     fun setAutoUploadSaves(on: Boolean)
     /** Azahar's user directory; null goes back to the 3DS system folder. */
     fun setAzaharFolder(dir: java.io.File?)
+    /** Eden's save folder; null goes back to the ROMs folder's saves/Eden. */
+    fun setEdenFolder(dir: java.io.File?)
+    /** Whose saves Loom syncs when Eden has several profiles. */
+    fun setEdenProfile(profile: String)
     fun setSwap(swap: Boolean)
     fun openBatterySettings()
     fun licenseText(): String
@@ -154,6 +159,8 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
             override fun setConcurrency(n: Int) { vm.setConcurrency(n) }
             override fun setAutoUploadSaves(on: Boolean) { vm.setAutoUploadSaves(on) }
             override fun setAzaharFolder(dir: java.io.File?) { vm.setAzaharFolder(dir) }
+            override fun setEdenFolder(dir: java.io.File?) { vm.setEdenFolder(dir) }
+            override fun setEdenProfile(profile: String) { vm.setEdenProfile(profile) }
             override fun setSwap(swap: Boolean) { vm.setSwap(swap) }
             override fun openBatterySettings() {
                 runCatching {
@@ -654,9 +661,9 @@ private fun DownloadsSection(state: SettingsUiState, actions: SettingsActions, m
 
 /**
  * Save sync: automatic upload, how the last background sync went (with Pair again beside it when
- * that sync needs Loom to pair again), and where Azahar keeps its data (its folder browser opens in
- * place, as the ROMs folder's does). No heading of its own above the switch: the section list names
- * it, and the section must fit the screen.
+ * that sync needs Loom to pair again), and where Azahar and Eden keep their saves, side by side
+ * (a folder browser opens in place below them, as the ROMs folder's does). No heading of its own
+ * above the switch: the section list names it, and the section must fit the screen.
  */
 @Composable
 private fun SaveSyncSection(
@@ -688,17 +695,20 @@ private fun SaveSyncSection(
     LaunchedEffect(needsPairing) {
         if (!needsPairing && pairAgainHadFocus) { delay(50); runCatching { switchFocus.requestFocus() } }
     }
-    var picking by remember { mutableStateOf(false) }
-    val changeFolder = remember { FocusRequester() }
-    ReturnFocusOnClose(picking) { changeFolder }
+    // Which emulator's folder browser is open, if any.
+    var picking by remember { mutableStateOf<SaveFolderFor?>(null) }
+    val changeFolder = remember { SaveFolderFor.entries.associateWith { FocusRequester() } }
+    var lastPicked by remember { mutableStateOf(SaveFolderFor.AZAHAR) }
+    ReturnFocusOnClose(picking != null) { changeFolder.getValue(lastPicked) }
+    fun toggle(which: SaveFolderFor) { lastPicked = which; picking = if (picking == which) null else which }
     // B on the browser (once it has no folder left to go back up from) or its toggle closes it.
     var toggleFocused by remember { mutableStateOf(false) }
     var pickerFocused by remember { mutableStateOf(false) }
-    BackHandler(enabled = picking && (toggleFocused || pickerFocused)) { picking = false }
+    BackHandler(enabled = picking != null && (toggleFocused || pickerFocused)) { picking = null }
     SectionTop {
         Box(first.focusRequester(switchFocus)) {
             LoomSwitchRow("Upload saves automatically", settings?.autoUploadSaves ?: true, actions::setAutoUploadSaves,
-                subtitle = "Every 15 minutes and when Loom opens: uploads 3DS saves untouched for a minute, tells you of " +
+                subtitle = "Every 15 minutes and when Loom opens: uploads 3DS and Switch saves untouched for a minute, tells you of " +
                     "conflicts and newer RomM saves. Off, Loom only looks when you press Upload save. Saves from RomM always wait for you.",
                 subtitleLines = 4)
         }
@@ -721,40 +731,133 @@ private fun SaveSyncSection(
             }
         }
     }
-    val chosen = settings?.azaharUserDir
-    val current = (chosen ?: state.storage.azaharFound)?.let { java.io.File(it) }
-    // "Use the 3DS folder" goes once that folder is in use again, taking focus with it: Change folder takes over.
-    // (Read while composing: by the time the effect runs, the button has gone and reported losing focus.)
-    var useFocused by remember { mutableStateOf(false) }
+    val azaharChosen = settings?.azaharUserDir
+    val azahar = (azaharChosen ?: state.storage.azaharFound)?.let { java.io.File(it) }
+    val edenChosen = settings?.edenSaveDir
+    val eden = (edenChosen ?: state.storage.edenFound)?.let { java.io.File(it) }
+    // "Use the 3DS folder" (or saves/Eden) goes once that folder is in use again, taking focus with it:
+    // Change folder takes over. (Read while composing: by the time the effect runs, the button has
+    // gone and reported losing focus.)
+    var useFocused by remember { mutableStateOf<SaveFolderFor?>(null) }
     val useHadFocus = useFocused
-    LaunchedEffect(chosen == null) {
-        if (chosen == null && useHadFocus) { delay(50); runCatching { changeFolder.requestFocus() } }
+    LaunchedEffect(azaharChosen == null, edenChosen == null) {
+        val gone = useHadFocus?.takeIf { (it == SaveFolderFor.AZAHAR && azaharChosen == null) || (it == SaveFolderFor.EDEN && edenChosen == null) }
+        if (gone != null) { delay(50); runCatching { changeFolder.getValue(gone).requestFocus() } }
     }
-    SectionTop {
-        SectionHeader("Azahar's folder")
-        Text(current?.path ?: "Not found", style = MaterialTheme.typography.titleSmall)
-        Text(
-            when {
-                chosen != null -> "Chosen here. Azahar keeps sdmc and nand in it."
-                current != null -> "Found in the 3DS system folder."
-                else -> "Loom looks for Azahar's sdmc folder in the 3DS system folder. Run a game in Azahar once, or choose its folder."
+    // One row per emulator, kept close together: with the switch and the last sync above, both fit the screen.
+    Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+        SaveFolderRow(
+            heading = "Azahar's folder", folder = azahar,
+            status = when {
+                azaharChosen != null -> "chosen here"
+                azahar != null -> "found in the 3DS folder"
+                else -> "not found"
             },
-            style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted,
+            missing = "Run a game in Azahar once, or choose the folder holding its sdmc and nand.",
+            picking = picking == SaveFolderFor.AZAHAR, useDefault = "Use the 3DS folder".takeIf { azaharChosen != null },
+            toggleFocus = changeFolder.getValue(SaveFolderFor.AZAHAR),
+            onToggle = { toggle(SaveFolderFor.AZAHAR) }, onUseDefault = { actions.setAzaharFolder(null) },
+            onToggleFocused = { toggleFocused = it },
+            onUseFocused = { useFocused = if (it) SaveFolderFor.AZAHAR else useFocused.takeIf { f -> f != SaveFolderFor.AZAHAR } },
+            tag = "azahar",
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-            LoomButton(if (picking) "Close folder browser" else "Change folder", onClick = { picking = !picking },
-                modifier = Modifier.focusRequester(changeFolder).onFocusChanged { toggleFocused = it.isFocused })
-            if (chosen != null) {
-                LoomButton("Use the 3DS folder", onClick = { actions.setAzaharFolder(null) },
-                    modifier = Modifier.onFocusChanged { useFocused = it.isFocused })
-            }
+        SaveFolderRow(
+            heading = "Eden's folder", folder = eden,
+            status = when {
+                edenChosen != null && eden != null && !java.io.File(eden, "user/save").isDirectory -> "chosen, but there's no user/save in it"
+                edenChosen != null -> "chosen here"
+                eden != null -> "found in ROMs/saves/Eden"
+                else -> "not found"
+            },
+            missing = "Move Eden's save folder to ROMs/saves/Eden, or choose the folder holding its user/save.",
+            picking = picking == SaveFolderFor.EDEN, useDefault = "Use saves/Eden".takeIf { edenChosen != null },
+            toggleFocus = changeFolder.getValue(SaveFolderFor.EDEN),
+            onToggle = { toggle(SaveFolderFor.EDEN) }, onUseDefault = { actions.setEdenFolder(null) },
+            onToggleFocused = { toggleFocused = it },
+            onUseFocused = { useFocused = if (it) SaveFolderFor.EDEN else useFocused.takeIf { f -> f != SaveFolderFor.EDEN } },
+            tag = "eden",
+        )
+        if (state.storage.edenProfiles.size > 1) {
+            EdenProfiles(state.storage.edenProfiles, settings?.edenProfile, actions)
+        } else {
+            Text(
+                if (state.storage.prodKeys != null) "Switch title IDs are read with your prod.keys, which never leaves the Thor."
+                else "No prod.keys in the ROMs folder: each Switch game asks which save folder is its.",
+                style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, modifier = Modifier.testTag("prod-keys"),
+            )
         }
     }
-    if (picking) {
+    picking?.let { which ->
+        val current = if (which == SaveFolderFor.AZAHAR) azahar else eden
         val start = current ?: state.storage.romsRoot?.let { java.io.File(it) }
-        FolderPicker(actions.volumes(), start?.parentFile, AZAHAR_FOLDERS, focusOn = start, note = ::azaharNote,
-            onPick = { actions.setAzaharFolder(it); picking = false },
+        FolderPicker(actions.volumes(), start?.parentFile, which.highlighted, focusOn = start, note = which.note,
+            onPick = { if (which == SaveFolderFor.AZAHAR) actions.setAzaharFolder(it) else actions.setEdenFolder(it); picking = null },
             modifier = Modifier.heightIn(max = 360.dp).onFocusChanged { pickerFocused = it.hasFocus })
+    }
+}
+
+/** The emulators whose save folders Settings → Saves shows, with what their folder browser looks for. */
+private enum class SaveFolderFor(val highlighted: Set<String>, val note: (List<java.io.File>) -> FolderNote) {
+    AZAHAR(AZAHAR_FOLDERS, ::azaharNote),
+    EDEN(setOf("user"), ::edenNote),
+}
+
+/**
+ * One emulator's save folder in a row: its name and how Loom found it, where it is (shortened in
+ * the middle when long) or what to do when there's none, and the buttons to change it or go back
+ * to where Loom looks by itself. One button high, so both emulators fit under the switch.
+ */
+@Composable
+private fun SaveFolderRow(
+    heading: String,
+    folder: java.io.File?,
+    status: String,
+    missing: String,
+    picking: Boolean,
+    useDefault: String?,
+    toggleFocus: FocusRequester,
+    onToggle: () -> Unit,
+    onUseDefault: () -> Unit,
+    onToggleFocused: (Boolean) -> Unit,
+    onUseFocused: (Boolean) -> Unit,
+    tag: String,
+) {
+    Row(Modifier.fillMaxWidth().testTag("$tag-folder"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+        Column(Modifier.weight(1f)) {
+            Text("${heading.uppercase()} · $status", style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("$tag-folder-status"))
+            if (folder != null) {
+                Text(folder.path, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.MiddleEllipsis,
+                    modifier = Modifier.testTag("$tag-folder-path"))
+            } else {
+                Text(missing, style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = 2)
+            }
+        }
+        LoomButton(if (picking) "Close folder browser" else "Change folder", onClick = onToggle,
+            modifier = Modifier.focusRequester(toggleFocus).onFocusChanged { onToggleFocused(it.isFocused) }.testTag("$tag-change-folder"))
+        useDefault?.let {
+            LoomButton(it, onClick = onUseDefault, modifier = Modifier.onFocusChanged { f -> onUseFocused(f.isFocused) }.testTag("$tag-use-default"))
+        }
+    }
+}
+
+/**
+ * Whose saves Loom syncs, when Eden has several profiles: one chip each, the chosen one marked.
+ * Until one is chosen, Switch saves wait.
+ */
+@Composable
+private fun EdenProfiles(profiles: List<String>, chosen: String?, actions: SettingsActions) {
+    val picked = profiles.firstOrNull { it.equals(chosen, ignoreCase = true) }
+    // The chips line up under Eden's buttons, so Down from them lands on one.
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+        Text(
+            if (picked == null) "Eden has several profiles. Whose saves?" else "Eden profile synced:",
+            style = MaterialTheme.typography.bodySmall, color = if (picked == null) LoomColors.Error else LoomColors.TextMuted,
+            modifier = Modifier.weight(1f),
+        )
+        profiles.forEach { profile ->
+            LoomChip(shortProfile(profile), profile == picked, { actions.setEdenProfile(profile) }, Modifier.testTag("profile-$profile"))
+        }
     }
 }
 
@@ -764,6 +867,10 @@ private val AZAHAR_FOLDERS = setOf("sdmc", "nand")
 private fun azaharNote(children: List<java.io.File>): FolderNote =
     if (children.any { it.name == "sdmc" }) FolderNote("Azahar's data is here (${children.filter { it.name in AZAHAR_FOLDERS }.joinToString { it.name }}).", true)
     else FolderNote("Azahar's folder holds sdmc and nand; they aren't here.", false)
+
+private fun edenNote(children: List<java.io.File>): FolderNote =
+    if (children.any { it.name == "user" && java.io.File(it, "save").isDirectory }) FolderNote("Eden's saves are here (user/save).", true)
+    else FolderNote("Eden's save folder holds user/save; it isn't here.", false)
 
 @Composable
 private fun AboutSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {

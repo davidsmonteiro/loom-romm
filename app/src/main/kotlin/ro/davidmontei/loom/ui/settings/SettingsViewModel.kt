@@ -29,6 +29,7 @@ import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.mapping.MappingRepository
+import ro.davidmontei.loom.data.saves.EdenSaves
 import ro.davidmontei.loom.data.saves.SaveSyncTriggers
 import ro.davidmontei.loom.data.saves.SaveUnitResolver
 import ro.davidmontei.loom.data.settings.CatalogRefresh
@@ -45,6 +46,7 @@ import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.ResolvedPlatform
 import ro.davidmontei.loom.storage.mapping.SystemFolder
+import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import java.io.File
 import javax.inject.Inject
 
@@ -67,6 +69,12 @@ data class StorageInfo(
     val totalBytes: Long?,
     /** Where Azahar's data was found when Settings doesn't name its folder: the 3DS system folder, as on the Thor. */
     val azaharFound: String? = null,
+    /** Eden's save folder when Settings doesn't name one: the ROMs folder's saves/Eden, when it holds user/save. */
+    val edenFound: String? = null,
+    /** The profiles in the Eden save folder in use: Settings asks whose saves to sync when there are several. */
+    val edenProfiles: List<String> = emptyList(),
+    /** The owner's prod.keys Loom would read Switch title IDs with; null when there's none. Only its place, never its keys. */
+    val prodKeys: String? = null,
 )
 
 data class SettingsUiState(
@@ -127,11 +135,18 @@ class SettingsViewModel @Inject constructor(
         deviceState.value = power.isIgnoringBatteryOptimizations(context.packageName) to volumes.hasAllFilesAccess()
         val root = store.snapshot().romsRoot
         val mapper = mapping.currentMapper()
-        val n3dsFolders = catalog.platforms().filter { SaveUnitResolver.supportsPlatform(it.slug) }.map { mapper.resolve(it.slug, it.fsSlug).folder }
+        val n3dsFolders = catalog.platforms().filter { it.slug in SaveUnitResolver.AZAHAR_PLATFORMS }.map { mapper.resolve(it.slug, it.fsSlug).folder }
+        val switchFolders = catalog.platforms().filter { it.slug in SaveUnitResolver.EDEN_PLATFORMS }.map { mapper.resolve(it.slug, it.fsSlug).folder }
+        val settings = store.snapshot()
         storageInfo.value = withContext(Dispatchers.IO) {
             val volume = root?.let(volumes::forPath)
+            val edenFound = root?.let(EdenSaves::defaultSaveDir)?.takeIf { EdenSaveLocator.holdsEdenData(it.toPath()) }
+            val edenDir = settings.edenSaveDir?.let(::File) ?: edenFound
             StorageInfo(root, volume?.label, volume?.let { volumes.freeBytes(it.root) }, volume?.let { volumes.totalBytes(it.root) },
-                findAzaharFolder(root, n3dsFolders)?.path)
+                findAzaharFolder(root, n3dsFolders)?.path, edenFound?.path,
+                edenDir?.let { runCatching { EdenSaveLocator(it.toPath()).profiles() }.getOrNull() }.orEmpty(),
+                root?.let { r -> (switchFolders.ifEmpty { listOf("switch") }).flatMap { EdenSaves.keyFiles(r, it) }.distinct().firstOrNull(File::isFile)?.path },
+            )
         }
     }
 
@@ -229,6 +244,19 @@ class SettingsViewModel @Inject constructor(
     }
     fun setSwap(swap: Boolean) = viewModelScope.launch { store.setSwapConfirmBack(swap) }
 
+    /** [dir] null goes back to looking for Eden's saves in the ROMs folder's saves/Eden. */
+    fun setEdenFolder(dir: File?) = viewModelScope.launch {
+        store.setEdenSaveDir(dir?.path)
+        refreshDevice()
+        _messages.send(withContext(Dispatchers.IO) { edenFolderSaved(dir) })
+    }
+
+    /** Whose saves Loom syncs when Eden has several profiles. */
+    fun setEdenProfile(profile: String) = viewModelScope.launch {
+        store.setEdenProfile(profile)
+        _messages.send("Loom syncs the Switch saves of Eden's profile ${shortProfile(profile)}")
+    }
+
     fun licenseText(): String = context.assets.open("licenses/gpl-3.0.txt").bufferedReader().use { it.readText() }
     fun interLicense(): String = context.assets.open("licenses/inter-OFL.txt").bufferedReader().use { it.readText() }
 }
@@ -246,3 +274,13 @@ fun azaharFolderSaved(dir: File?): String = when {
     SaveUnitResolver.holdsAzaharData(dir) -> "Saved. Loom finds 3DS saves in ${dir.path}"
     else -> "Saved, but Azahar's sdmc/Nintendo 3DS isn't in ${dir.path} yet. Run a game in Azahar once, or choose its folder."
 }
+
+/** What Settings says once Eden's save folder is chosen ([dir]), or set back to the ROMs folder's saves/Eden (null). */
+fun edenFolderSaved(dir: File?): String = when {
+    dir == null -> "Loom looks for Eden's saves in the ROMs folder's ${EdenSaves.DEFAULT_FOLDER} again"
+    EdenSaveLocator.holdsEdenData(dir.toPath()) -> "Saved. Loom finds Switch saves in ${dir.path}"
+    else -> "Saved, but there's no user/save in ${dir.path} yet. Choose the folder Eden saves in."
+}
+
+/** An Eden profile (32 hex digits) short enough for a chip: its first and last four. */
+fun shortProfile(profile: String): String = if (profile.length > 12) "${profile.take(4)}…${profile.takeLast(4)}" else profile
