@@ -1,13 +1,15 @@
 package ro.davidmontei.loom.storage.engine
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
@@ -120,7 +122,15 @@ class RangeDownloader(
             .build()
 
         val call = client.newCall(request)
-        val cancelHook = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+        // Stopping the download (a pause, a cancel) cancels the request at once. A read blocked on a
+        // stalled connection notices nothing else until the next byte comes, or the read times out.
+        val canceller = launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                awaitCancellation()
+            } finally {
+                call.cancel()
+            }
+        }
         try {
             call.execute().use { response ->
                 var position = offset
@@ -155,7 +165,7 @@ class RangeDownloader(
                 stream(response, file, position, expected, activeHasher, pending, validator, onDurable, onProgress)
             }
         } finally {
-            cancelHook?.dispose()
+            canceller.cancel() // the response is consumed: cancelling the call now changes nothing
         }
     }
 

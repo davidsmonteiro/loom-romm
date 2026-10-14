@@ -163,4 +163,29 @@ class RangeDownloaderTest {
         // …and once caught up, the rest is hashed as it comes, not read back again.
         assertThat(caughtUp.get()).isLessThan(big.size - have - 512 * 1024L)
     }
+
+    /** Found by review: pausing a download whose connection had stalled waited for the next byte, or for the read to time out. */
+    @Test fun stoppingADownloadOnAStalledConnectionIsPrompt() {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = MockResponse.Builder().code(206)
+                .setHeader("Content-Range", "bytes $have-${data.size - 1}/${data.size}")
+                .body(object : MockResponseBody {
+                    override val contentLength = data.size - have
+                    override fun writeTo(sink: BufferedSink) {
+                        sink.write(data, have.toInt(), 64 * 1024)
+                        sink.flush()
+                        stalled.await(30, TimeUnit.SECONDS) // and then nothing more
+                    }
+                }).build()
+        }
+        val reading = CountDownLatch(1)
+        runBlocking {
+            val download = launch(Dispatchers.IO) {
+                RangeDownloader(OkHttpClient.Builder().readTimeout(60, TimeUnit.SECONDS).build())
+                    .download(part, server.url("/api/roms/1/files/content/Game.iso"), file, onDurable = { _, _ -> }, onProgress = { reading.countDown() })
+            }
+            assertThat(reading.await(5, TimeUnit.SECONDS)).isTrue()
+            withTimeout(3_000) { download.cancelAndJoin() }
+        }
+    }
 }
