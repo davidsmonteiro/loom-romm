@@ -25,9 +25,11 @@ import ro.davidmontei.loom.data.settings.ServerConfig
 class SaveSyncWorkerTest : SaveSyncTestBase() {
     private val context = ApplicationProvider.getApplicationContext<Context>()
 
-    private suspend fun run(kind: SaveSyncKind): ListenableWorker.Result =
+    /** A run of [kind], asked for at [queuedAt] (epoch ms; none when null), on its [attempt]th try from 0. */
+    private suspend fun run(kind: SaveSyncKind, queuedAt: Long? = null, attempt: Int = 0): ListenableWorker.Result =
         TestListenableWorkerBuilder<SaveSyncWorker>(context)
-            .setInputData(workDataOf(SaveSyncWorker.KEY_KIND to kind.name))
+            .setInputData(workDataOf(SaveSyncWorker.KEY_KIND to kind.name, *listOfNotNull(queuedAt?.let { SaveSyncWorker.KEY_QUEUED_AT to it }).toTypedArray()))
+            .setRunAttemptCount(attempt)
             .setWorkerFactory(object : WorkerFactory() {
                 override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) =
                     SaveSyncWorker(appContext, workerParameters, engine(), settings, SaveSyncNotifications(appContext))
@@ -65,6 +67,54 @@ class SaveSyncWorkerTest : SaveSyncTestBase() {
         run(SaveSyncKind.PULL)
         assertThat(romm.uploads()).isEmpty()
         assertThat(db.saveDao().unit(7)!!.state).isEqualTo(ro.davidmontei.loom.data.db.SaveSyncState.LOCAL_NEWER)
+    }
+
+    /** Pokémon X synced, then a newer save from another device on RomM: what a PULL restores. */
+    private suspend fun newerOnRomm() {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        run(SaveSyncKind.PUSH)
+        romm.addSave(7, archiveOf(bytes(2)))
+    }
+
+    @Test fun aPullRestoresRightAfterTheCommand() = runBlocking<Unit> {
+        newerOnRomm()
+        val result = run(SaveSyncKind.PULL, queuedAt = clock.minusSeconds(29).toEpochMilli())
+        assertThat(result.outputData.getInt(SaveSyncWorker.KEY_DOWNLOADED, -1)).isEqualTo(1)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(2))
+    }
+
+    /**
+     * A PULL that starts long after the command (queued behind another run, or waiting for the
+     * network) may find the emulator running by then: it only counts the newer save, and says so.
+     */
+    @Test fun aPullThatStartsLateRestoresNothing() = runBlocking<Unit> {
+        newerOnRomm()
+        val result = run(SaveSyncKind.PULL, queuedAt = clock.minusSeconds(31).toEpochMilli())
+        assertThat(result.outputData.getInt(SaveSyncWorker.KEY_DOWNLOADED, -1)).isEqualTo(0)
+        assertThat(result.outputData.getInt(SaveSyncWorker.KEY_SERVER_NEWER, -1)).isEqualTo(1)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(backups(pokemonX)).isEmpty()
+        val titles = shadowOf(context.getSystemService(NotificationManager::class.java)).allNotifications.map { it.extras.getString("android.title") }
+        assertThat(titles).containsExactly("RomM has a newer save for a game")
+    }
+
+    /** WorkManager running a PULL again (it was stopped), or one that doesn't say when it was asked, restores nothing. */
+    @Test fun aPullRunAgainRestoresNothing() = runBlocking<Unit> {
+        newerOnRomm()
+        run(SaveSyncKind.PULL, queuedAt = clock.toEpochMilli(), attempt = 1)
+        run(SaveSyncKind.PULL)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(romm.requests.none { it.url.encodedPath.endsWith("/content") }).isTrue()
+    }
+
+    /** Tried again later, a PULL could only check: it fails at once instead, saying why. */
+    @Test fun aPullThatCantReachRommFailsAtOnce() = runBlocking<Unit> {
+        settings.setServer(ServerConfig("http://127.0.0.1:1/".toHttpUrl()), "5.3.1")
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        val result = run(SaveSyncKind.PULL, queuedAt = clock.toEpochMilli())
+        assertThat(result).isEqualTo(ListenableWorker.Result.failure(workDataOf(SaveSyncWorker.KEY_ERROR to "Can't reach the RomM server")))
     }
 
     @Test fun conflictsAndNewerSavesAreNotified() = runBlocking<Unit> {

@@ -195,6 +195,8 @@ adb shell am broadcast -n ro.davidmontei.loom/.headless.CommandReceiver -a ro.da
 
 # Download newer saves from RomM. Close the emulator first. Only saves unchanged on the Thor since the
 # last sync (or missing) are replaced, only by a save from the same emulator, and each is backed up first.
+# A restore only starts in the 30 seconds after the command, so give it a minute before starting the
+# emulator. If the run can't get to it by then (another sync is running), it only notifies about newer saves.
 adb shell am broadcast -n ro.davidmontei.loom/.headless.CommandReceiver -a ro.davidmontei.loom.action.PULL_SAVES
 ```
 
@@ -206,7 +208,7 @@ From Termux, run the same commands without `adb shell`. They work even when Loom
 - `2`: Loom isn't set up yet (finish the first-run setup)
 - `3`: unknown command
 
-A save command that finds something it won't do alone (a save conflict, a newer save on RomM) says so in a notification.
+A save command that finds something it won't do alone (a save conflict, a newer save on RomM) says so in a notification. `PULL_SAVES` doesn't wait for a network: without one it fails at once, and Settings → Downloads & saves says why.
 
 The receiver is exported without a permission because its commands only queue work, and none of them can replace a save that changed on the Thor.
 

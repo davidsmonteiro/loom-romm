@@ -119,7 +119,7 @@ Uploading saves that changed on the Thor without being asked, in a save sync run
 _Avoid_: auto sync (nothing comes down from RomM without the user)
 
 **Restore**:
-Putting RomM's save in place of the Thor's, only when the user asks, once they have closed the emulator: after a save backup, and in one piece (the save on the card is always the old one or the checked new one). Keep server and Keep both restore too; `PULL_SAVES` restores only saves unchanged on the Thor or missing.
+Putting RomM's save in place of the Thor's, only when the user asks, once they have closed the emulator: after a save backup, and in one piece (the save on the card is always the old one or the checked new one). Keep server and Keep both restore too; `PULL_SAVES` restores only saves unchanged on the Thor or missing, and only within 30 seconds of the command.
 _Avoid_: pull, download (for what the user does)
 
 **Emulator id**:

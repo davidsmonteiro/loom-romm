@@ -30,7 +30,11 @@ import javax.inject.Inject
  *   left alone for a minute. Conflicts are only recorded.
  * - PULL_SAVES: downloads RomM's newer saves, but only where the Thor's save is unchanged since the
  *   last sync or absent, the newer save comes from the same emulator, and only after backing the
- *   Thor's save up. Close the emulator first. It never resolves a conflict.
+ *   Thor's save up. Close the emulator first. It never resolves a conflict. A restore only starts
+ *   within 30 seconds of the command ([ro.davidmontei.loom.data.saves.SaveSyncWorker.PULL_WINDOW]),
+ *   so a caller that waits a minute can then start the emulator: a run that can't get to it by
+ *   then (another sync running, Loom stopped and run again) only notifies about newer saves, and
+ *   without a network it fails at once.
  *
  * `am broadcast` prints the result code and a one-line message: [RESULT_OK] (queued),
  * [RESULT_NOT_PAIRED], [RESULT_UNAVAILABLE] (Loom isn't set up yet) or [RESULT_UNKNOWN]. A queued

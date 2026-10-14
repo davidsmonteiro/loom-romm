@@ -4,9 +4,15 @@ import android.content.Context
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.work.Configuration
+import androidx.work.Data
 import androidx.work.NetworkType
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import androidx.work.Worker
+import androidx.work.WorkerFactory
+import androidx.work.WorkerParameters
+import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
@@ -33,8 +39,9 @@ class SaveSyncSchedulerTest {
     private lateinit var settings: SettingsStore
     private lateinit var triggers: SaveSyncTriggers
 
+    private val context = ApplicationProvider.getApplicationContext<Context>()
+
     @Before fun setUp() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
         WorkManagerTestInitHelper.initializeTestWorkManager(context)
         workManager = WorkManager.getInstance(context)
         scheduler = SaveSyncScheduler(workManager)
@@ -76,9 +83,34 @@ class SaveSyncSchedulerTest {
         scheduler.runNow(SaveSyncKind.AUTO)
         scheduler.runNow(SaveSyncKind.AUTO)
         assertThat(oneOff().map { it.kind() }).containsExactly("AUTO")
+        scheduler.runNow(SaveSyncKind.PUSH)
         scheduler.runNow(SaveSyncKind.PULL)
-        assertThat(oneOff().map { it.kind() }).containsExactly("AUTO", "PULL")
-        assertThat(oneOff().map { it.constraints.requiredNetworkType }.distinct()).containsExactly(NetworkType.CONNECTED)
+        assertThat(oneOff().map { it.kind() }).containsExactly("AUTO", "PUSH", "PULL")
+        assertThat(oneOff().filter { it.kind() != "PULL" }.map { it.constraints.requiredNetworkType }.distinct())
+            .containsExactly(NetworkType.CONNECTED)
+    }
+
+    /**
+     * A PULL restores only within half a minute of the command, so it doesn't wait for a network
+     * (without one it fails at once) and carries the time it was asked for.
+     */
+    @Test fun aPullDoesntWaitForANetworkAndSaysWhenItWasAsked() {
+        val asked = mutableListOf<Data>()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context, Configuration.Builder()
+            .setExecutor(SynchronousExecutor())
+            .setWorkerFactory(object : WorkerFactory() {
+                override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) =
+                    object : Worker(appContext, workerParameters) {
+                        override fun doWork(): Result = Result.success().also { asked += inputData }
+                    }
+            })
+            .build())
+        workManager = WorkManager.getInstance(context)
+        SaveSyncScheduler(workManager) { 1_234L }.runNow(SaveSyncKind.PULL)
+
+        assertThat(oneOff().single().constraints.requiredNetworkType).isEqualTo(NetworkType.NOT_REQUIRED)
+        assertThat(asked.single().getString(SaveSyncWorker.KEY_KIND)).isEqualTo("PULL")
+        assertThat(asked.single().getLong(SaveSyncWorker.KEY_QUEUED_AT, 0)).isEqualTo(1_234L)
     }
 
     @Test fun openingLoomLooksForChangedSavesAndKeepsThePeriodicScan() = runBlocking<Unit> {

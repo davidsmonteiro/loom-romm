@@ -68,6 +68,11 @@ data class SaveSyncRequest(
     val downloads: Boolean,
     /** Only these games; null for every installed game Loom syncs. */
     val romIds: Set<Int>? = null,
+    /**
+     * With [downloads], the last moment a download may start; null for no limit. Past it, a newer
+     * server save is only counted: the user who asked may have started the emulator since.
+     */
+    val downloadsUntil: Instant? = null,
 ) {
     companion object {
         /** The periodic scan, opening Loom, a mounted card, PUSH_SAVES: uploads; newer server saves are only counted. */
@@ -75,6 +80,9 @@ data class SaveSyncRequest(
 
         /** PULL_SAVES: only the safe downloads. Reachable by any app on the device, so it must never do more. */
         val PULL = SaveSyncRequest(uploads = false, downloads = true)
+
+        /** Only looks: conflicts are recorded and newer saves counted, and no save moves either way. */
+        val CHECK = SaveSyncRequest(uploads = false, downloads = false)
 
         /** A game's "Upload save": only that game, and never a download (those need the emulator closed). */
         fun upload(romId: Int) = SaveSyncRequest(uploads = true, downloads = false, romIds = setOf(romId))
@@ -388,7 +396,7 @@ class SaveSyncEngine(
                     setState(game.romId, SaveSyncState.LOCAL_NEWER, "Changed on the Thor; it uploads with the next sync")
                     Acted.NOTHING
                 }
-                SyncOutcome.DOWNLOAD -> if (request.downloads) {
+                SyncOutcome.DOWNLOAD -> if (request.downloads && request.downloadsUntil.let { it == null || !now().isAfter(it) }) {
                     download(api, deviceId, sessionId, game.romId, game.save, head!!, game.localHash)
                     downloaded += game.romId
                     Acted.DONE

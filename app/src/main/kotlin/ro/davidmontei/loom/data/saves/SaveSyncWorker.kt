@@ -17,6 +17,8 @@ import dagger.assisted.AssistedInject
 import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.romm.RommException
+import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.TimeUnit
 
 /** Why a sync run was started; decides what it may do. */
@@ -27,7 +29,11 @@ enum class SaveSyncKind {
     /** PUSH_SAVES: uploads, whatever the automatic setting says. */
     PUSH,
 
-    /** PULL_SAVES: only the safe downloads, each backed up first. */
+    /**
+     * PULL_SAVES: only the safe downloads, each backed up first, and only within [SaveSyncWorker.PULL_WINDOW]
+     * of the command. Later, or run a second time, it only counts newer saves: whoever asked may
+     * have started the emulator since.
+     */
     PULL,
 }
 
@@ -47,7 +53,7 @@ class SaveSyncWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         val kind = inputData.getString(KEY_KIND)?.let { runCatching { SaveSyncKind.valueOf(it) }.getOrNull() } ?: SaveSyncKind.AUTO
         if (kind == SaveSyncKind.AUTO && !settings.snapshot().autoUploadSaves) return Result.success()
-        val request = if (kind == SaveSyncKind.PULL) SaveSyncRequest.PULL else SaveSyncRequest.PUSH
+        val request = if (kind == SaveSyncKind.PULL) pullRequest() else SaveSyncRequest.PUSH
         return try {
             val report = engine.sync(request)
             notifications.after(report)
@@ -63,7 +69,8 @@ class SaveSyncWorker @AssistedInject constructor(
                 )
             }
         } catch (e: RommException.Unreachable) {
-            if (runAttemptCount < 3) {
+            // A PULL tried again later would only check, so it says at once that RomM is out of reach.
+            if (kind != SaveSyncKind.PULL && runAttemptCount < 3) {
                 record("Can't reach the RomM server; Loom tries again soon", failed = true)
                 Result.retry()
             } else {
@@ -74,6 +81,16 @@ class SaveSyncWorker @AssistedInject constructor(
         } catch (e: RommException) {
             failure(e.message ?: "Save sync failed")
         }
+    }
+
+    /**
+     * A PULL restores only while it is fresh: its downloads must start within [PULL_WINDOW] of the
+     * command. One that ran before (WorkManager stopped it) or doesn't say when it was asked only checks.
+     */
+    private fun pullRequest(): SaveSyncRequest {
+        val queuedAt = inputData.getLong(KEY_QUEUED_AT, 0L).takeIf { it > 0 } ?: return SaveSyncRequest.CHECK
+        if (runAttemptCount > 0) return SaveSyncRequest.CHECK
+        return SaveSyncRequest.PULL.copy(downloadsUntil = Instant.ofEpochMilli(queuedAt).plus(PULL_WINDOW))
     }
 
     /** Settings shows how the last run ended, so a sync that keeps failing doesn't go unnoticed. */
@@ -89,6 +106,9 @@ class SaveSyncWorker @AssistedInject constructor(
         const val PERIODIC_NAME = "save-sync"
         const val NOW_NAME = "save-sync-now"
         const val KEY_KIND = "kind"
+
+        /** When the run was asked for, in epoch milliseconds. */
+        const val KEY_QUEUED_AT = "queued_at"
         const val KEY_ERROR = "error"
         const val KEY_UPLOADED = "uploaded"
         const val KEY_DOWNLOADED = "downloaded"
@@ -97,10 +117,13 @@ class SaveSyncWorker @AssistedInject constructor(
 
         /** WorkManager's shortest period. */
         const val PERIOD_MINUTES = 15L
+
+        /** How long after PULL_SAVES its downloads may still start. */
+        val PULL_WINDOW: Duration = Duration.ofSeconds(30)
     }
 }
 
-class SaveSyncScheduler(private val workManager: WorkManager) {
+class SaveSyncScheduler(private val workManager: WorkManager, private val now: () -> Long = System::currentTimeMillis) {
     private val network = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
     /** The periodic scan, every [SaveSyncWorker.PERIOD_MINUTES] with a network: on while automatic upload is. */
@@ -119,12 +142,13 @@ class SaveSyncScheduler(private val workManager: WorkManager) {
 
     /**
      * One run as soon as there's a network. An automatic one is dropped if a run is already
-     * waiting; PUSH and PULL always run, after whatever is queued.
+     * waiting; PUSH and PULL always run, after whatever is queued. A PULL doesn't wait for a
+     * network: it restores only within [SaveSyncWorker.PULL_WINDOW], so without one it fails at once.
      */
     fun runNow(kind: SaveSyncKind) {
         val request = OneTimeWorkRequestBuilder<SaveSyncWorker>()
-            .setConstraints(network)
-            .setInputData(workDataOf(SaveSyncWorker.KEY_KIND to kind.name))
+            .apply { if (kind != SaveSyncKind.PULL) setConstraints(network) }
+            .setInputData(workDataOf(SaveSyncWorker.KEY_KIND to kind.name, SaveSyncWorker.KEY_QUEUED_AT to now()))
             .addTag(SaveSyncWorker.NOW_NAME)
             .addTag("kind:${kind.name}")
             .build()
