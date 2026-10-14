@@ -26,6 +26,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
+import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.settings.SettingsStore
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -137,6 +138,18 @@ class SaveSyncSchedulerTest {
 
     @Test fun aMountedCardLooksForChangedSaves() {
         triggers.cardMounted()
+        assertThat(oneOff().map { it.kind() }).containsExactly("AUTO")
+    }
+
+    /** Pairing again runs a sync that failed for want of pairing again, so Settings stops asking; nothing else. */
+    @Test fun pairingAgainRetriesASyncThatNeededIt() = runBlocking<Unit> {
+        triggers.pairedAgain()
+        assertThat(oneOff()).isEmpty() // no sync has run
+        settings.setLastSaveSync(SaveSyncOutcome(1, "Can't reach the RomM server", failed = true))
+        triggers.pairedAgain()
+        assertThat(oneOff()).isEmpty()
+        settings.setLastSaveSync(SaveSyncOutcome(2, SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true))
+        triggers.pairedAgain()
         assertThat(oneOff().map { it.kind() }).containsExactly("AUTO")
     }
 }

@@ -170,10 +170,12 @@ class SaveSyncWorkerTest : SaveSyncTestBase() {
         assertThat(last.atEpochMs).isAtLeast(before)
     }
 
+    /** Settings offers Pair again beside it: only pairing gives Loom a RomM device. */
     @Test fun aRunThatCouldntStartIsRecordedWithTheReason() = runBlocking<Unit> {
         pair(deviceId = null)
         run(SaveSyncKind.PUSH)
-        assertThat(settings.snapshot().lastSaveSync!!.copy(atEpochMs = 0)).isEqualTo(SaveSyncOutcome(0, SaveSyncEngine.NO_DEVICE, failed = true))
+        assertThat(settings.snapshot().lastSaveSync!!.copy(atEpochMs = 0))
+            .isEqualTo(SaveSyncOutcome(0, SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true))
     }
 
     @Test fun aRejectedTokenIsRecordedWithWhatToDo() = runBlocking<Unit> {
@@ -182,7 +184,16 @@ class SaveSyncWorkerTest : SaveSyncTestBase() {
         romm.uploadAnswer = { MockResponse.Builder().code(401).body("""{"detail":"Invalid token"}""").build() }
         run(SaveSyncKind.PUSH)
         assertThat(settings.snapshot().lastSaveSync!!.copy(atEpochMs = 0))
-            .isEqualTo(SaveSyncOutcome(0, "RomM rejected Loom's token. Pair again in Settings.", failed = true))
+            .isEqualTo(SaveSyncOutcome(0, "RomM rejected Loom's token. Pair again in Settings.", failed = true, needsPairing = true))
+    }
+
+    /** Other failures aren't for pairing to fix: Settings offers no Pair again for them. */
+    @Test fun otherFailuresDontAskToPairAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.uploadAnswer = { MockResponse.Builder().code(403).body("""{"detail":"Forbidden"}""").build() }
+        run(SaveSyncKind.PUSH)
+        assertThat(settings.snapshot().lastSaveSync!!.copy(atEpochMs = 0)).isEqualTo(SaveSyncOutcome(0, "Forbidden", failed = true))
     }
 
     @Test fun aRunThatDidNothingIsNotRecorded() = runBlocking<Unit> {

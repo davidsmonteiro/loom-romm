@@ -105,6 +105,8 @@ data class SaveSyncReport(
     val unsupported: Map<Int, String> = emptyMap(),
     /** Why the run couldn't start at all (not paired, no RomM device); null when it ran. */
     val unavailable: String? = null,
+    /** The run couldn't start until Loom pairs again: RomM has no device for it ([SaveSyncEngine.NO_DEVICE]). */
+    val needsPairing: Boolean = false,
 ) {
     /** What the run did, in a few words for Settings ("2 uploaded · 1 conflict"), or why it couldn't run. */
     fun summary(): String {
@@ -270,8 +272,8 @@ class SaveSyncEngine(
         private val failed = mutableMapOf<Int, String>()
         private val unsupported = mutableMapOf<Int, String>()
 
-        private fun report(unavailable: String? = null) =
-            SaveSyncReport(uploaded, downloaded, adopted, conflicts, serverNewer, waiting, failed, unsupported, unavailable)
+        private fun report(unavailable: String? = null, needsPairing: Boolean = false) =
+            SaveSyncReport(uploaded, downloaded, adopted, conflicts, serverNewer, waiting, failed, unsupported, unavailable, needsPairing)
 
         suspend fun go(): SaveSyncReport {
             val api = try {
@@ -279,7 +281,7 @@ class SaveSyncEngine(
             } catch (e: NotPairedException) {
                 return report(unavailable = e.message)
             }
-            val deviceId = deviceId(api) ?: return report(unavailable = NO_DEVICE)
+            val deviceId = deviceId(api) ?: return report(unavailable = NO_DEVICE, needsPairing = true)
             saves.deleteUninstalledUnits()
 
             val prepared = mutableListOf<Prepared>()
@@ -298,7 +300,7 @@ class SaveSyncEngine(
             }
             for (chunk in prepared.chunked(chunkSize)) {
                 val stop = syncChunk(api, deviceId, chunk)
-                if (stop != null) return report(unavailable = stop)
+                if (stop != null) return report(unavailable = stop, needsPairing = stop == NO_DEVICE)
             }
             return report()
         }

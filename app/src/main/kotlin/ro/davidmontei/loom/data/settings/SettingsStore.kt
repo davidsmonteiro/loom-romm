@@ -20,8 +20,11 @@ import java.util.UUID
  */
 data class ServerConfig(val url: HttpUrl)
 
-/** How the last background save sync ended: when, and what it did or why it couldn't run, in words. */
-data class SaveSyncOutcome(val atEpochMs: Long, val summary: String, val failed: Boolean)
+/**
+ * How the last background save sync ended: when, and what it did or why it couldn't run, in words.
+ * [needsPairing]: it failed until Loom pairs again (RomM rejected the token, or has no device for Loom).
+ */
+data class SaveSyncOutcome(val atEpochMs: Long, val summary: String, val failed: Boolean, val needsPairing: Boolean = false)
 
 /** How often Loom refreshes the catalog in the background. */
 enum class CatalogRefresh(val hours: Int) {
@@ -86,7 +89,9 @@ class SettingsStore(
             catalogFields = p[CATALOG_FIELDS] ?: 1,
             autoUploadSaves = p[AUTO_UPLOAD_SAVES] ?: true,
             azaharUserDir = p[AZAHAR_USER_DIR],
-            lastSaveSync = p[SAVE_SYNC_AT]?.let { at -> SaveSyncOutcome(at, p[SAVE_SYNC_SUMMARY].orEmpty(), p[SAVE_SYNC_FAILED] ?: false) },
+            lastSaveSync = p[SAVE_SYNC_AT]?.let { at ->
+                SaveSyncOutcome(at, p[SAVE_SYNC_SUMMARY].orEmpty(), p[SAVE_SYNC_FAILED] ?: false, p[SAVE_SYNC_NEEDS_PAIRING] ?: false)
+            },
             catalogRefresh = CatalogRefresh.entries.find { it.hours == p[REFRESH_HOURS] } ?: CatalogRefresh.DEFAULT,
             refreshOnWifiOnly = p[REFRESH_WIFI_ONLY] ?: false,
         )
@@ -118,6 +123,7 @@ class SettingsStore(
         it[SAVE_SYNC_AT] = outcome.atEpochMs
         it[SAVE_SYNC_SUMMARY] = outcome.summary
         it[SAVE_SYNC_FAILED] = outcome.failed
+        it[SAVE_SYNC_NEEDS_PAIRING] = outcome.needsPairing
     }
 
     suspend fun setServer(config: ServerConfig, version: String?) = dataStore.edit {
@@ -174,5 +180,6 @@ class SettingsStore(
         val SAVE_SYNC_AT = longPreferencesKey("save_sync_last_ms")
         val SAVE_SYNC_SUMMARY = stringPreferencesKey("save_sync_last_summary")
         val SAVE_SYNC_FAILED = booleanPreferencesKey("save_sync_last_failed")
+        val SAVE_SYNC_NEEDS_PAIRING = booleanPreferencesKey("save_sync_last_needs_pairing")
     }
 }

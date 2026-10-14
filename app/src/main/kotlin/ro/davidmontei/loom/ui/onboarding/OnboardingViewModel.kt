@@ -19,6 +19,7 @@ import ro.davidmontei.loom.data.catalog.CatalogSyncScheduler
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.download.VolumeInfo
+import ro.davidmontei.loom.data.saves.SaveSyncTriggers
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.romm.MIN_SUPPORTED_ROMM
@@ -83,6 +84,7 @@ class OnboardingViewModel @Inject constructor(
     private val credentials: CredentialStore,
     private val volumes: StorageVolumes,
     private val sync: CatalogSyncScheduler,
+    private val saveSync: SaveSyncTriggers,
     savedState: SavedStateHandle,
 ) : ViewModel() {
     private val pairAgain = savedState.toRoute<OnboardingRoute>().pairAgain
@@ -225,9 +227,14 @@ class OnboardingViewModel @Inject constructor(
     private suspend fun paired(creds: PairedCredentials) {
         credentials.save(creds)
         _state.update { it.copy(pairing = false, pairedAs = creds.username, session = null) }
-        // Pairing again ends here (the screen closes); a sync that needed the new token runs again.
-        if (pairAgain) sync.enqueue()
-        else go(resumeStep(hasServer = true, paired = true, volumes.hasAllFilesAccess(), _state.value.romsRoot != null))
+        // Pairing again ends here (the screen closes); a sync that needed the new token runs again,
+        // and so does a save sync that failed for want of pairing.
+        if (pairAgain) {
+            sync.enqueue()
+            saveSync.pairedAgain()
+        } else {
+            go(resumeStep(hasServer = true, paired = true, volumes.hasAllFilesAccess(), _state.value.romsRoot != null))
+        }
     }
 
     fun refreshStorage() {
