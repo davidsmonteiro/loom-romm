@@ -131,7 +131,7 @@ class SettingsScreenTest {
     @Test fun sectionsAreReachableAndOpenWithA() {
         show()
         rule.onNodeWithTag("section-SERVER").assertIsFocused()
-        repeat(4) { press(Key.DirectionDown) }
+        repeat(5) { press(Key.DirectionDown) }
         rule.onNodeWithTag("section-CONTROLS").assertIsFocused()
         press(Key.DirectionCenter) // opens Controls on its switch
         press(Key.DirectionCenter)
@@ -169,7 +169,7 @@ class SettingsScreenTest {
     /** Found on the Thor: the licence text scrolled by touch only. */
     @Test fun licenceTextScrollsWithThePad() {
         show()
-        repeat(5) { press(Key.DirectionDown) } // About
+        repeat(6) { press(Key.DirectionDown) } // About
         press(Key.DirectionCenter) // into the section: the GPL button
         press(Key.DirectionCenter) // open the licence; Close has focus
         press(Key.DirectionUp)
@@ -223,7 +223,7 @@ class SettingsScreenTest {
 
     @Test fun closingTheLicenceGivesFocusBackToItsButton() {
         show()
-        repeat(5) { press(Key.DirectionDown) } // About
+        repeat(6) { press(Key.DirectionDown) } // About
         press(Key.DirectionCenter) // GNU GPL v3.0
         press(Key.DirectionRight)
         press(Key.DirectionCenter) // Inter font licence; Close has focus
@@ -397,14 +397,12 @@ class SettingsScreenTest {
         rule.onNodeWithText("Pair again").assertIsFocused()
     }
 
-    // --- save sync, in Downloads & saves ---
+    // --- save sync, in Saves ---
 
-    /** Into Downloads & saves, then down past the download settings to the automatic upload switch. */
+    /** A on Saves opens it on the automatic upload switch. */
     private fun toTheSaveSwitch() {
-        repeat(3) { press(Key.DirectionDown) }
-        press(Key.DirectionCenter) // the first concurrency chip
-        press(Key.DirectionDown) // Allow background downloads
-        press(Key.DirectionDown)
+        repeat(4) { press(Key.DirectionDown) }
+        press(Key.DirectionCenter)
         rule.onNodeWithText("Upload saves automatically").assertIsFocused()
     }
 
@@ -463,7 +461,7 @@ class SettingsScreenTest {
         back()
         rule.onNodeWithText("Change folder").assertIsFocused()
         back()
-        rule.onNodeWithTag("section-DOWNLOADS").assertIsFocused()
+        rule.onNodeWithTag("section-SAVES").assertIsFocused()
         assertThat(calls.filter { it.startsWith("azahar") }).isEmpty()
     }
 

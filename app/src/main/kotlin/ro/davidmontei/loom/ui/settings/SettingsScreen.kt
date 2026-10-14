@@ -208,10 +208,8 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
                     SettingsSection.SERVER -> ServerSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
                     SettingsSection.STORAGE -> StorageSection(state, actions, first)
                     SettingsSection.MAPPING -> MappingSection(state, actions, first)
-                    SettingsSection.DOWNLOADS -> {
-                        DownloadsSection(state, actions, first)
-                        SaveSyncSection(state, actions)
-                    }
+                    SettingsSection.DOWNLOADS -> DownloadsSection(state, actions, first)
+                    SettingsSection.SAVES -> SaveSyncSection(state, actions, first)
                     SettingsSection.CONTROLS -> Box(first) {
                         LoomSwitchRow("Swap A and B", state.settings?.swapConfirmBack == true, actions::setSwap,
                             subtitle = "For Nintendo-style pads: confirm with the right face button and go back with the bottom one.")
@@ -521,10 +519,12 @@ private fun DownloadsSection(state: SettingsUiState, actions: SettingsActions, m
 
 /**
  * Save sync: automatic upload, how the last background sync went, and where Azahar keeps its data
- * (its folder browser opens in place, as the ROMs folder's does).
+ * (its folder browser opens in place, as the ROMs folder's does). No heading of its own above the
+ * switch: the section list names it, and the section must fit the screen.
  */
 @Composable
-private fun SaveSyncSection(state: SettingsUiState, actions: SettingsActions) {
+private fun SaveSyncSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
+    val first = modifier
     val settings = state.settings
     var picking by remember { mutableStateOf(false) }
     val changeFolder = remember { FocusRequester() }
@@ -534,10 +534,11 @@ private fun SaveSyncSection(state: SettingsUiState, actions: SettingsActions) {
     var pickerFocused by remember { mutableStateOf(false) }
     BackHandler(enabled = picking && (toggleFocused || pickerFocused)) { picking = false }
     SectionTop {
-        SectionHeader("Save sync")
-        LoomSwitchRow("Upload saves automatically", settings?.autoUploadSaves ?: true, actions::setAutoUploadSaves,
-            subtitle = "Loom uploads a 3DS save once Azahar has left it alone for a minute: every 15 minutes, and when Loom opens. " +
-                "Saves from RomM always wait for you.")
+        Box(first) {
+            LoomSwitchRow("Upload saves automatically", settings?.autoUploadSaves ?: true, actions::setAutoUploadSaves,
+                subtitle = "Loom uploads a 3DS save once Azahar has left it alone for a minute: every 15 minutes, and when Loom opens. " +
+                    "Saves from RomM always wait for you.")
+        }
         val last = settings?.lastSaveSync
         Text(
             if (last == null) "No save sync has run yet." else "Last sync ${ago(last.atEpochMs)}: ${last.summary}",

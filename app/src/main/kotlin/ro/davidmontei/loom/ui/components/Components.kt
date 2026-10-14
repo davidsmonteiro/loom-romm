@@ -191,7 +191,7 @@ fun LoomRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = if (dense) 48.dp else 64.dp)
+            .heightIn(min = if (dense) 40.dp else 64.dp)
             .background(if (selected) LoomColors.SurfaceHighest else LoomColors.SurfaceRaised, shape)
             .then(
                 if (onClick != null) Modifier.clickable(

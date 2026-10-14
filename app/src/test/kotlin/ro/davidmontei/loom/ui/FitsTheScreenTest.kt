@@ -22,6 +22,8 @@ import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.data.db.SaveSyncState
+import ro.davidmontei.loom.data.saves.SaveSyncEngine
+import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.ui.library.FolderQuestion
@@ -73,6 +75,12 @@ class FitsTheScreenTest {
         return pane.config[SemanticsProperties.VerticalScrollAxisRange].maxValue()
     }
 
+    /** How far Settings' section pane could scroll, in px: 0 when the open section fits. */
+    private fun settingsOverflow(): Float {
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        return rule.onNodeWithTag("settings-content").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].maxValue()
+    }
+
     /** Found by audit: with the plain-HTTP warning showing, the Server step scrolled and cut off its title. */
     @Test fun theServerStepFitsWithTheHttpWarning() {
         val state = OnboardingState(
@@ -92,6 +100,31 @@ class FitsTheScreenTest {
         assertThat(list.config[SemanticsProperties.VerticalScrollAxisRange].maxValue()).isEqualTo(0f)
         val last = rule.onNodeWithTag("section-${SettingsSection.entries.last().name}").fetchSemanticsNode()
         assertThat(last.boundsInRoot.bottom).isAtMost(list.boundsInRoot.bottom)
+    }
+
+    /**
+     * Found by review: Downloads & saves scrolled by over 400 px, with every save control below the
+     * fold. Downloads and Saves are two sections now, and each fits.
+     */
+    @Test fun theDownloadsSectionFits() {
+        var state by mutableStateOf(SettingsScreenTest.sample)
+        rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
+        rule.onNodeWithTag("section-DOWNLOADS").performClick()
+        assertThat(settingsOverflow()).isEqualTo(0f) // battery-optimised, with the button to allow background downloads
+        state = state.copy(batteryUnrestricted = true)
+        assertThat(settingsOverflow()).isEqualTo(0f)
+    }
+
+    /** Saves at its tallest: a chosen Azahar folder (with the button back to the 3DS one) and a failed last sync. */
+    @Test fun theSavesSectionFits() {
+        val settings = SettingsScreenTest.sample.settings!!.copy(
+            azaharUserDir = "/storage/6365-3230/Emulation/Azahar/user",
+            lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true),
+        )
+        rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample.copy(settings = settings), SettingsScreenTest.noop) } }
+        rule.onNodeWithTag("section-SAVES").performClick()
+        assertThat(settingsOverflow()).isEqualTo(0f)
+        rule.saveScreenshot("settings-saves-tallest")
     }
 
     /** Found by audit: the platform folder editor was taller than the screen. */

@@ -50,7 +50,7 @@ import javax.inject.Inject
  */
 enum class SettingsSection(val title: String) {
     SERVER("Server & pairing"), STORAGE("Storage"), MAPPING("Platform folders"),
-    DOWNLOADS("Downloads & saves"), CONTROLS("Controls"), ABOUT("About & licenses"),
+    DOWNLOADS("Downloads"), SAVES("Saves"), CONTROLS("Controls"), ABOUT("About & licenses"),
 }
 
 /** A server platform with the folder and policies Loom will use for it. */
