@@ -12,9 +12,12 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import mockwebserver3.MockResponse
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Test
 import org.junit.runner.RunWith
 import ro.davidmontei.loom.data.db.SaveSyncState
+import ro.davidmontei.loom.data.settings.ServerConfig
+import ro.davidmontei.loom.romm.RommException
 import ro.davidmontei.loom.romm.RommJson
 import ro.davidmontei.loom.storage.saves.SaveHasher
 import ro.davidmontei.loom.storage.saves.SaveRestorer
@@ -411,6 +414,117 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(report.conflicts).isEmpty()
         assertThat(state(pokemonX)).isEqualTo(SaveSyncState.LOCAL_MISSING)
         assertThat(romm.paths()).contains("GET /api/saves")
+    }
+
+    // --- without RomM ---
+
+    private suspend fun rommOutOfReach() = settings.setServer(ServerConfig("http://127.0.0.1:1/".toHttpUrl()), "5.3.1")
+
+    /** A look that can't reach RomM (offline, the server down). */
+    private suspend fun checkWithoutRomm(romId: Int) {
+        val thrown = runCatching { engine().sync(SaveSyncRequest.CHECK.copy(romIds = setOf(romId))) }.exceptionOrNull()
+        assertThat(thrown).isInstanceOf(RommException.Unreachable::class.java)
+    }
+
+    /**
+     * Found on the Thor: a save folder moved away by hand still read "in sync" until RomM could be
+     * reached again. Without RomM, a look still says what changed on the Thor since the last sync.
+     */
+    @Test fun withoutRommALookStillSaysWhatChangedOnTheThor() = runBlocking<Unit> {
+        install(pokemonX)
+        val synced = writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
+        rommOutOfReach()
+
+        val aside = File(tmp.root, "aside").apply { saveFolder(pokemonX).renameTo(this) } // moved away by hand
+        checkWithoutRomm(7)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.LOCAL_MISSING)
+
+        aside.renameTo(saveFolder(pokemonX)) // put back
+        checkWithoutRomm(7)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
+        assertThat(saves.unit(7)!!.localHash).isEqualTo(synced)
+
+        writeSave(pokemonX, bytes(2), minutesAgo = 5) // played since
+        checkWithoutRomm(7)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.LOCAL_NEWER)
+        assertThat(romm.uploads()).hasSize(1) // looking, and RomM out of reach anyway
+    }
+
+    /** What only RomM can settle stays as the last look with RomM left it: a conflict, a newer save there. */
+    @Test fun withoutRommAConflictOrANewerSaveOnRommStays() = runBlocking<Unit> {
+        install(pokemonX)
+        install(omegaRuby)
+        writeSave(pokemonX, bytes(1))
+        writeSave(omegaRuby, bytes(2))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.addSave(7, archiveOf(bytes(3)))
+        romm.addSave(8, archiveOf(bytes(4)))
+        writeSave(pokemonX, bytes(5), minutesAgo = 5) // and played on the Thor too: a conflict
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.CONFLICT)
+        assertThat(state(omegaRuby)).isEqualTo(SaveSyncState.SERVER_NEWER)
+        rommOutOfReach()
+
+        saveFolder(pokemonX).deleteRecursively()
+        saveFolder(omegaRuby).deleteRecursively()
+        val thrown = runCatching { engine().sync(SaveSyncRequest.CHECK) }.exceptionOrNull()
+
+        assertThat(thrown).isInstanceOf(RommException.Unreachable::class.java)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.CONFLICT)
+        assertThat(state(omegaRuby)).isEqualTo(SaveSyncState.SERVER_NEWER)
+    }
+
+    /** A game never synced: without RomM, a look says whether the Thor has a save, RomM's side as last seen (none). */
+    @Test fun withoutRommANeverSyncedGameSaysWhatTheThorHas() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.CHECK)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.LOCAL_NEWER)
+        rommOutOfReach()
+
+        saveFolder(pokemonX).deleteRecursively()
+        checkWithoutRomm(7)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.NO_SAVE)
+
+        install(omegaRuby) // never looked at with RomM
+        writeSave(omegaRuby, bytes(2))
+        checkWithoutRomm(8)
+        assertThat(state(omegaRuby)).isEqualTo(SaveSyncState.LOCAL_NEWER)
+    }
+
+    /** RomM stopping half way through a run: the games it answered for keep that answer. */
+    @Test fun gamesRommAnsweredForKeepTheAnswerWhenItStopsHalfWay() = runBlocking<Unit> {
+        install(pokemonX)
+        install(omegaRuby)
+        writeSave(pokemonX, bytes(1))
+        writeSave(omegaRuby, bytes(2))
+        var negotiated = 0
+        romm.onRequest = { request ->
+            if (request.url.encodedPath == "/api/sync/negotiate" && ++negotiated == 2) {
+                romm.negotiateAnswer = { MockResponse.Builder().code(400).setHeader("Content-Type", "application/json").body("""{"detail":"Busy"}""").build() }
+            }
+        }
+
+        val report = engine(chunkSize = 1).sync(SaveSyncRequest.PUSH)
+
+        assertThat(report.unavailable).isEqualTo("RomM won't sync saves with this device: Busy")
+        assertThat(report.uploaded).containsExactly(7)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
+        assertThat(state(omegaRuby)).isEqualTo(SaveSyncState.LOCAL_NEWER) // the Thor's side, as found
+    }
+
+    /** Without a RomM device for Loom, a look still says what changed on the Thor. */
+    @Test fun withoutARommDeviceALookStillSaysWhatChangedOnTheThor() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        pair(deviceId = null)
+        saveFolder(pokemonX).deleteRecursively()
+
+        assertThat(engine().sync(SaveSyncRequest.CHECK).unavailable).isEqualTo(SaveSyncEngine.NO_DEVICE)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.LOCAL_MISSING)
     }
 
     // --- runs ---

@@ -208,7 +208,8 @@ class SaveSyncEngine(
     /**
      * One sync run. Per-game problems end up in the report (and the game's state); the run itself
      * throws only [RommException.Unreachable], [RommException.Unauthorized] and
-     * [RommException.Forbidden], which no game can get past.
+     * [RommException.Forbidden], which no game can get past. Whenever RomM can't answer for a
+     * game, its state still shows the Thor's side as the run found it.
      */
     suspend fun sync(request: SaveSyncRequest): SaveSyncReport = lock.withLock {
         withContext(Dispatchers.IO) { Run(request).go() }
@@ -260,6 +261,8 @@ class SaveSyncEngine(
         val snapshot: UnitSnapshot,
         val localHash: String?,
         val baseline: SaveBaseline?,
+        /** Where the game's sync stood before this run looked at it. */
+        val before: SaveUnitEntity?,
     ) {
         val romId get() = save.romId
     }
@@ -273,19 +276,14 @@ class SaveSyncEngine(
         private val waiting = mutableSetOf<Int>()
         private val failed = mutableMapOf<Int, String>()
         private val unsupported = mutableMapOf<Int, String>()
+        /** Games RomM answered for in this run, whatever came of it. */
+        private val settled = mutableSetOf<Int>()
 
         private fun report(unavailable: String? = null, needsPairing: Boolean = false) =
             SaveSyncReport(uploaded, downloaded, adopted, conflicts, serverNewer, waiting, failed, unsupported, unavailable, needsPairing)
 
         suspend fun go(): SaveSyncReport {
-            val api = try {
-                server.api()
-            } catch (e: NotPairedException) {
-                return report(unavailable = e.message)
-            }
-            val deviceId = deviceId(api) ?: return report(unavailable = NO_DEVICE, needsPairing = true)
             saves.deleteUninstalledUnits()
-
             val prepared = mutableListOf<Prepared>()
             for ((rom, install) in gamesInScope()) {
                 when (val save = units.resolve(rom, install)) {
@@ -304,11 +302,41 @@ class SaveSyncEngine(
                     }
                 }
             }
-            for (chunk in prepared.chunked(chunkSize)) {
-                val stop = syncChunk(api, deviceId, chunk)
-                if (stop != null) return report(unavailable = stop, needsPairing = stop == NO_DEVICE)
+            // Whatever keeps RomM from answering, each game still shows the Thor's side as Loom just found it.
+            try {
+                val api = try {
+                    server.api()
+                } catch (e: NotPairedException) {
+                    thorSideOnly(prepared)
+                    return report(unavailable = e.message)
+                }
+                val deviceId = deviceId(api) ?: run {
+                    thorSideOnly(prepared)
+                    return report(unavailable = NO_DEVICE, needsPairing = true)
+                }
+                for (chunk in prepared.chunked(chunkSize)) {
+                    val stop = syncChunk(api, deviceId, chunk)
+                    if (stop != null) {
+                        thorSideOnly(prepared)
+                        return report(unavailable = stop, needsPairing = stop == NO_DEVICE)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                thorSideOnly(prepared)
+                throw e
             }
             return report()
+        }
+
+        /** The games RomM didn't answer for: each shows the Thor's side as this run found it ([withoutRomm]). */
+        private suspend fun thorSideOnly(prepared: List<Prepared>) {
+            for (game in prepared) {
+                // A conflict stays one until it's answered, or a look with RomM finds it settled.
+                if (game.romId in settled || saves.conflict(game.romId) != null) continue
+                withoutRomm(game)?.let { setState(game.romId, it, null) }
+            }
         }
 
         private suspend fun gamesInScope() = catalog.installs()
@@ -332,7 +360,7 @@ class SaveSyncEngine(
                     else -> SaveHasher.hashUnit(save.roots)
                 }
                 val baseline = saves.baseline(save.romId, SAVE_SLOT)?.takeIf { it.unitPath == path }
-                val prepared = Prepared(save, before, hash, baseline?.toBaseline())
+                val prepared = Prepared(save, before, hash, baseline?.toBaseline(), cached)
                 setState(save.romId, cached?.state ?: SaveSyncState.NO_SAVE, cached?.detail, save, before, hash)
                 return prepared
             } catch (e: IOException) {
@@ -366,11 +394,13 @@ class SaveSyncEngine(
                     val head = if (fromList) listed[game.romId] else op!!.head()
                     val action = if (fromList) null else op!!.syncAction.toNegotiated()
                     if (act(api, deviceId, negotiated.sessionId, game, head, action) == Acted.DONE) completed++
+                    settled += game.romId
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     if (e.isFatal()) throw e
                     fail(game.romId, e.message ?: e.javaClass.simpleName)
+                    settled += game.romId
                     failures++
                 }
             }
@@ -480,6 +510,28 @@ class SaveSyncEngine(
 
     /** Whether an operation was carried out, for the session's counters. */
     private enum class Acted { DONE, NOTHING }
+
+    /**
+     * Where [game]'s save stands when RomM can't be asked: the Thor's side as Loom just found it,
+     * RomM's as at the last look. Null where that tells nothing new: the Thor's save is as it was
+     * at the last look, or RomM had a newer save then, which only a look with RomM settles.
+     */
+    private fun withoutRomm(game: Prepared): SaveSyncState? {
+        val before = game.before?.takeIf { it.unitPath == game.save.unitPath }
+        val lastLook = before?.state?.takeIf { it in COMPARED }
+        if (lastLook == SaveSyncState.SERVER_NEWER || (lastLook != null && before?.localHash == game.localHash)) return null
+        val base = game.baseline
+        return when {
+            base != null -> when (game.localHash) {
+                null -> SaveSyncState.LOCAL_MISSING
+                base.localHash -> SaveSyncState.IN_SYNC
+                else -> SaveSyncState.LOCAL_NEWER
+            }
+            // Never synced from here, and RomM had no save of it at the last look, or there was none.
+            before == null || lastLook in NONE_ON_ROMM -> if (game.localHash == null) SaveSyncState.NO_SAVE else SaveSyncState.LOCAL_NEWER
+            else -> null
+        }
+    }
 
     // --- conflicts ---
 
@@ -834,6 +886,15 @@ class SaveSyncEngine(
         private const val STALE_LOCAL = "The save on the Thor changed since this choice was shown"
         private const val STALE_SERVER = "RomM's save changed since this choice was shown"
         private const val EMULATOR_UNKNOWN = "unknown"
+
+        /** The states a look with RomM gives a save Loom could read: both sides compared. */
+        private val COMPARED = setOf(
+            SaveSyncState.IN_SYNC, SaveSyncState.NO_SAVE, SaveSyncState.LOCAL_NEWER, SaveSyncState.WRITING,
+            SaveSyncState.SERVER_NEWER, SaveSyncState.LOCAL_MISSING,
+        )
+
+        /** Of those, the ones a game never synced from its folder gets only while RomM has no save of it. */
+        private val NONE_ON_ROMM = setOf(SaveSyncState.NO_SAVE, SaveSyncState.LOCAL_NEWER, SaveSyncState.WRITING)
 
         private val ARCHIVE_STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH-mm-ss 'UTC'").withZone(ZoneOffset.UTC)
     }
