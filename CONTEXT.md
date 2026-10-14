@@ -1,6 +1,6 @@
 # Loom
 
-Loom moves games from a RomM server into the folders the Cocoon frontend scans on an AYN Thor, removes them again when space is needed, and (later) keeps saves in sync. Cocoon stays the place to browse and play; Loom is the store you visit occasionally.
+Loom moves games from a RomM server into the folders the Cocoon frontend scans on an AYN Thor, removes them again when space is needed, and keeps 3DS saves in sync with RomM. Cocoon stays the place to browse and play; Loom is the store you visit occasionally.
 
 ## Language
 
@@ -109,3 +109,22 @@ _Avoid_: snapshot, copy
 
 **Save conflict**:
 A slot where Loom won't pick a side on its own: both sides changed since the baseline, the server's save went back or came from another emulator, or RomM disagrees with Loom. The user chooses Keep Thor, Keep server, Keep both or Skip.
+
+**Save sync run**:
+One pass over some or all installed games' saves: read and hash each, negotiate with RomM, decide each game from its baseline, then upload, restore or record a conflict. Never two at once.
+_Avoid_: sync session (that is RomM's record of one negotiate)
+
+**Automatic upload**:
+Uploading saves that changed on the Thor without being asked, in a save sync run every 15 minutes, when Loom opens and when the card mounts. Only once a save has been left alone for a minute (the quiet period) and reads the same twice a few seconds apart. On by default, with a switch in Settings.
+_Avoid_: auto sync (nothing comes down from RomM without the user)
+
+**Restore**:
+Putting RomM's save in place of the Thor's, only when the user asks, once they have closed the emulator: after a save backup, and in one piece (the save on the card is always the old one or the checked new one). Keep server and Keep both restore too; `PULL_SAVES` restores only saves unchanged on the Thor or missing.
+_Avoid_: pull, download (for what the user does)
+
+**Emulator id**:
+The name a save is synced under in RomM's `emulator` field: `azahar` for Azahar. A newer save on RomM under another emulator id is never restored without asking.
+
+**Archival copy**:
+A save version uploaded outside every slot, which negotiate never pairs. Keep both puts the Thor's save there, as "<game> (Thor <UTC date and time>).zip".
+_Avoid_: backup (backups stay on the card)

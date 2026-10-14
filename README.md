@@ -6,7 +6,7 @@ Loom is a small companion app for the [Cocoon](https://github.com/inssekt/Cocoon
 
 ![Library](docs/screenshots/library-grid.png)
 
-Loom does not launch games, replace the home screen, or emulate anything. Save sync is planned for Phase 2 ([docs/ROADMAP.md](docs/ROADMAP.md)).
+Loom does not launch games, replace the home screen, or emulate anything. It does keep the saves of 3DS games played in Azahar in sync with RomM ([Save sync](#save-sync-3ds-games-in-azahar)); other emulators come later ([docs/ROADMAP.md](docs/ROADMAP.md)).
 
 ## What it does
 
@@ -21,6 +21,7 @@ Loom does not launch games, replace the home screen, or emulate anything. Save s
   - The finished game appears with a single rename.
 - **Survives interruptions.** Pausing, the screen turning off, the app being killed, the SD card being pulled, or changing the server address in Settings: downloads resume where they stopped.
 - **Offloads.** Removing a game frees the space and keeps it in the library, so it can come back with one press.
+- **Syncs 3DS saves with RomM.** Changed saves go up by themselves; RomM's come down only when you ask, after a backup; when both changed, Loom asks which to keep.
 
 ## Requirements
 
@@ -79,7 +80,7 @@ Android only updates an app signed with the same key. Moving between a release f
    Without a scheme, LAN and Tailscale hosts try `http://` first and everything else tries `https://` first. Change it any time in Settings → Server & pairing; queued downloads continue from the new address.
 2. **Pair.** Scan the QR code with your phone and approve "Loom" in RomM.
    - Alternatively, create an API token in RomM's web UI and use **Pair device** to get an 8-character code, or paste a token.
-   - Loom asks for these scopes: `me.read platforms.read roms.read assets.read assets.write devices.read devices.write`. The asset and device scopes are for the planned save sync, so you won't have to pair again.
+   - Loom asks for these scopes: `me.read platforms.read roms.read assets.read assets.write devices.read devices.write`. The asset and device scopes are for save sync.
 3. **All files access.** Grant it in Android settings, then press B to come back.
 4. **ROMs folder.** Pick the folder that holds your system folders.
    - Loom suggests `<SD card>/ROMs`.
@@ -142,7 +143,7 @@ Either way the choice is remembered for that platform; change it in Settings →
 | Button | Library | Queue | Everywhere |
 |---|---|---|---|
 | D-pad | Move | Move | Move |
-| A | Game details | Pause / resume / retry | Select |
+| A | Game details | Choose a save, restore one, or pause / resume / retry a download | Select |
 | B | | | Back (closes dialogs) |
 | X | Download, or offload (asks first) | Cancel (asks first) | |
 | Y | Search | | |
@@ -150,7 +151,36 @@ Either way the choice is remembered for that platform; change it in Settings →
 | Start | Open the queue | | |
 | Select | Settings | | |
 
-For Nintendo-layout pads, use Settings → Controls → **Swap A and B**. Touch works too, and the first button press after a tap still acts (it doesn't just bring the focus ring back), except X, which only brings focus back so it never downloads a game you didn't pick. Loom runs full screen; swipe from an edge to see the system bars.
+In a save conflict's choice, B is **Skip**. For Nintendo-layout pads, use Settings → Controls → **Swap A and B**. Touch works too, and the first button press after a tap still acts (it doesn't just bring the focus ring back), except X, which only brings focus back so it never downloads a game you didn't pick. Loom runs full screen; swipe from an edge to see the system bars.
+
+## Save sync (3DS games in Azahar)
+
+Loom keeps the saves of the 3DS games it installed (or found on the card) in sync with RomM, so a game can carry on on another device (Argosy, RomM's web player) and a save is never lost on the Thor.
+
+**What syncs.** A game's own save, not save states or 3DS extra data (extdata). Loom finds it from the title ID in the cartridge image (`.3ds`, `.cci`), or the one RomM read, in Azahar's folder: on the Thor that's inside `ROMs/n3ds`, at `sdmc/Nintendo 3DS/…/title/00040000/<title>/data/`. The `data/` folder travels zipped, as Argosy uploads it, in RomM's `autosave` slot. If Azahar keeps its data elsewhere, choose its folder in **Settings → Downloads & saves**.
+
+**Uploads happen by themselves.** Every 15 minutes, when Loom opens and when the SD card is mounted, Loom uploads the saves that changed on the Thor. It waits until a save has been left alone for a minute and reads the same twice a few seconds apart, so it never sends one Azahar is still writing. **Upload saves automatically** in Settings → Downloads & saves turns this off; **Upload save** in a game's details and `PUSH_SAVES` still work. An upload never deletes anything: RomM keeps the older versions (ten per game).
+
+**Saves from RomM wait for you.** Loom can't tell whether Azahar is still running, and an emulator left in the background writes over a restored save the next time the game saves. So RomM's save replaces the Thor's only when you ask: **Restore server save** in the game's details, or A on the game in the queue (a notification says when RomM has a newer save). Loom asks you to close Azahar completely first (swipe it away in Recents). A save made by another emulator on RomM is never restored without asking.
+
+**Backups.** Before replacing a save, Loom zips it into `.loom/save-backups/<rom id>/` at the root of the same SD card: outside the ROMs folder, so Cocoon doesn't list it, and kept if Loom is uninstalled. The newest ten per game stay. To put one back by hand, close Azahar and unzip it into the game's `title/00040000/<title>/` folder, in place of its `data/` folder. The restore itself is all or nothing: the new save is unpacked and checked beside the old one, then moved into place file by file, and anything that fails puts the old save back.
+
+**Conflicts: Loom asks.** Loom acts alone only when one side is unchanged since the last sync. When both changed, when RomM's save went back or came from another emulator, or when RomM and Loom disagree, the game is a save conflict: a notification says so, and the queue lists it first with both sides (when each changed, their sizes, and the emulator and device RomM's came from). A on it offers:
+- **Skip** (focused, and what B does): changes nothing. Loom asks again once either save changes.
+- **Keep Thor**: uploads the Thor's save as the newest; RomM's stays in its history.
+- **Keep server**: backs up the Thor's save and puts RomM's in its place.
+- **Keep both**: uploads the Thor's save to RomM as a separate copy (outside the slot, named after the game and the time), then takes RomM's.
+
+**Where to look.** A game's details show its save: in sync, newer on the Thor, newer on RomM, missing on the Thor, changed on both sides, none yet, or why it isn't synced. The queue lists the conflicts, the saves RomM can restore, and the games synced lately. Settings → Downloads & saves shows when the last background sync ran and what it did, or why it couldn't.
+
+**Reinstalling Loom.** Loom pairs as the same RomM device (its identifier comes from the Thor's Android ID), and the backups stay on the card. Its record of the last sync is gone, though: games whose saves match RomM's are marked in sync, and any that differ become conflicts for you to settle.
+
+**Why only Azahar for now.**
+- DuckStation (PS1), Dolphin (GameCube, Wii), Cemu (Wii U) and Eden (Switch) keep their saves in `Android/data`, which other apps can't read on Android 11 and later, all files access or not. Moving Eden's data to shared storage is the next thing to try.
+- melonDS (DS) and PPSSPP (PSP) can keep their saves on the SD card; they come next, once set up that way.
+- RetroArch (arcade) has no storage access on the Thor yet.
+
+On RomM 5.3.1, negotiate compares timestamps whenever another device uploaded last, and could ask Loom to download over progress made on the Thor. So Loom decides each game from its own record of the last sync and treats any disagreement as a conflict ([ADR 0010](docs/adr/0010-decide-save-sync-from-a-local-baseline.md), [ADR 0011](docs/adr/0011-back-up-saves-on-the-card-and-restore-by-rename.md)).
 
 ## Scripting (adb, Termux)
 
@@ -159,7 +189,8 @@ For Nintendo-layout pads, use Settings → Controls → **Swap A and B**. Touch 
 adb shell am broadcast -n ro.davidmontei.loom/.headless.CommandReceiver -a ro.davidmontei.loom.action.SYNC_CATALOG
 adb shell am broadcast -n ro.davidmontei.loom/.headless.CommandReceiver -a ro.davidmontei.loom.action.SYNC_CATALOG --ez full true
 
-# Upload the saves that changed on the Thor (3DS games in Azahar), once left alone for a minute
+# Upload the saves that changed on the Thor (3DS games in Azahar), once left alone for a minute,
+# even with automatic upload turned off
 adb shell am broadcast -n ro.davidmontei.loom/.headless.CommandReceiver -a ro.davidmontei.loom.action.PUSH_SAVES
 
 # Download newer saves from RomM. Close the emulator first. Only saves unchanged on the Thor since the
@@ -189,10 +220,14 @@ Long-press Loom's icon for the **Sync library** and **Downloads** shortcuts.
 | "already exists on the SD card and wasn't installed by Loom" | Remove the old copy, or resync so Loom adopts it if it's the same game. |
 | "This card can't hold files over 4 GB (FAT32)" | Reformat the SD card as exFAT. |
 | "Needs X free on the SD card" | Offload something (X on an installed game) and retry from the queue. |
-| Downloads stop in the background | Allow background downloads in Settings → Downloads. Opening Loom resumes them either way. |
+| Downloads stop in the background | Allow background downloads in Settings → Downloads & saves. Opening Loom resumes them either way. |
 | "RomM rejected Loom's token" | The token expired or was revoked. Use Settings → Server & pairing → Pair again. Your library and games stay. |
 | A multi-disc game shows up as one game per disc | RomM lists loose `(Disc N)` files as separate games; see [Preparing your RomM library](#preparing-your-romm-library). |
 | Multi-disc PS1 games don't start in DuckStation via Cocoon | A known Cocoon issue with relative `.m3u` paths for DuckStation's default player (CocoonFE discussion #414). |
+| "RomM doesn't have Loom as a device, so saves can't sync" | Loom was paired with a pasted token or pair code, which isn't tied to a device. Use Settings → Server & pairing → Pair again, with the code Loom shows. |
+| "Azahar wrote … less than a minute ago" | Loom only uploads a save that has been left alone for a minute. Try again shortly; automatic upload sends it by itself. |
+| A 3DS game's save says "not synced" | The reason follows. Usually Azahar's folder isn't where Loom looks (run the game in Azahar once, or choose the folder in Settings → Downloads & saves), or the game isn't a `.3ds`/`.cci` image and RomM read no title ID from it. |
+| A restored save didn't stick | Azahar was still running in the background and saved over it, and Loom may have uploaded that as the newest save since. Nothing is lost: RomM keeps the older versions (pick one in its web UI), and the Thor's save from before the restore is in `.loom/save-backups`. Close Azahar completely before restoring. |
 
 ## Development
 
@@ -212,7 +247,7 @@ Modules:
 
 Further reading:
 - [`CONTEXT.md`](CONTEXT.md): the project's vocabulary.
-- [`docs/adr/`](docs/adr/): the decisions behind staging, per-file downloads, archive checks, pairing, the Keystore, Retrofit and the module split.
+- [`docs/adr/`](docs/adr/): the decisions behind staging, per-file downloads, archive checks, pairing, the Keystore, Retrofit, the module split, and save sync's baseline and backups.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md): Phases 2 and 3.
 
 ### Releases
