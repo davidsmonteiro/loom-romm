@@ -1,6 +1,6 @@
 # Loom roadmap
 
-Phase 1 (the MVP: pairing, catalog sync, offline browsing, platform mapping, download queue with atomic installs and checksum verification, offload and storage view) is built, and so are two parts of Phase 2: the scheduled catalog refresh and save sync for 3DS games in Azahar. This file plans the rest of Phase 2 and Phase 3; everything below that isn't marked built is not implemented yet.
+Phase 1 (the MVP: pairing, catalog sync, offline browsing, platform mapping, download queue with atomic installs and checksum verification, offload and storage view) is built, and so are three parts of Phase 2: the scheduled catalog refresh, save sync for 3DS games in Azahar, and save sync for Switch games in Eden. This file plans the rest of Phase 2 and Phase 3; everything below that isn't marked built is not implemented yet.
 
 ## Phase 2: background refresh and save sync
 
@@ -35,9 +35,17 @@ Corrections to the first plan (design review, 2026-10-13):
 5. The platform mapping's `saveDir: String?` can't express saves found by title ID or made of folders: each emulator gets a resolver instead.
 6. No `FileObserver`: Azahar writes through SAF, which may bypass the path Loom would watch. Scanning a few dozen saves' sizes and times is cheap and reliable.
 
+### Save sync: Switch games in Eden (built)
+The owner moved Eden's save folder out of `Android/data` to the card, `ROMs/saves/Eden` (2026-10-14), so Switch games join the same save sync: the same baseline, uploads, restores, backups and conflicts as Azahar's, as emulator `eden` in the `autosave` slot.
+
+- **Finding the save.** A game's save is `user/save/0000000000000000/<profile>/<title ID>/` in Eden's save folder (`ROMs/saves/Eden`, or the one chosen in Settings → Saves). One profile is used as is; with several, Settings → Saves asks whose saves to sync, and until then the games say why they wait. The all-zeros profile holds the saves of games that save per console (Argosy's list of them is reused), never a user's. The title folder is zipped under its own name, as Argosy's Switch handler does on RomM 5.3.1, so archives restore either way.
+- **Title IDs.** RomM 5.3.1 and 5.4.0 never give one for Switch games (they read them without keys). Loom reads it from the game's XCI or NSP (XCZ, NSZ) with the `header_key` in the owner's `prod.keys` (the ROMs folder, or its `switch` folder): the partition tables and each NCA's first 0x400 bytes, AES-XTS-decrypted (ADR 0012). The key is read only when a game's title ID isn't known, held for that read and wiped; it is never logged, stored or uploaded. The ID is cached per game with the image's path, size and time. Without a usable key, the game's details ask the owner which of Eden's save folders is the game's (newest first; the other games' folders aren't offered), and the answer is remembered. An update or DLC alone keeps no save; two games with one title ID sync neither, as each would restore over the other's save.
+- **The saves folder.** `ROMs/saves` is never a system folder: not detected, offered, adopted from, accepted as a platform's folder, or offloaded from.
+
 Next:
 - **melonDS (DS) and PPSSPP (PSP)**, once set up with saves on the SD card (melonDS beside the ROMs, PPSSPP's memory stick on the card): one resolver each, plus fixture tests.
-- **Eden (Switch)**, the only `Android/data` emulator with real saves on the Thor: a spike to move its `nand` to shared storage (`nand_directory` in `config.ini`, all-files access granted to Eden). DuckStation, Dolphin and Cemu stay out of reach unless they can do the same.
+- DuckStation, Dolphin and Cemu stay out of reach in `Android/data` unless they can move their saves to shared storage, as Eden did.
+- **Eden, later:** Switch title IDs from RomM once it reads them (5.4 still can't without keys), as a cross-check of the one read on the Thor; the owner's pick of a save folder offered from the queue too, not only from the game's details.
 - **RomM 5.4 extras**, behind a version check: `content_hash` on `/downloaded` (server-side baselines), negotiate's `emulators` filter, and `delete` as a question about deleting the local save. Loom's own rule stays as a cross-check.
 - A result for `PULL_SAVES` (a broadcast when the run ends) so a frontend can start the emulator as soon as the restores are done, not after a fixed wait.
 - Smaller: a per-game "don't sync on this device" switch (kept by Loom: RomM's untrack covers one save version), Wi-Fi only, and a `FileObserver` speed-up if a spike shows it sees Azahar's writes.
