@@ -173,6 +173,16 @@ class SaveSyncEngine(
         withContext(Dispatchers.IO) { resolve(romId, choice) }
     }
 
+    /**
+     * Puts RomM's save for [romId] on the Thor, when the user asks (with the emulator closed): for
+     * a game whose save on the Thor is unchanged since the last sync or missing, such as one
+     * deleted by mistake. The Thor's save is backed up first. A save that changed on the Thor, or
+     * one from another emulator on RomM, is a conflict to settle instead.
+     */
+    suspend fun restoreFromServer(romId: Int): ResolveResult = lock.withLock {
+        withContext(Dispatchers.IO) { restore(romId) }
+    }
+
     // --- one run ---
 
     private class Prepared(
@@ -396,25 +406,73 @@ class SaveSyncEngine(
 
     // --- conflicts ---
 
+    /** The server, this device and a game's save, for something the user asked for; or why not. */
+    private sealed interface Opened {
+        class Ready(val api: RommApi, val deviceId: String, val save: ResolvedSave.Ready) : Opened
+        class Refused(val reason: String) : Opened
+    }
+
+    private suspend fun open(romId: Int): Opened {
+        val api = try {
+            server.api()
+        } catch (e: NotPairedException) {
+            return Opened.Refused(e.message ?: "Not paired")
+        }
+        val deviceId = deviceId(api) ?: return Opened.Refused(NO_DEVICE)
+        val install = catalog.install(romId) ?: return Opened.Refused("The game isn't installed any more")
+        val rom = catalog.rom(romId) ?: return Opened.Refused("The game isn't in the catalog any more")
+        return when (val resolved = units.resolve(rom, install)) {
+            is ResolvedSave.Ready -> {
+                // A restore Loom died in is undone first, so nothing acts on a half-restored save.
+                restorer.recover(resolved.roots)
+                Opened.Ready(api, deviceId, resolved)
+            }
+            is ResolvedSave.Unsupported -> Opened.Refused(resolved.reason)
+            is ResolvedSave.Unavailable -> Opened.Refused(resolved.reason)
+        }
+    }
+
+    private suspend fun restore(romId: Int): ResolveResult {
+        val opened = try {
+            open(romId)
+        } catch (e: IOException) {
+            return ResolveResult.Failed(e.message ?: "Couldn't read the save")
+        }
+        if (opened is Opened.Refused) return ResolveResult.Failed(opened.reason)
+        val (api, deviceId, save) = (opened as Opened.Ready).let { Triple(it.api, it.deviceId, it.save) }
+        return try {
+            val local = SaveHasher.hashUnit(save.roots)
+            if (local != null && local != saves.baseline(romId, SAVE_SLOT)?.localHash) {
+                return ResolveResult.Failed("The save on the Thor changed since the last sync: sync this game to choose which to keep")
+            }
+            val head = heads(api, listOf(romId))[romId] ?: return ResolveResult.Failed("RomM has no save for this game")
+            if (head.emulator != save.emulator) {
+                return ResolveResult.Failed("RomM's save was made by ${head.emulator ?: "another app"}: sync this game to choose which to keep")
+            }
+            download(api, deviceId, null, romId, save, head, local)
+            saves.deleteConflict(romId)
+            ResolveResult.Done
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (e is RommException && e.isFatal()) throw e
+            ResolveResult.Failed(e.message ?: e.javaClass.simpleName)
+        }
+    }
+
     private suspend fun resolve(romId: Int, choice: ConflictChoice): ResolveResult {
         val conflict = saves.conflict(romId) ?: return ResolveResult.Failed("This game has no save conflict any more")
         if (choice == ConflictChoice.SKIP) {
             saves.skipConflict(romId)
             return ResolveResult.Done
         }
-        val api = try {
-            server.api()
-        } catch (e: NotPairedException) {
-            return ResolveResult.Failed(e.message ?: "Not paired")
+        val opened = try {
+            open(romId)
+        } catch (e: IOException) {
+            return ResolveResult.Failed(e.message ?: "Couldn't read the save")
         }
-        val deviceId = deviceId(api) ?: return ResolveResult.Failed(NO_DEVICE)
-        val install = catalog.install(romId) ?: return ResolveResult.Failed("The game isn't installed any more")
-        val rom = catalog.rom(romId) ?: return ResolveResult.Failed("The game isn't in the catalog any more")
-        val save = when (val resolved = units.resolve(rom, install)) {
-            is ResolvedSave.Ready -> resolved
-            is ResolvedSave.Unsupported -> return ResolveResult.Failed(resolved.reason)
-            is ResolvedSave.Unavailable -> return ResolveResult.Failed(resolved.reason)
-        }
+        if (opened is Opened.Refused) return ResolveResult.Failed(opened.reason)
+        val (api, deviceId, save) = (opened as Opened.Ready).let { Triple(it.api, it.deviceId, it.save) }
         return try {
             // The user chose between what the conflict showed: both sides must still be exactly that.
             val local = SaveHasher.hashUnit(save.roots)

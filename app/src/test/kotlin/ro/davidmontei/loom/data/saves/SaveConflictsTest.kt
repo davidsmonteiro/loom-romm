@@ -5,11 +5,12 @@ import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.storage.saves.SaveHasher
 import ro.davidmontei.loom.storage.saves.SyncDecision
 
-/** The user's answers to a save conflict: Keep Thor, Keep server, Keep both, Skip. */
+/** What the user can ask for one game: the answers to a save conflict, and restoring RomM's save. */
 @RunWith(AndroidJUnit4::class)
 class SaveConflictsTest : SaveSyncTestBase() {
 
@@ -115,5 +116,53 @@ class SaveConflictsTest : SaveSyncTestBase() {
         writeSave(pokemonX, bytes(3), minutesAgo = 5)
         assertThat(engine().sync(SaveSyncRequest.PUSH).conflicts).containsExactly(7)
         assertThat(saves.conflict(7)!!.skipped).isFalse()
+    }
+
+    /** Deleted on the Thor by mistake: the server's copy comes back on request. */
+    @Test fun aSaveDeletedOnTheThorIsRestoredOnRequest() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        saveFolder(pokemonX).deleteRecursively()
+        engine().sync(SaveSyncRequest.PULL) // the rule leaves a deleted save alone
+        assertThat(saveFolder(pokemonX).exists()).isFalse()
+
+        assertThat(engine().restoreFromServer(7)).isEqualTo(ResolveResult.Done)
+
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(saves.unit(7)!!.state).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
+    @Test fun restoringNeverReplacesProgressOrAnotherEmulatorsSave() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.addSave(7, archiveOf(bytes(2)))
+        writeSave(pokemonX, bytes(3), minutesAgo = 5) // played on since
+
+        assertThat(engine().restoreFromServer(7)).isInstanceOf(ResolveResult.Failed::class.java)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(3))
+
+        writeSave(pokemonX, bytes(1)) // back to the synced save
+        romm.addSave(7, archiveOf(bytes(4)), emulator = "citra")
+        assertThat(engine().restoreFromServer(7)).isInstanceOf(ResolveResult.Failed::class.java)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(backups(pokemonX)).isEmpty()
+    }
+
+    /** A conflict's answer never acts on a save Loom was halfway through restoring. */
+    @Test fun aHalfRestoredSaveIsPutBackBeforeAnAnswerActs() = runBlocking<Unit> {
+        val (local, _) = firstSyncConflict()
+        val work = File(saveFolder(pokemonX).parentFile, ".loom-restore-1")
+        File(work, "old/data/00000001").mkdirs()
+        File(work, "journal").writeText("data/00000001/main")
+        File(saveFolder(pokemonX), "00000001/main").renameTo(File(work, "old/data/00000001/main"))
+        File(saveFolder(pokemonX), "00000001/main").writeBytes(bytes(9))
+        settle(pokemonX)
+
+        assertThat(engine().resolveConflict(7, ConflictChoice.KEEP_THOR)).isEqualTo(ResolveResult.Done)
+
+        assertThat(romm.head(7)!!.hash).isEqualTo(local)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
     }
 }
