@@ -177,6 +177,20 @@ class RommSaveSyncApiTest {
         assertThat(url.queryParameter("overwrite")).isEqualTo("true")
     }
 
+    /** "Keep both" parks the Thor's copy outside every slot, where negotiate never pairs it. */
+    @Test fun anArchivalUploadHasNoSlot() = runTest {
+        val file = tmp.newFile("unit.zip").apply { writeBytes(ByteArray(8)) }
+        server.enqueue(json(save(503, 7, slot = null, fileName = "Pokemon X (Thor 2026-10-13 22-15-07).zip").toString()))
+        val saved = rommCall {
+            api.uploadSave(
+                romId = 7, emulator = "azahar", slot = null, deviceId = "dev-thor", sessionId = null,
+                contentHash = null, saveFile = saveFilePart(file, "Pokemon X (Thor 2026-10-13 22-15-07).zip"),
+            )
+        }
+        assertThat(server.takeRequest().url.queryParameterNames).doesNotContain("slot")
+        assertThat(saved.slot).isNull()
+    }
+
     /** RomM's 409 guard: the slot has a version this device never synced. It must surface as a conflict. */
     @Test fun uploadRejectedBecauseTheSlotMovedOnIsAConflict() = runTest {
         val file = tmp.newFile("unit.zip").apply { writeBytes(ByteArray(8)) }
@@ -253,6 +267,16 @@ class RommSaveSyncApiTest {
         assertThat(server.takeRequest().url.encodedPath).isEqualTo("/romm/api/devices/3f2a-uuid")
         assertThat(found.name).isEqualTo("Steam Deck")
         assertThat(found.syncEnabled).isTrue()
+    }
+
+    @Test fun devicesAreListedWithTheirIdentifiers() = runTest {
+        server.enqueue(json(JsonArray(listOf(device("3f2a-uuid", "Steam Deck"), device("9b1c-uuid", "AYN Thor (Loom)"))).toString()))
+        val devices = rommCall { api.devices() }
+        val request = server.takeRequest()
+        assertThat(request.method).isEqualTo("GET")
+        assertThat(request.url.encodedPath).isEqualTo("/romm/api/devices")
+        assertThat(devices.map { it.id }).containsExactly("3f2a-uuid", "9b1c-uuid").inOrder()
+        assertThat(devices[0].clientDeviceIdentifier).isEqualTo("argosy-1")
     }
 
     @Test fun rommTimesParseWithOrWithoutOffsetAndFraction() {

@@ -105,13 +105,16 @@ interface RommApi {
      * device never synced. If any version in the slot already has the same bytes, RomM returns
      * that row instead of a new one. [contentHash] is read by RomM 5.4.0 as this device's
      * baseline; 5.3.1 ignores it. [saveFile] comes from [saveFilePart].
+     *
+     * A null [slot] adds an archival version outside every slot: negotiate never pairs it, and
+     * RomM keeps its file name as sent, overwriting a save of the same name, so make it unique.
      */
     @Multipart
     @POST("api/saves")
     suspend fun uploadSave(
         @Query("rom_id") romId: Int,
         @Query("emulator") emulator: String,
-        @Query("slot") slot: String,
+        @Query("slot") slot: String?,
         @Query("device_id") deviceId: String,
         @Query("session_id") sessionId: Int?,
         @Query("content_hash") contentHash: String?,
@@ -165,6 +168,10 @@ interface RommApi {
 
     @GET("api/devices/{device_id}")
     suspend fun device(@Path("device_id") deviceId: String): DeviceDto
+
+    /** The user's devices; finds the one Loom paired as when its token isn't bound to it. */
+    @GET("api/devices")
+    suspend fun devices(): List<DeviceDto>
 }
 
 /** Versions RomM keeps per slot when Loom uploads (`autocleanup_limit`). */
