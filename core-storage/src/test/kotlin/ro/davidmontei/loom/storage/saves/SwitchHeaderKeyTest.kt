@@ -68,6 +68,19 @@ class SwitchHeaderKeyTest {
         assertThrows(IllegalStateException::class.java) { opensTheFixture(key) }
     }
 
+    /** Closing re-keys the ciphers made from the key with zeros, so they no longer hold it once let go. */
+    @Test fun closingReKeysTheCiphers() {
+        val key = SwitchHeaderKey.fromProdKeys(prodKeys("header_key = $testKey\n"))!!
+        assertThat(opensTheFixture(key)).isTrue()
+        val (decrypt, encrypt) = key.ciphersInUse!!
+        key.close()
+        val zero = SecretKeySpec(ByteArray(16), "AES")
+        val block = ByteArray(16) { it.toByte() }
+        assertThat(decrypt.doFinal(block)).isEqualTo(Cipher.getInstance("AES/ECB/NoPadding").apply { init(Cipher.DECRYPT_MODE, zero) }.doFinal(block))
+        assertThat(encrypt.doFinal(block)).isEqualTo(Cipher.getInstance("AES/ECB/NoPadding").apply { init(Cipher.ENCRYPT_MODE, zero) }.doFinal(block))
+        assertThat(key.ciphersInUse).isNull()
+    }
+
     /** IEEE 1619's AES-XTS test vector 2 (whose data unit number is little-endian, as the standard writes it). */
     @Test fun xtsMatchesTheStandardsTestVector() {
         val data = Cipher.getInstance("AES/ECB/NoPadding").apply { init(Cipher.DECRYPT_MODE, SecretKeySpec(ByteArray(16) { 0x11 }, "AES")) }

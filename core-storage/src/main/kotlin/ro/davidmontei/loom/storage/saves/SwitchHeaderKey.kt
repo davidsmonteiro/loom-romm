@@ -10,12 +10,17 @@ import javax.crypto.spec.SecretKeySpec
  * The Switch's NCA header key (`header_key` in a `prod.keys` dump): 32 bytes, the two AES-128 keys
  * of the AES-XTS that encrypts every NCA's header. It is the owner's, dumped from their own
  * console. Loom reads it from the card only when it has a game's title ID to find, holds it in
- * memory for that one read, and [close] wipes it. It never becomes text: not in [toString], a log,
- * an exception, or anything Loom stores or uploads.
+ * memory for that one read, and [close] drops it: Loom zeroes its own copy and re-keys its
+ * ciphers, though copies the JCE made on the way (in its key specs and providers) only go when
+ * they're collected. It never becomes text: not in [toString], a log, an exception, or anything
+ * Loom stores or uploads.
  */
 class SwitchHeaderKey private constructor(private val key: ByteArray) : AutoCloseable {
     private var ciphers: Pair<Cipher, Cipher>? = null
     private var closed = false
+
+    /** The ciphers made from the key, once a header has been decrypted; for tests of [close]. */
+    internal val ciphersInUse: Pair<Cipher, Cipher>? get() = ciphers
 
     /**
      * Decrypts [length] bytes of [data] in place, from the start of an NCA: Nintendo's AES-XTS over
@@ -37,9 +42,19 @@ class SwitchHeaderKey private constructor(private val key: ByteArray) : AutoClos
         }
     }
 
-    /** Wipes the key. Ciphers already made from it are dropped with this object. */
+    /**
+     * Drops the key: zeroes Loom's copy and, as far as the JCE lets it, the ciphers' (re-keyed with
+     * zeros before they are let go).
+     */
     override fun close() {
         key.fill(0)
+        ciphers?.let { (decrypt, encrypt) ->
+            runCatching {
+                val zero = SecretKeySpec(ByteArray(16), "AES")
+                decrypt.init(Cipher.DECRYPT_MODE, zero)
+                encrypt.init(Cipher.ENCRYPT_MODE, zero)
+            }
+        }
         ciphers = null
         closed = true
     }
