@@ -119,6 +119,47 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         assertThat((eden().folderChoice(wonder.romId) as EdenFolderChoice.Options).current.toString()).isEqualTo(wonder.titleId)
     }
 
+    /**
+     * A pick made without prod.keys is checked once the key can read the game: a folder the game's
+     * file contradicts stops the game, as syncing it would put another game's save on RomM.
+     */
+    @Test fun aPickTheGamesFileContradictsStopsTheGame() = runBlocking<Unit> {
+        installSwitch(wonder)
+        writeEdenSave(wonder, bytes(1))
+        writeEdenSave(arceus, bytes(2))
+        eden().chooseFolder(wonder.romId, SwitchTitleId.parse(arceus.titleId)!!) // the wrong one
+        engine().sync(SaveSyncRequest.PUSH)
+        val uploads = romm.uploads().size
+
+        putProdKeys()
+        engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.NEEDS_FOLDER)
+        assertThat(detail(wonder)).isEqualTo(
+            "You chose the 01002B300C1D2000 save folder, but the game's file says it is 0100A0B00C0D0000. Choose its folder again",
+        )
+        writeEdenSave(arceus, bytes(3), minutesAgo = 5) // a change that would otherwise go up
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(romm.uploads()).hasSize(uploads)
+
+        eden().chooseFolder(wonder.romId, SwitchTitleId.parse(wonder.titleId)!!)
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(state(wonder)).isNotEqualTo(SaveSyncState.NEEDS_FOLDER)
+        assertThat(saves.switchTitle(wonder.romId)!!.imageFingerprint).isNotNull() // checked against the image, not read again
+    }
+
+    /** A pick the game's file agrees with, or can't speak to (no prod.keys), stands. */
+    @Test fun aPickTheGamesFileAgreesWithStands() = runBlocking<Unit> {
+        installSwitch(wonder)
+        writeEdenSave(wonder, bytes(1))
+        eden().chooseFolder(wonder.romId, SwitchTitleId.parse(wonder.titleId)!!)
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(wonder.romId)
+        putProdKeys()
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.IN_SYNC)
+        assertThat(saves.switchTitle(wonder.romId)!!.source).isEqualTo(SwitchTitleSource.OWNER)
+    }
+
     /** A prod.keys without a usable header_key, or whose key opens nothing, doesn't hide a good one in the Switch folder. */
     @Test fun aProdKeysWithoutAGoodKeyDoesntHideOneThatWorks() = runBlocking<Unit> {
         File(volume, "ROMs/prod.keys").writeText("key_area_key_application_00 = ${"cd".repeat(16)}\n")

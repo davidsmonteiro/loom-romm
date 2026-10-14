@@ -125,7 +125,8 @@ class EdenSaves(
 
     /**
      * The game's title ID: the one read from its image while the image is as it was then, else
-     * read now with the owner's key, which is dropped once read. The owner's pick comes first.
+     * read now with the owner's key, which is dropped once read. The owner's pick stands while the
+     * image can't say otherwise ([checkPick]).
      */
     private suspend fun titleId(rom: RomEntity, install: InstallEntity): Title {
         val recorded = saves.switchTitle(rom.id)
@@ -133,7 +134,7 @@ class EdenSaves(
         val imagesPrint = images.joinToString("\n") { "${it.path}\t${it.length()}\t${it.lastModified()}" }
         val keyFiles = keyFiles(install.romsRoot, install.relPath.substringBefore('/')).filter(File::isFile)
         if (recorded?.source == SwitchTitleSource.OWNER) {
-            SwitchTitleId.parse(recorded.titleId)?.let { return Title.Known(it) }
+            SwitchTitleId.parse(recorded.titleId)?.let { return checkPick(recorded, it, images, imagesPrint, keyFiles) }
         }
         if (recorded?.source == SwitchTitleSource.IMAGE && recorded.imageFingerprint == imagesPrint) {
             SwitchTitleId.parse(recorded.titleId)?.let { return Title.Known(it) }
@@ -147,6 +148,34 @@ class EdenSaves(
             saves.forgetReadSwitchTitle(rom.id)
         }
         return title
+    }
+
+    /**
+     * The owner's pick, checked against the game's image whenever the image or prod.keys changed:
+     * an image that names another title stops the game until the owner chooses again, as syncing
+     * another game's folder under this one would put the wrong save on RomM. Once the image agrees,
+     * or can't tell (no key, a file Loom can't read), the pick is kept with what was looked at.
+     */
+    private suspend fun checkPick(recorded: SwitchTitleEntity, chosen: SwitchTitleId, images: List<File>, imagesPrint: String, keyFiles: List<File>): Title {
+        val looked = imagesPrint + keyFiles.joinToString("") { "\nkeys\t${it.path}\t${it.length()}\t${it.lastModified()}" }
+        if (images.isEmpty() || recorded.imageFingerprint == looked) return Title.Known(chosen)
+        val said = when (val read = readImages(images, keyFiles)) {
+            is Read.Failed -> return Title.CantLook(read.reason)
+            is Read.Done -> read.results.flatMap {
+                when (it) {
+                    is SwitchTitleIdResult.Found -> listOf(it.titleId)
+                    is SwitchTitleIdResult.UpdateOnly -> listOf(it.game)
+                    is SwitchTitleIdResult.SeveralGames -> it.titleIds
+                    else -> emptyList()
+                }
+            }.distinct()
+            else -> emptyList()
+        }
+        if (said.isNotEmpty() && chosen !in said) {
+            return Title.Ask("You chose the $chosen save folder, but the game's file says it is ${said.joinToString(" or ")}. Choose its folder again")
+        }
+        saves.upsertSwitchTitle(recorded.copy(imageFingerprint = looked))
+        return Title.Known(chosen)
     }
 
     /** What the game's images say its title ID is, read with the owner's key. */
