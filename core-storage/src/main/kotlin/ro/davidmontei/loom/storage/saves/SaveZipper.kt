@@ -12,6 +12,7 @@ import java.nio.file.Path
 import java.security.DigestInputStream
 import java.security.MessageDigest
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.Locale
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
@@ -52,7 +53,11 @@ object SaveZipper {
      * Every zip entry gets this DOS time, written as is (no time zone conversion). Not 1980-01-01:
      * java.util.zip reads that DOS value as "before 1980" and adds a time-zone-dependent timestamp.
      */
-    private val FIXED_TIME: LocalDateTime = LocalDateTime.of(2000, 1, 1, 0, 0)
+    /**
+     * 2000-01-01 00:00 local time, as a zip stores it whatever the time zone. ZipEntry.setTimeLocal
+     * would say so directly, but Android only has it from API 35.
+     */
+    private val FIXED_TIME_MS: Long get() = LocalDateTime.of(2000, 1, 1, 0, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
     /** RomM stops hashing an entry past this size (`MAX_DECOMPRESSED_ENTRY_BYTES`); so does Loom. */
     const val MAX_ENTRY_BYTES = 512L * 1024 * 1024
@@ -104,7 +109,7 @@ object SaveZipper {
         val lines = mutableListOf<Pair<String, String>>()
         ZipOutputStream(Files.newOutputStream(target), Charsets.UTF_8).use { zip ->
             for (entry in entries) {
-                zip.putNextEntry(ZipEntry(entry.name).apply { setTimeLocal(FIXED_TIME) })
+                zip.putNextEntry(ZipEntry(entry.name).apply { time = FIXED_TIME_MS })
                 val md5 = MessageDigest.getInstance("MD5")
                 DigestInputStream(Files.newInputStream(entry.file), md5).use { it.copyTo(zip) }
                 zip.closeEntry()

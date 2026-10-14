@@ -138,7 +138,7 @@ class SaveRestorer(
         }
         val old = work.resolve(OLD)
         if (old.isDirectory(LinkOption.NOFOLLOW_LINKS)) {
-            val aside = checkedIo { Files.walk(old).use { walk -> walk.filter { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) }.toList() } }
+            val aside = checkedIo { Files.walk(old).use { walk -> walk.iterator().asSequence().filter { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) }.toList() } }
             for (file in aside) moveInto(file, live(unit, old.relativize(file).joinToString("/") { it.name }))
         }
         deleteTree(work)
