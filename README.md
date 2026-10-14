@@ -173,7 +173,7 @@ Loom keeps the saves of the 3DS games it installed (or found on the card) in syn
 
 **Where to look.** A game's details show its save: in sync, newer on the Thor, newer on RomM, missing on the Thor, changed on both sides, none yet, or why it isn't synced. The queue lists the conflicts, the saves RomM can restore, and the games synced lately. Settings → Saves shows when the last background sync ran and what it did, or why it couldn't.
 
-**Reinstalling Loom.** Loom pairs as the same RomM device (its identifier comes from the Thor's Android ID), and the backups stay on the card. Its record of the last sync is gone, though: games whose saves match RomM's are marked in sync, and any that differ become conflicts for you to settle.
+**Reinstalling Loom.** The backups stay on the card, and Loom pairs as the same RomM device: its identifier comes from the Thor's Android ID, which stays the same for the same signed app. Not yet for an install that first paired with Loom 0.1, though: it keeps the random identifier it paired with, which a reinstall loses, so its first reinstall shows up in RomM as a new device (and later ones as that same new device). Its record of the last sync is gone, though: games whose saves match RomM's are marked in sync, and any that differ become conflicts for you to settle.
 
 **Why only Azahar for now.**
 - DuckStation (PS1), Dolphin (GameCube, Wii), Cemu (Wii U) and Eden (Switch) keep their saves in `Android/data`, which other apps can't read on Android 11 and later, all files access or not. Moving Eden's data to shared storage is the next thing to try.
