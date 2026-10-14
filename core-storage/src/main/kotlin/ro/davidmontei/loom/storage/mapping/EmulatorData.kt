@@ -27,4 +27,14 @@ object EmulatorData {
      */
     fun holdsEmulatorData(dir: Path): Boolean =
         listOf("sdmc", "nand").any { dir.resolve(it).isDirectory(LinkOption.NOFOLLOW_LINKS) }
+
+    /**
+     * The folder at the top of the ROMs root where emulators' saves can be kept, e.g. `ROMs/saves/Eden`.
+     * It holds no system's games, so it is never a system folder: Loom doesn't detect it as one, offer
+     * it, mark it as one when browsing, or adopt games from it.
+     */
+    const val SAVES_FOLDER = "saves"
+
+    /** Whether a folder named [name] at the top of the ROMs root is [SAVES_FOLDER], whatever its case. */
+    fun isSavesFolder(name: String): Boolean = name.lowercase(Locale.ROOT) == SAVES_FOLDER
 }

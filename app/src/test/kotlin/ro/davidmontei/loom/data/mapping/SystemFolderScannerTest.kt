@@ -59,6 +59,29 @@ class SystemFolderScannerTest {
         }
     }
 
+    /** ROMs/saves holds emulators' saves (ROMs/saves/Eden), not a system's games: no scan lists it, whatever its case. */
+    @Test fun theSavesFolderIsNoSystemFolder() {
+        system("snes", null, "Chrono Trigger (USA).sfc")
+        File(tmp.newFolder("Saves"), "Eden/nand").mkdirs()
+        assertThat(SystemFolderScanner.scan(tmp.root).map { it.name }).containsExactly("snes")
+        assertThat(SystemFolderScanner.scan(tmp.root, only = listOf("saves", "snes")).map { it.name }).containsExactly("snes")
+    }
+
+    /** "Another folder…" in the folder question lists every folder of the ROMs folder but that one. */
+    @Test fun anotherFolderDoesntOfferTheSavesFolder() = runBlocking<Unit> {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val prefs = PreferenceDataStoreFactory.create(scope = scope) { File(tmp.newFolder("prefs"), "p.preferences_pb") }
+            val settings = SettingsStore(prefs)
+            val roms = tmp.newFolder("ROMs")
+            listOf("switch", "saves/Eden", "mame").forEach { File(roms, it).mkdirs() }
+            settings.setRomsRoot(roms.path)
+            assertThat(FolderChooser(settings, MappingRepository(prefs)).allFolders().map { it.name }).containsExactly("mame", "switch").inOrder()
+        } finally {
+            scope.cancel()
+        }
+    }
+
     @Test fun canLookAtJustSomeFoldersWhateverTheirCase() {
         system("MAME", "Multiple Arcade Machine Emulator")
         system("snes", "Nintendo SNES (Super Nintendo)")

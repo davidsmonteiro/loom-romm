@@ -100,4 +100,14 @@ class FolderPickerTest {
         rule.onNodeWithText(sd.path).assertExists()
         assertThat(picked).isEmpty()
     }
+
+    /** A ROMs folder's `saves` holds emulators' saves (ROMs/saves/Eden): never counted as a system, whatever the screen knows. */
+    @Test fun theSavesFolderDoesntLookLikeASystem() {
+        val roms = tmp.newFolder("6365-3230", "ROMs")
+        listOf("snes", "Saves/Eden").forEach { File(roms, it).mkdirs() }
+        val volume = VolumeInfo(id = "6365-3230", root = roms.parentFile!!, label = "SD card", removable = true)
+        rule.setContent { LoomTestTheme { FolderPicker(listOf(volume), roms, setOf("snes", "saves"), onPick = { picked += it }) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithText("1 folders here look like Cocoon systems (snes…)").assertExists()
+    }
 }

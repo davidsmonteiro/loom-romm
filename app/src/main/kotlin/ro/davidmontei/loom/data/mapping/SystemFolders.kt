@@ -19,11 +19,12 @@ object SystemFolderScanner {
 
     /**
      * The folders in [root], or only those whose names are in [only] (compared as the card does, ignoring case).
-     * An emulator's own folders inside a system folder (Azahar's `sdmc`, `nand`… in `n3ds`) aren't games.
+     * An emulator's own folders inside a system folder (Azahar's `sdmc`, `nand`… in `n3ds`) aren't games,
+     * and the ROMs root's `saves` folder, where emulators' saves can be kept, isn't a system folder.
      */
     fun scan(root: File, only: Collection<String>? = null): List<SystemFolder> {
         val wanted = only?.map(FolderNames::key)?.toSet()
-        val dirs = root.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }.orEmpty()
+        val dirs = root.listFiles { f -> f.isDirectory && !f.name.startsWith(".") && !EmulatorData.isSavesFolder(f.name) }.orEmpty()
             .filter { wanted == null || FolderNames.key(it.name) in wanted }
             .sortedBy { it.name.lowercase() }
         return dirs.map { dir ->

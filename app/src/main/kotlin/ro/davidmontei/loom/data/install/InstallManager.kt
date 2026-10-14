@@ -91,7 +91,8 @@ class InstallManager(
      * Forgets installs whose files are gone and adopts catalog ROMs already present at the path
      * Loom would install them to. Only volumes that are mounted are looked at, so pulling the SD
      * card never "uninstalls" anything. Each system folder is listed once (not one stat per ROM).
-     * An emulator's folders among the games (Azahar's `sdmc`, `nand`… in `n3ds`) are never adopted.
+     * An emulator's folders among the games (Azahar's `sdmc`, `nand`… in `n3ds`) are never adopted, and
+     * nothing is from the ROMs root's `saves` folder, which holds emulators' saves, not games.
      *
      * An archive Loom unpacks but RomM lists nothing inside can't be predicted by name and size:
      * it's looked for by name alone, after every other ROM of every platform (platforms can share a
@@ -120,6 +121,7 @@ class InstallManager(
         for (platform in catalog.platforms()) {
             val resolved = mapper.resolve(platform.slug, platform.fsSlug)
             val folder = resolved.folder
+            if (EmulatorData.isSavesFolder(folder)) continue
             val listing = listings.getOrPut(folder) {
                 File(root, folder).listFiles().orEmpty().filterNot { EmulatorData.isEmulatorData(it.name) }.associateBy { NameSanitizer.key(it.name) }
             }

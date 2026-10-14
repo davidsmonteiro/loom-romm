@@ -142,6 +142,8 @@ Cocoon can read any folder for a system, so the folder name alone doesn't tell L
 - none exists: Loom creates the default;
 - several exist and it can't tell (ES-DE's template has them all, empty): Loom asks, with the likeliest folder focused, or **Another folder…** for any folder in the ROMs folder.
 
+A `saves` folder in the ROMs folder (for emulators' saves, such as `ROMs/saves/Eden`) is never taken for a system folder: Loom doesn't look for games in it, offer it, or mark it as a system when you browse.
+
 Either way the choice is remembered for that platform; change it in Settings → Platform folders. Games already downloaded stay where they are. Under the folder field, the editor lists the platform's other usual folders and what the card holds of each, for example `mame (52 games), fbneo (no games), fba (not on the card)`. A platform without other usual folders gets Cocoon folder names that start with the same letter instead.
 
 ## Controls

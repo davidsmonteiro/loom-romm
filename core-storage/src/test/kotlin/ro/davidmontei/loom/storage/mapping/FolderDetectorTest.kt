@@ -51,6 +51,16 @@ class FolderDetectorTest {
         assertThat(decision.options.map { it.name }).containsExactly("genesis", "megadrive").inOrder()
     }
 
+    /** ROMs/saves holds emulators' saves (ROMs/saves/Eden): even a mapping listing it doesn't make it a platform's folder. */
+    @Test fun theSavesFolderIsNeverDetected() {
+        val listsSaves = PlatformMapper(MappingJson.shippedDefaults(), listOf(PlatformMappingEntry(PlatformMatch(fsSlug = "genesis"), aliases = listOf("megadrive", "Saves"))))
+            .resolve("genesis", "genesis")
+        assertThat(listsSaves.candidates).contains("Saves")
+        assertThat(FolderDetector.decide(listsSaves, listOf(folder("saves", games = 3), folder("megadrive"))))
+            .isEqualTo(FolderDecision.Use("megadrive", Why.ONLY_FOLDER))
+        assertThat(FolderDetector.decide(listsSaves, listOf(folder("SAVES", games = 3)))).isEqualTo(FolderDecision.Use("genesis", Why.NEW_FOLDER))
+    }
+
     @Test fun folderNamesMatchWhateverTheirCase() {
         assertThat(FolderDetector.decide(arcade, listOf(folder("MAME"))))
             .isEqualTo(FolderDecision.Use("MAME", Why.ONLY_FOLDER)) // the card's own spelling

@@ -42,6 +42,7 @@ class InstallManagerTest {
     private lateinit var volume: File
     private lateinit var romsRoot: File
     private lateinit var manager: InstallManager
+    private lateinit var mapping: MappingRepository
     private var mounted = true
 
     @Before fun setUp() = runBlocking {
@@ -55,7 +56,8 @@ class InstallManagerTest {
             override fun forPath(path: String) = if (mounted) VolumeInfo("9C33-6BBD", volume, "SD card", true) else null
             override fun isMounted(volumeId: String) = mounted
         }
-        manager = InstallManager(db.catalogDao(), settings, MappingRepository(prefs), volumes, nowMs = { 7 })
+        mapping = MappingRepository(prefs)
+        manager = InstallManager(db.catalogDao(), settings, mapping, volumes, nowMs = { 7 })
 
         val dao = db.catalogDao()
         dao.upsertPlatforms(listOf(
@@ -116,6 +118,19 @@ class InstallManagerTest {
         assertThat(dao.install(20)!!.kind).isEqualTo(InstallKind.DIRECTORY)
         assertThat(dao.install(20)!!.verifiedBy).isEqualTo(VerifiedBy.NAME) // a folder: no size to compare
         assertThat(dao.install(30)!!.relPath).isEqualTo("nds/Mario Kart DS (USA).nds")
+    }
+
+    /**
+     * ROMs/saves holds emulators' saves (ROMs/saves/Eden), not games: a platform pointed there (it was
+     * once offered among every folder) adopts nothing from it, whatever its case.
+     */
+    @Test fun nothingInTheSavesFolderIsAdopted() = runBlocking<Unit> {
+        mapping.chooseFolder("snes", "Saves")
+        put("Saves/Chrono Trigger (USA).sfc", 4096)
+        put("Saves/Eden/nand/system.bin", 10)
+
+        assertThat(manager.reconcile().adopted).isEqualTo(0)
+        assertThat(db.catalogDao().install(10)).isNull()
     }
 
     /**

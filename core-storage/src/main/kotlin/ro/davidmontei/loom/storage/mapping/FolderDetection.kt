@@ -39,7 +39,8 @@ sealed interface FolderDecision {
 object FolderDetector {
     fun decide(platform: ResolvedPlatform, onCard: List<SystemFolder>): FolderDecision {
         if (platform.folderChosen) return FolderDecision.Use(platform.folder, FolderDecision.Why.CHOSEN)
-        val byKey = onCard.associateBy { FolderNames.key(it.name) }
+        // Emulators' saves (ROMs/saves) are never a platform's games, whatever a mapping lists.
+        val byKey = onCard.filterNot { EmulatorData.isSavesFolder(it.name) }.associateBy { FolderNames.key(it.name) }
         val present = platform.candidates.mapNotNull { byKey[FolderNames.key(it)] }
         val withGames = present.filter { it.games > 0 }
         return when {
