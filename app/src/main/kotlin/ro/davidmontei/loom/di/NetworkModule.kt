@@ -10,6 +10,10 @@ import okhttp3.logging.HttpLoggingInterceptor
 import ro.davidmontei.loom.BuildConfig
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.net.AuthInterceptor
+import ro.davidmontei.loom.net.ReachabilityInterceptor
+import ro.davidmontei.loom.net.ReachabilityWatch
+import ro.davidmontei.loom.net.ServerReachability
+import ro.davidmontei.loom.romm.rommCall
 import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
@@ -46,10 +50,20 @@ object NetworkModule {
         }
         .build()
 
+    /** Whether RomM answered the last request: every request to it through the clients below reports. */
+    @Provides @Singleton
+    fun serverReachability() = ServerReachability()
+
+    /** Asks RomM again when there's reason to (see [ReachabilityWatch]), with a heartbeat. */
+    @Provides @Singleton
+    fun reachabilityWatch(reachability: ServerReachability, server: ActiveServer) =
+        ReachabilityWatch(reachability) { server.call { api -> rommCall { api.heartbeat() } } }
+
     @Provides @Singleton @ApiHttp
-    fun apiClient(@BareHttp bare: OkHttpClient, server: dagger.Lazy<ActiveServer>): OkHttpClient =
+    fun apiClient(@BareHttp bare: OkHttpClient, server: dagger.Lazy<ActiveServer>, reachability: ServerReachability): OkHttpClient =
         bare.newBuilder()
             .addInterceptor(AuthInterceptor(LazyAuthSource(server)))
+            .addInterceptor(ReachabilityInterceptor(reachability, LazyAuthSource(server)))
             .build()
 
     /**
@@ -58,13 +72,14 @@ object NetworkModule {
      * on each request so Range offsets refer to the bytes on disk.
      */
     @Provides @Singleton @DownloadHttp
-    fun downloadClient(server: dagger.Lazy<ActiveServer>): OkHttpClient = OkHttpClient.Builder()
+    fun downloadClient(server: dagger.Lazy<ActiveServer>, reachability: ServerReachability): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .callTimeout(0, TimeUnit.SECONDS)
         .protocols(listOf(Protocol.HTTP_1_1))
         .retryOnConnectionFailure(true)
         .addInterceptor(AuthInterceptor(LazyAuthSource(server)))
+        .addInterceptor(ReachabilityInterceptor(reachability, LazyAuthSource(server)))
         .build()
 
     /** Breaks the ActiveServer ↔ OkHttpClient construction cycle. */

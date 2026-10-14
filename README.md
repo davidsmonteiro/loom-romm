@@ -13,6 +13,7 @@ Loom does not launch games, replace the home screen, or emulate anything. It doe
 - **Pairs without typing a token.** Loom shows a QR code and an 8-character code. You approve it on your phone in RomM's web UI. RomM's own pair code and a pasted token also work.
 - **Keeps an offline copy of the catalog.** After the first sync you can browse every platform, with covers, with no network.
   - Later syncs only fetch what changed. Deleted games are detected by comparing ID lists.
+  - When RomM can't be reached, the library's header says **Offline · showing your saved library** above when it last synced. Loom knows from the requests it makes anyway (syncs, covers, downloads, saves), and asks RomM's heartbeat again when Loom comes to the front, when a network comes or goes (Wi-Fi, Tailscale), and, while RomM is out of reach and Loom is in front, now and then (30 seconds apart at first, then less often, at most every 5 minutes). The note goes as soon as RomM answers.
   - Loom syncs by itself every 12 hours, in the background, while the Thor is online and its battery isn't low. This only updates the library: games are downloaded only when you ask. If RomM can't be reached at the time (away from home, or with Tailscale off), Loom tries again a few times over the next few minutes, then waits for the next one without showing an error.
   - In **Settings → Library sync** you can sync every 6 or 24 hours instead, turn it off, or keep it to Wi-Fi (not mobile data or a phone's hotspot). That section also shows when the library last synced, and has **Full resync**, which fetches the whole catalog again rather than only what changed.
   - Covers are fetched in the background after a sync and kept at the size the library draws them on the Thor (297×396 px, a focused card), about 20 KB each (roughly 400 MB for 20,000 covers). They're made from RomM's large cover art, as its small covers are narrower than a card, so fetching one is about 0.5 MB: a large library's first fetch downloads several GB from your server. They live in Loom's cache, so Android may trim them when storage runs low; the next sync fetches them again.
@@ -235,6 +236,7 @@ Long-press Loom's icon for the **Sync library** and **Downloads** shortcuts.
 
 | You see | Do this |
 |---|---|
+| "Offline · showing your saved library" | RomM can't be reached from the Thor: away from home, Tailscale off, or RomM down. You can browse the library Loom keeps, but nothing downloads or syncs until RomM answers again, and then the note goes. |
 | "A proxy or login page is in the way" | Something like Cloudflare Access answered instead of RomM. Use an address that reaches RomM directly (Tailnet/LAN). |
 | "already exists on the SD card and wasn't installed by Loom" | Remove the old copy, or resync so Loom adopts it if it's the same game. |
 | "This card can't hold files over 4 GB (FAT32)" | Reformat the SD card as exFAT. |

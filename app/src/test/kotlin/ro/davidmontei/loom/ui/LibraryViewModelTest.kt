@@ -61,6 +61,7 @@ import ro.davidmontei.loom.data.saves.SaveSyncEngine
 import ro.davidmontei.loom.data.saves.SaveUnitResolver
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
+import ro.davidmontei.loom.net.ServerReachability
 import ro.davidmontei.loom.storage.mapping.MappingSource
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.GameSave
@@ -119,7 +120,20 @@ class LibraryViewModelTest {
             InstallManager(db.catalogDao(), settings, mapping, volumes),
             CatalogSyncScheduler(workManager), server, settings, FolderChooser(settings, mapping),
             SaveRepository(engine, db.saveDao(), eden, scope),
+            reachability,
         )
+    }
+
+    private val reachability = ServerReachability()
+
+    /** The header says the library is the copy kept on the Thor while RomM can't be reached, and stops once it can. */
+    @Test fun theHeaderSaysWhenRommCantBeReached() = runBlocking<Unit> {
+        val header = async(Dispatchers.IO) { vm.header.first { it.offline } }
+        reachability.unreachable()
+        assertThat(withTimeout(5_000) { header.await() }.offline).isTrue()
+        val back = async(Dispatchers.IO) { vm.header.first { !it.offline } }
+        reachability.answered()
+        assertThat(withTimeout(5_000) { back.await() }.offline).isFalse()
     }
 
     @After fun tearDown() {

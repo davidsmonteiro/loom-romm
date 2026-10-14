@@ -35,6 +35,7 @@ import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
+import ro.davidmontei.loom.net.ServerReachability
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.mapping.FolderDecision
 import ro.davidmontei.loom.storage.mapping.SystemFolder
@@ -58,6 +59,8 @@ data class LibraryHeader(
     val sync: CatalogSyncStatus,
     val lastSyncMs: Long?,
     val activeDownloads: Int,
+    /** RomM couldn't be reached the last time Loom tried: the library is the copy kept on the Thor. */
+    val offline: Boolean = false,
 )
 
 /**
@@ -86,6 +89,7 @@ class LibraryViewModel @Inject constructor(
     settings: SettingsStore,
     private val folders: FolderChooser,
     private val saves: SaveRepository,
+    reachability: ServerReachability,
 ) : ViewModel() {
 
     val platforms: StateFlow<List<PlatformSummary>> = catalog.observePlatformSummaries()
@@ -116,8 +120,8 @@ class LibraryViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val header: StateFlow<LibraryHeader> = combine(syncScheduler.status, settings.settings, downloads.jobs) { sync, s, jobs ->
-        LibraryHeader(sync, s.lastCatalogSyncEpochMs, jobs.count { it.phase != "FAILED" })
+    val header: StateFlow<LibraryHeader> = combine(syncScheduler.status, settings.settings, downloads.jobs, reachability.current) { sync, s, jobs, reach ->
+        LibraryHeader(sync, s.lastCatalogSyncEpochMs, jobs.count { it.phase != "FAILED" }, offline = reach == ServerReachability.State.UNREACHABLE)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryHeader(CatalogSyncStatus(false), null, 0))
 
     /** Base URL for cover art. Covers are cached by path, so changing the address keeps them. */

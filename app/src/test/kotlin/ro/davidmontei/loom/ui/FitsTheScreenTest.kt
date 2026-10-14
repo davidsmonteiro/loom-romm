@@ -8,6 +8,8 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -373,6 +375,30 @@ class FitsTheScreenTest {
         val overflow = overflowOf("settings-content")
         rule.saveScreenshot("settings-library-sync")
         assertThat(overflow).isEqualTo(0f)
+    }
+
+    /**
+     * The note that RomM can't be reached sits in the header beside "Synced …", in full: the title,
+     * the buttons, the platforms and the games stay exactly where they were.
+     */
+    @Test fun theOfflineNoteFitsTheHeaderAndMovesNothing() {
+        var state by mutableStateOf(LibraryScreenTest().state)
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        fun layout(): List<Any> {
+            rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+            val tagged = listOf("search", "platform-1", "game-1", "game-8").map { rule.onNodeWithTag(it).fetchSemanticsNode().boundsInRoot }
+            val buttons = listOf("Sync library", "Grid or list", "Settings").map { rule.onNodeWithContentDescription(it).fetchSemanticsNode().boundsInRoot }
+            val title = rule.onAllNodesWithText("Super Nintendo", useUnmergedTree = true).fetchSemanticsNodes().map { it.boundsInRoot }
+            return tagged + buttons + title
+        }
+        val online = layout()
+        state = state.copy(header = state.header.copy(offline = true))
+        assertThat(layout()).isEqualTo(online)
+        for (line in listOf("Offline · showing your saved library", "Synced 5 min ago")) {
+            assertWithMessage(line).that(ellipsized(line)).isFalse()
+            assertWithMessage(line).that(lineCount(line)).isEqualTo(1)
+        }
+        rule.saveScreenshot("library-offline")
     }
 
     /** The question at a platform's first download, with its few options and with every folder of the Thor's ES-DE template. */

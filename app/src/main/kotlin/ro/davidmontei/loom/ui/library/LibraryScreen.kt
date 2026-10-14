@@ -428,13 +428,24 @@ private fun HeaderActions(state: LibraryUiState, actions: LibraryActions) {
         state.header.lastSyncMs != null -> "Synced ${ago(state.header.lastSyncMs)}"
         else -> "Not synced yet"
     }
-    Text(status, style = MaterialTheme.typography.labelMedium.tabular(), color = if (sync.error != null) LoomColors.Error else LoomColors.TextFaint,
-        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(end = Space.s).width(220.dp))
+    // A slot of its own width, in a row as tall as the buttons: the note that RomM can't be reached
+    // appears above the status without moving the title, the buttons or the games.
+    Column(Modifier.padding(end = Space.s).width(220.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (state.header.offline) {
+            Text(OFFLINE_NOTE, style = MaterialTheme.typography.labelSmall, color = LoomColors.Accent, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("offline"))
+        }
+        Text(status, style = MaterialTheme.typography.labelMedium.tabular(), color = if (sync.error != null) LoomColors.Error else LoomColors.TextFaint,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
     IconAction(Icons.Outlined.Sync, "Sync library", actions::sync)
     IconAction(if (state.gridMode) Icons.AutoMirrored.Outlined.ViewList else Icons.Outlined.GridView, "Grid or list", actions::toggleGrid)
     IconAction(Icons.Outlined.Download, "Queue (${state.header.activeDownloads})", actions::openQueue, badge = state.header.activeDownloads)
     IconAction(Icons.Outlined.Settings, "Settings", actions::openSettings)
 }
+
+/** The library's note while RomM can't be reached: what's shown is the copy kept on the Thor. */
+const val OFFLINE_NOTE = "Offline · showing your saved library"
 
 /** Why the last sync failed, in full, and the way out when RomM no longer accepts Loom's token. */
 @Composable

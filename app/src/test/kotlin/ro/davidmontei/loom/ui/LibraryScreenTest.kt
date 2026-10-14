@@ -516,6 +516,18 @@ class LibraryScreenTest {
         rule.onNodeWithText("Pair again").assertDoesNotExist()
     }
 
+    /** Found by review: with RomM out of reach the library just showed the copy on the Thor, saying nothing. */
+    @Test fun theHeaderSaysWhileRommCantBeReached() {
+        show()
+        rule.onNodeWithTag("offline", useUnmergedTree = true).assertDoesNotExist()
+        update { it.copy(header = it.header.copy(offline = true)) }
+        rule.onNodeWithTag("offline", useUnmergedTree = true).assertTextEquals("Offline · showing your saved library")
+        rule.onNodeWithText("Synced 5 min ago").assertExists() // beside how old that copy is
+        rule.onNodeWithTag("game-1").assertIsFocused() // nothing to press, nothing in the way
+        update { it.copy(header = it.header.copy(offline = false)) }
+        rule.onNodeWithTag("offline", useUnmergedTree = true).assertDoesNotExist()
+    }
+
     @Test fun emptyLibraryOffersSync() {
         state = state.copy(platforms = emptyList(), selected = null, games = emptyList())
         show()

@@ -1,6 +1,7 @@
 package ro.davidmontei.loom
 
 import android.app.Application
+import android.net.ConnectivityManager
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -21,6 +22,7 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import ro.davidmontei.loom.di.AppScope
+import ro.davidmontei.loom.net.ReachabilityWatch
 import ro.davidmontei.loom.storage.engine.WaitReason
 import javax.inject.Inject
 
@@ -35,6 +37,7 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     @Inject lateinit var saveSync: SaveSyncTriggers
     @Inject lateinit var settings: SettingsStore
     @Inject lateinit var refresh: CatalogRefreshScheduler
+    @Inject lateinit var reachability: ReachabilityWatch
 
     /** Cover art comes only from the [CoverStore], which keeps its own files on disk. */
     override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
@@ -56,6 +59,10 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         // The background catalog refresh follows its settings from here on: scheduled once setup is
         // done, changed or cancelled with them. A settings file that can't be read leaves it as it was.
         scope.launch { runCatching { refresh.follow(settings.settings) } }
+        // Whether RomM can be reached, for the library's offline note: looked at again when a network
+        // comes or goes (Wi-Fi joined or left, a VPN up or down), and when Loom comes to the front.
+        scope.launch { reachability.run() }
+        reachability.follow(ProcessLifecycleOwner.get().lifecycle, getSystemService(ConnectivityManager::class.java))
         // Coming to the foreground lets Android start the download service again: resume anything
         // that was parked for that, and make sure a worker is draining the queue.
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
