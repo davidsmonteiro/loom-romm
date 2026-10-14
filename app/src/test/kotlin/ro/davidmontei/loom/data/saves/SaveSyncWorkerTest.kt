@@ -143,6 +143,7 @@ class SaveSyncWorkerTest : SaveSyncTestBase() {
 
     @Test fun theSummaryCountsWhatARunDid() {
         assertThat(SaveSyncReport().summary()).isEqualTo("no changes")
+        assertThat(SaveSyncReport(uploaded = setOf(1), conflicts = setOf(2)).summary()).isEqualTo("1 uploaded · 1 conflict")
         assertThat(SaveSyncReport(downloaded = setOf(1), conflicts = setOf(2, 3), waiting = setOf(4), failed = mapOf(5 to "x")).summary())
             .isEqualTo("1 restored from RomM · 2 conflicts · 1 waiting to upload · 1 failed")
         assertThat(SaveSyncReport(conflicts = setOf(2), unavailable = "Not paired").summary()).isEqualTo("Not paired")

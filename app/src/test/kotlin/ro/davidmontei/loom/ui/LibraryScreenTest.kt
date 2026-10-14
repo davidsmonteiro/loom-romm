@@ -524,6 +524,9 @@ class LibraryScreenTest {
         rule.onNodeWithText("Restore Chrono Trigger's save from RomM?").assertDoesNotExist()
         rule.onNodeWithTag("game-1").assertIsFocused()
         assertThat(calls.filter { it.startsWith("restore") }).isEmpty()
+        // Nothing left half-open behind the question: asking again shows the restore question again.
+        press(Key.DirectionCenter); press(Key.DirectionUp); press(Key.DirectionCenter)
+        rule.onNodeWithText("Restore Chrono Trigger's save from RomM?").assertExists()
     }
 
     @Test fun aSaveConflictLeadsToTheQueue() {
