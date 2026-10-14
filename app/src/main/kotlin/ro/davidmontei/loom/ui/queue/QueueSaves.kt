@@ -107,8 +107,13 @@ fun serverSide(item: ConflictItem): List<String> {
     )
 }
 
-/** "changed 14 Oct, 13:05 · 512 KB", for a row. */
-private fun sideLine(side: List<String>) = side.joinToString(" · ").replaceFirstChar { it.lowercase() }
+/**
+ * A side in one line for a row: "uploaded 14 Oct, 12:40 · 520 KB · Azahar · from Steam Deck". Loom's
+ * own words go lowercase mid-line; names (the emulator, the device) stay as they are.
+ */
+private fun sideLine(side: List<String>) = side.mapIndexed { i, part ->
+    if (i == 0 || part.startsWith("From ")) part.replaceFirstChar { it.lowercase() } else part
+}.joinToString(" · ")
 
 @Composable
 internal fun ConflictRow(item: ConflictItem, modifier: Modifier, onFocus: (Boolean) -> Unit, onOpen: () -> Unit) {

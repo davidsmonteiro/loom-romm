@@ -28,6 +28,7 @@ import ro.davidmontei.loom.data.db.RecentInstall
 import ro.davidmontei.loom.data.saves.ConflictChoice
 import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.formatBytes
+import ro.davidmontei.loom.ui.components.dateTime
 import ro.davidmontei.loom.ui.queue.ConflictItem
 import ro.davidmontei.loom.ui.queue.RecentSave
 import ro.davidmontei.loom.ui.queue.RestorableSave
@@ -236,11 +237,43 @@ class QueueScreenTest {
         rule.onNodeWithTag("conflict-7").assertIsFocused()
     }
 
+    /** What needs the user comes first, under its own heading: why each conflict is one, and both sides in a line. */
+    @Test fun aConflictRowSaysWhyAndShowsBothSides() {
+        show(withSaves)
+        fun inRow(text: String) = rule.onNode(hasText(text) and hasAnyAncestor(hasTestTag("conflict-7")), useUnmergedTree = true)
+        rule.onNodeWithText("SAVE CONFLICTS").assertExists()
+        inRow("Both the Thor and RomM have changed this save since the last sync").assertExists()
+        inRow("Thor: changed ${dateTime(pokemonX.thorModifiedMs!!)} · ${formatBytes(524_288)}    " +
+            "RomM: uploaded ${dateTime(pokemonX.serverUpdatedMs!!)} · ${formatBytes(530_000)} · Azahar · from Steam Deck").assertExists()
+        inRow("Choose").assertExists()
+        rule.onNodeWithText("Choose / pause / resume / retry").assertExists()
+
+        update { it.copy(conflicts = listOf(pokemonX.copy(skipped = true))) }
+        inRow("Skipped").assertExists()
+        update { it.copy(conflicts = listOf(pokemonX.copy(busy = true))) }
+        inRow("Working…").assertExists()
+        update { sample }
+        rule.onNodeWithText("Pause / resume / retry").assertExists()
+    }
+
+    /** A newer save on RomM says what A does with it; a save gone from the Thor says it comes back. */
+    @Test fun aSaveToRestoreSaysWhatADoes() {
+        show(sample.copy(restorable = listOf(omegaRuby, RestorableSave(9, "Pokemon Y", missing = true, emulator = "azahar"))))
+        fun inRow(id: Int, text: String) = rule.onNode(hasText(text) and hasAnyAncestor(hasTestTag("restore-$id")), useUnmergedTree = true)
+        rule.onNodeWithText("SAVES TO RESTORE FROM ROMM").assertExists()
+        inRow(8, "Newer on RomM").assertExists()
+        inRow(8, "A takes RomM's save, once Azahar is closed. The Thor's is backed up first.").assertExists()
+        inRow(9, "Missing on the Thor").assertExists()
+        inRow(9, "A puts RomM's save back on the Thor, once Azahar is closed.").assertExists()
+    }
+
     @Test fun theChoiceShowsBothSides() {
         show(withSaves)
         press(Key.DirectionCenter)
         fun side(tag: String, text: String) = rule.onNode(hasText(text) and hasAnyAncestor(hasTestTag(tag)), useUnmergedTree = true)
+        side("thor-side", "Changed ${dateTime(pokemonX.thorModifiedMs!!)}").assertExists()
         side("thor-side", formatBytes(524_288)).assertExists()
+        side("server-side", "Uploaded ${dateTime(pokemonX.serverUpdatedMs!!)}").assertExists()
         side("server-side", "${formatBytes(530_000)} · Azahar").assertExists()
         side("server-side", "From Steam Deck").assertExists()
     }
