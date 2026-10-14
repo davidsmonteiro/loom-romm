@@ -1,17 +1,29 @@
 package ro.davidmontei.loom.data
 
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
 import org.junit.Rule
@@ -24,12 +36,38 @@ import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.romm.pairing.PairedCredentials
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Reversible stand-in for the Keystore cipher (Robolectric has no AndroidKeyStore). */
 private class FakeCipher : TokenCipher {
     var broken = false
     override fun encrypt(plaintext: String) = "sealed:" + plaintext.reversed()
     override fun decrypt(blob: String) = if (broken) null else blob.removePrefix("sealed:").reversed()
+}
+
+/**
+ * DataStore as CI caught it (DataStore 1.2.1): a collector that subscribed as the first write landed
+ * got the value from before the write and then nothing more. With [lateFirstValue], that stale value
+ * only arrives a moment after the write has returned. Later subscribers follow the writes.
+ */
+private class UpdateLosingDataStore(private val lateFirstValue: Boolean) : DataStore<Preferences> {
+    private val value = MutableStateFlow(emptyPreferences())
+    private val subscriptions = AtomicInteger()
+    private val firstWrite = CompletableDeferred<Unit>()
+
+    override val data: Flow<Preferences> = flow {
+        if (subscriptions.incrementAndGet() > 1) return@flow emitAll(value)
+        val before = value.value
+        if (lateFirstValue) {
+            firstWrite.await()
+            delay(200) // lands after the write has returned
+        }
+        emit(before)
+        awaitCancellation()
+    }
+
+    override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
+        transform(value.value).also { value.value = it; firstWrite.complete(Unit) }
 }
 
 class StoresTest {
@@ -50,7 +88,7 @@ class StoresTest {
         assertThat(store.current.value).isNull()
 
         store.save(PairedCredentials("https://romm.example.org/".toHttpUrl(), "rmm_abc", "dev-1", "david", null))
-        val saved = store.current.filterNotNull().first()
+        val saved = withTimeout(5_000) { store.current.filterNotNull().first() }
         assertThat(saved.token).isEqualTo("rmm_abc")
         assertThat(saved.deviceId).isEqualTo("dev-1")
         assertThat(saved.toString()).doesNotContain("rmm_abc")
@@ -60,7 +98,31 @@ class StoresTest {
         assertThat(raw).doesNotContain("rmm_abc")
 
         store.clear()
-        assertThat(store.current.filter { it == null }.first()).isNull()
+        assertThat(withTimeout(5_000) { store.current.filter { it == null }.first() }).isNull()
+    }
+
+    /** Found on CI: the save was on disk, but [CredentialStore.current] stayed null for good. */
+    @Test fun aSaveShowsAtOnceEvenWhenDataStoreLosesTheUpdate() = runBlocking<Unit> {
+        val store = CredentialStore(UpdateLosingDataStore(lateFirstValue = false), FakeCipher(), scope)
+        store.awaitLoaded()
+        // Writes right after each other: each shows as soon as it returns (a re-read once let a save come back after a clear).
+        store.save(PairedCredentials("https://romm.example.org/".toHttpUrl(), "rmm_abc", "dev-1", "david", null))
+        assertThat(store.current.value?.deviceId).isEqualTo("dev-1")
+        store.save(PairedCredentials("https://romm.example.org/".toHttpUrl(), "rmm_def", "dev-2", "david", null))
+        assertThat(store.current.value?.deviceId).isEqualTo("dev-2")
+        store.clear()
+        assertThat(store.current.value).isNull()
+        delay(500)
+        assertThat(store.current.value).isNull()
+    }
+
+    /** Pairing right as Loom starts: DataStore's first read, older than the save, arrives after it and doesn't undo it. */
+    @Test fun aReadOlderThanASaveDoesntUndoIt() = runBlocking<Unit> {
+        val store = CredentialStore(UpdateLosingDataStore(lateFirstValue = true), FakeCipher(), scope)
+        store.save(PairedCredentials("https://romm.example.org/".toHttpUrl(), "rmm_abc", "dev-1", "david", null))
+        assertThat(store.current.value?.deviceId).isEqualTo("dev-1")
+        assertThat(withTimeoutOrNull(2_000) { store.awaitLoaded(); true }).isTrue() // the late read has arrived
+        assertThat(store.current.value?.deviceId).isEqualTo("dev-1")
     }
 
     @Test fun undecryptableTokenReadsAsUnpaired() = runBlocking<Unit> {
@@ -69,7 +131,7 @@ class StoresTest {
         CredentialStore(prefsStore, cipher, scope).apply {
             awaitLoaded()
             save(PairedCredentials("https://r.example.org/".toHttpUrl(), "rmm_abc", null, "david", null))
-            current.filterNotNull().first()
+            withTimeout(5_000) { current.filterNotNull().first() }
         }
         cipher.broken = true
         val reopened = CredentialStore(prefsStore, cipher, scope)
