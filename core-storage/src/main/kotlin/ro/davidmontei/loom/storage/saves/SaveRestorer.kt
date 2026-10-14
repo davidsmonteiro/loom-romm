@@ -28,8 +28,9 @@ import kotlin.io.path.name
  * with [SaveBackups] first; this is the second line of defence, not the only one.
  */
 class SaveRestorer(
-    /** Unpacks the archive into the work folder; a seam for tests of a card that loses writes. */
-    private val unpack: (archive: Path, dest: Path, roots: Set<String>) -> Unit = { a, d, r -> SaveZipper.unzip(a, d, r) },
+    /** Unpacks the archive into the work folder, at most maxBytes; a seam for tests of a card that loses writes. */
+    private val unpack: (archive: Path, dest: Path, roots: Set<String>, maxBytes: Long) -> Unit =
+        { a, d, r, max -> SaveZipper.unzip(a, d, r, maxTotalBytes = max) },
     private val mover: FileMover = FileMover.Rename,
 ) {
 
@@ -52,14 +53,15 @@ class SaveRestorer(
     /**
      * Replaces [unit] with what [archive] holds under the unit's root names and returns the
      * restored unit's hash. [expectedCurrent] is the hash the unit had when it was backed up (null
-     * when it held no files); if it no longer matches, nothing is touched.
+     * when it held no files); if it no longer matches, nothing is touched. The archive may unpack to
+     * at most [maxUnitBytes].
      *
      * @throws SaveChangedException when the unit changed since it was backed up.
      * @throws SaveArchiveException when the archive is unsafe, holds nothing for the unit, or the
      *   files don't come out as the archive says.
      * @throws IOException when the card can't be written. In every case the unit is left as it was.
      */
-    fun restore(archive: Path, unit: List<SaveRoot>, expectedCurrent: String?): String {
+    fun restore(archive: Path, unit: List<SaveRoot>, expectedCurrent: String?, maxUnitBytes: Long = SaveZipper.MAX_UNIT_BYTES): String {
         val parent = parentOf(unit)
         recover(unit)
         if (SaveHasher.hashUnit(unit) != expectedCurrent) throw SaveChangedException("The save changed since it was backed up")
@@ -70,7 +72,7 @@ class SaveRestorer(
         val work = Files.createDirectory(parent.resolve(WORK_PREFIX + UUID.randomUUID()))
         val staged = unit.map { SaveRoot(it.name, work.resolve(NEW).resolve(it.name)) }
         val incoming = try {
-            unpack(archive, work.resolve(NEW), names)
+            unpack(archive, work.resolve(NEW), names, maxUnitBytes)
             if (SaveHasher.hashUnit(staged) != expected) throw SaveArchiveException("The unpacked save doesn't match the archive")
             SaveZipper.entries(staged).onEach { FileChannel.open(it.file, StandardOpenOption.WRITE).use { c -> c.force(true) } }.map { it.name }
         } catch (e: Exception) {

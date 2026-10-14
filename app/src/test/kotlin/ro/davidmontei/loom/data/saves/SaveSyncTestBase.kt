@@ -116,7 +116,10 @@ abstract class SaveSyncTestBase {
         credentials.current.filterNotNull().first { it.deviceId == deviceId }
     }
 
-    protected fun eden() = EdenSaves(settings, db.catalogDao(), db.saveDao(), now = { clock.toEpochMilli() })
+    /** The largest Switch save Loom restores (and uploads), smaller in tests that need to go past it. */
+    protected var edenMaxUnitBytes = EdenSaves.MAX_UNIT_BYTES
+
+    protected fun eden() = EdenSaves(settings, db.catalogDao(), db.saveDao(), now = { clock.toEpochMilli() }, maxUnitBytes = edenMaxUnitBytes)
 
     protected fun engine(chunkSize: Int = 500, maxDownloadBytes: Long = SaveSyncEngine.MAX_DOWNLOAD_BYTES) = SaveSyncEngine(
         db.catalogDao(), db.saveDao(), ActiveServer(settings, credentials, OkHttpClient(), scope), credentials, settings,

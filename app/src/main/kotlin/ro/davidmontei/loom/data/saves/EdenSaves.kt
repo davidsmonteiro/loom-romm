@@ -46,6 +46,8 @@ class EdenSaves(
     private val catalog: CatalogDao,
     private val saves: SaveDao,
     private val now: () -> Long = System::currentTimeMillis,
+    /** The largest Switch save Loom restores, and so uploads. */
+    private val maxUnitBytes: Long = MAX_UNIT_BYTES,
 ) {
     suspend fun resolve(rom: RomEntity, install: InstallEntity): ResolvedSave = withContext(Dispatchers.IO) {
         val s = settings.snapshot()
@@ -81,6 +83,7 @@ class EdenSaves(
                     roots = listOf(location.unit),
                     fileName = SaveUnitResolver.archiveName(rom),
                     title = rom.title,
+                    maxUnitBytes = maxUnitBytes,
                 )
                 EdenSaveLocation.NoSaveFolder -> ResolvedSave.Unsupported(rom.id, "There's no user/save in $dir")
                 EdenSaveLocation.NoProfile -> ResolvedSave.Unsupported(rom.id, "Eden hasn't saved a game in $dir yet: play one until it saves")
@@ -253,6 +256,9 @@ class EdenSaves(
     companion object {
         /** Eden's save folder in the ROMs root, as on the Thor. */
         const val DEFAULT_FOLDER = "saves/Eden"
+
+        /** Switch saves run larger than 3DS ones: a few dozen MB is not unusual. RomM hashes entries up to 512 MiB. */
+        const val MAX_UNIT_BYTES = 256L * 1024 * 1024
 
         const val SEVERAL_PROFILES = "Eden has several profiles: choose whose saves Loom syncs in Settings"
         const val NOT_AN_IMAGE = "It isn't an XCI or NSP, which Loom reads a Switch game's title ID from"

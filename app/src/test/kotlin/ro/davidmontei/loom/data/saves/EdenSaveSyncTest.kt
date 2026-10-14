@@ -377,6 +377,35 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         assertThat(File(edenFolder(wonder), "option_data.sav").exists()).isTrue()
     }
 
+    /** A save larger than Loom restores for Eden isn't uploaded: it could never come back. */
+    @Test fun aSaveTooLargeToRestoreIsntUploaded() = runBlocking<Unit> {
+        edenMaxUnitBytes = 8 * 1024
+        putProdKeys()
+        installSwitch(wonder)
+        writeEdenSave(wonder, bytes(1, size = 16 * 1024))
+
+        val report = engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(report.failed.getValue(wonder.romId)).isEqualTo("This save is 16.0 KB, more than Loom restores (8.0 KB), so it isn't uploaded")
+        assertThat(romm.uploads()).isEmpty()
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.ERROR)
+    }
+
+    /** A restore unpacks at most what Loom allows for the game's emulator, whatever the default. */
+    @Test fun aRestoreKeepsToTheEmulatorsSizeLimit() = runBlocking<Unit> {
+        edenMaxUnitBytes = 8 * 1024
+        putProdKeys()
+        installSwitch(wonder)
+        writeEdenSave(wonder, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.addSave(wonder.romId, edenArchiveOf(wonder, bytes(2, size = 16 * 1024)), emulator = "eden")
+
+        val result = engine().restoreFromServer(wonder.romId)
+
+        assertThat(result).isEqualTo(ResolveResult.Failed("The archive unpacks to more than a save unit can hold"))
+        assertThat(File(edenFolder(wonder), "game_data.sav").readBytes()).isEqualTo(bytes(1))
+    }
+
     /** RomM's newer save came from another Switch emulator: never applied alone. */
     @Test fun aSaveFromAnotherEmulatorIsAConflict() = runBlocking<Unit> {
         putProdKeys()

@@ -11,6 +11,7 @@ import ro.davidmontei.loom.storage.saves.AzaharSaveLocator
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import ro.davidmontei.loom.storage.saves.NcsdReader
 import ro.davidmontei.loom.storage.saves.SaveRoot
+import ro.davidmontei.loom.storage.saves.SaveZipper
 import ro.davidmontei.loom.storage.saves.ThreeDsTitleId
 import java.io.File
 import java.io.IOException
@@ -29,6 +30,8 @@ sealed interface ResolvedSave {
         val fileName: String,
         /** The game's title, for backups and archival copies. */
         val title: String,
+        /** The largest save Loom restores for this emulator, and so uploads. */
+        val maxUnitBytes: Long = SaveZipper.MAX_UNIT_BYTES,
     ) : ResolvedSave {
         /** Where the save is, as Loom records it with the save's scan and baseline. */
         val unitPath: String get() = roots.first().folder.toString()

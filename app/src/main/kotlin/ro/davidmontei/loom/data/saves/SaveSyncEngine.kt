@@ -31,6 +31,7 @@ import ro.davidmontei.loom.romm.dto.SyncCompleteRequest
 import ro.davidmontei.loom.romm.dto.SyncNegotiateRequest
 import ro.davidmontei.loom.romm.dto.SyncOperationDto
 import ro.davidmontei.loom.romm.rommCall
+import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.saves.NegotiatedAction
 import ro.davidmontei.loom.storage.saves.SAVE_SLOT
 import ro.davidmontei.loom.storage.saves.SaveArchiveException
@@ -427,6 +428,7 @@ class SaveSyncEngine(
 
         private suspend fun upload(api: RommApi, deviceId: String, sessionId: Int, game: Prepared, head: ServerHead?): Acted {
             val hash = game.localHash!!
+            checkRestorable(game.save, game.snapshot.totalBytes)
             val sent = try {
                 whenSettled(game.save, hash) { file -> uploadSlotted(api, deviceId, sessionId, game.save, file, hash, head, overwrite = false) }
             } catch (e: RommException.Conflict) {
@@ -559,12 +561,14 @@ class SaveSyncEngine(
             when (choice) {
                 ConflictChoice.KEEP_THOR -> {
                     if (local == null) return ResolveResult.Failed("There's no save on the Thor to keep")
+                    checkRestorable(save, UnitSnapshot.of(save.roots).totalBytes)
                     whenSettled(save, local) { file -> uploadSlotted(api, deviceId, null, save, file, local, head, overwrite = true) }
                         ?: return ResolveResult.Failed(stillWriting(save))
                 }
                 ConflictChoice.KEEP_SERVER, ConflictChoice.KEEP_BOTH -> {
                     if (head == null) return ResolveResult.Failed("RomM has no save for this game to take")
                     if (choice == ConflictChoice.KEEP_BOTH && local != null) {
+                        checkRestorable(save, UnitSnapshot.of(save.roots).totalBytes)
                         whenSettled(save, local) { file -> uploadArchival(api, deviceId, save, file, local) }
                             ?: return ResolveResult.Failed(stillWriting(save))
                     }
@@ -656,7 +660,7 @@ class SaveSyncEngine(
                 throw SaveArchiveException("The downloaded save doesn't match RomM's hash; nothing was replaced")
             }
             if (!SaveHasher.isZip(file.toPath())) throw SaveArchiveException("RomM's save for this game isn't a save archive Loom can restore")
-            val restored = restorer.restore(file.toPath(), save.roots, current)
+            val restored = restorer.restore(file.toPath(), save.roots, current, save.maxUnitBytes)
             rommCall { api.confirmSaveDownloaded(head.saveId, SaveDeviceRequest(deviceId)) }
             writeBaseline(save, restored, head.saveId, head.contentHash, head.updatedAt)
             setState(romId, SaveSyncState.IN_SYNC, null)
@@ -785,6 +789,13 @@ class SaveSyncEngine(
     /** Whether an upload's answer is a new slot head, not an older version RomM matched by hash. */
     private fun isNewHead(saved: SaveDto, head: ServerHead): Boolean =
         saved.id > head.saveId && !saved.updatedAtInstant().isBefore(head.updatedAt)
+
+    /** A save larger than Loom could restore isn't uploaded: it could never come back. */
+    private fun checkRestorable(save: ResolvedSave.Ready, bytes: Long) {
+        if (bytes > save.maxUnitBytes) {
+            throw SaveArchiveException("This save is ${formatBytes(bytes)}, more than Loom restores (${formatBytes(save.maxUnitBytes)}), so it isn't uploaded")
+        }
+    }
 
     private fun stillWriting(save: ResolvedSave.Ready) = "${emulatorName(save.emulator)} is still writing this save. Close it and try again in a minute."
 

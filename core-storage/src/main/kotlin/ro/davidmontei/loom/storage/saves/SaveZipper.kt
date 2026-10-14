@@ -63,8 +63,9 @@ object SaveZipper {
     const val MAX_ENTRY_BYTES = 512L * 1024 * 1024
 
     /**
-     * Most bytes one restore may unpack. A 3DS title's save is at most a few MB; the cap keeps a
-     * hostile archive of many large entries from filling the card that holds the live saves.
+     * Most bytes one restore may unpack, unless the save's emulator allows more: a 3DS title's save
+     * is at most a few MB. The cap keeps a hostile archive of many large entries from filling the
+     * card that holds the live saves; Loom uploads no save larger than it could restore.
      */
     const val MAX_UNIT_BYTES = 64L * 1024 * 1024
 

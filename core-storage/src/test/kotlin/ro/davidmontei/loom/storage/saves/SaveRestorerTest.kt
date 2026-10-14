@@ -198,7 +198,7 @@ class SaveRestorerTest {
         val before = contents(unit)
         var moves = 0
         val lossy = SaveRestorer(
-            unpack = { archive, dest, roots ->
+            unpack = { archive, dest, roots, _ ->
                 SaveZipper.unzip(archive, dest, roots)
                 Files.write(dest.resolve("data/00000001/main"), byteArrayOf(0))
             },
