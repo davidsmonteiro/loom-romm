@@ -159,8 +159,11 @@ For Nintendo-layout pads, use Settings → Controls → **Swap A and B**. Touch 
 adb shell am broadcast -n ro.davidmontei.loom/.headless.CommandReceiver -a ro.davidmontei.loom.action.SYNC_CATALOG
 adb shell am broadcast -n ro.davidmontei.loom/.headless.CommandReceiver -a ro.davidmontei.loom.action.SYNC_CATALOG --ez full true
 
-# Reserved for Phase 2 (answers "not available yet" for now)
+# Upload the saves that changed on the Thor (3DS games in Azahar), once left alone for a minute
 adb shell am broadcast -n ro.davidmontei.loom/.headless.CommandReceiver -a ro.davidmontei.loom.action.PUSH_SAVES
+
+# Download newer saves from RomM. Close the emulator first. Only saves unchanged on the Thor since the
+# last sync (or missing) are replaced, only by a save from the same emulator, and each is backed up first.
 adb shell am broadcast -n ro.davidmontei.loom/.headless.CommandReceiver -a ro.davidmontei.loom.action.PULL_SAVES
 ```
 
@@ -169,10 +172,12 @@ From Termux, run the same commands without `adb shell`. They work even when Loom
 `am broadcast` prints the result. The result code is:
 - `0`: queued
 - `1`: not paired
-- `2`: not available yet
+- `2`: Loom isn't set up yet (finish the first-run setup)
 - `3`: unknown command
 
-The receiver is exported without a permission because its commands only queue work.
+A save command that finds something it won't do alone (a save conflict, a newer save on RomM) says so in a notification.
+
+The receiver is exported without a permission because its commands only queue work, and none of them can replace a save that changed on the Thor.
 
 Long-press Loom's icon for the **Sync library** and **Downloads** shortcuts.
 
