@@ -35,7 +35,7 @@ jobs:
       - uses: ./.github/actions/setup
 
       - name: Test and lint
-        run: ./gradlew :core-romm:test :core-storage:test :app:testDebugUnitTest :app:lintDebug
+        run: ./gradlew androidApiCheck :core-romm:test :core-storage:test :app:testDebugUnitTest :app:lintDebug
 
       - name: Build the signed APK
         env:

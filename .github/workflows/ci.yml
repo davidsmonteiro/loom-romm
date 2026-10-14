@@ -31,7 +31,7 @@ jobs:
       - name: Test, lint and build
         run: >-
           ./gradlew
-          :core-romm:test :core-storage:test :app:testDebugUnitTest
+          androidApiCheck :core-romm:test :core-storage:test :app:testDebugUnitTest
           :app:lintDebug :app:assembleDebug :app:assembleRelease
 
       - name: Upload test and lint reports

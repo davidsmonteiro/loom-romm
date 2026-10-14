@@ -243,6 +243,7 @@ Long-press Loom's icon for the **Sync library** and **Downloads** shortcuts.
 ```sh
 ./gradlew test             # all JVM tests: :core-romm, :core-storage, :app (Robolectric, SDK 33)
 ./gradlew lintDebug        # any warning fails the build
+./gradlew androidApiCheck  # the JVM modules use only Java APIs Android 11 (API 30) has
 ./gradlew :core-romm:liveCheck -Promm.url=https://romm.example.org            # read-only probe of a real server
 LOOM_TOKEN=rmm_… ./gradlew :core-romm:liveCheck -Promm.url=https://romm.example.org   # …plus platforms and a page of ROMs
 ```
