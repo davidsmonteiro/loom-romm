@@ -13,6 +13,7 @@ import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.isFocused
@@ -264,6 +265,39 @@ class LibraryScreenTest {
         rule.onNodeWithText("Cancel download").assertIsFocused()
         changeGame(3, game(3, "Super Metroid", InstallState.FAILED, detail = "This card can't hold files over 4 GB (FAT32).").copy(retryable = false))
         rule.onNodeWithText("Remove from queue").assertIsFocused()
+    }
+
+    private fun finishing(id: Int, title: String) =
+        game(id, title, InstallState.DOWNLOADING, progress = 1f, detail = "Finishing…").copy(finishing = true)
+
+    /**
+     * Found by review: the details offered "Cancel download" while the game was being moved into the
+     * ROMs folder, which the engine can't stop half way, so pressing it did nothing. They say what's
+     * happening instead.
+     */
+    @Test fun theDetailsDontOfferCancelWhileAGameIsMovedIntoPlace() {
+        state = state.copy(games = games.map { if (it.id == 3) finishing(3, "Super Metroid") else it })
+        show()
+        rule.onNodeWithTag("game-3").assertTextContains("Finishing…", substring = true) // the card's badge, not 100%
+        press(listOf(Key.DirectionRight, Key.DirectionRight, Key.DirectionCenter)) // Super Metroid's details
+        rule.onNodeWithText("Moving it into your ROMs folder").assertExists()
+        rule.onNodeWithTag("details-state", useUnmergedTree = true).assertTextEquals("Finishing…")
+        rule.onNodeWithText("Cancel download").assertDoesNotExist()
+        rule.onNodeWithText("Close").assertIsFocused()
+        press(listOf(Key.DirectionRight, Key.DirectionCenter))
+        assertThat(calls.filter { it.startsWith("cancel") }).isEmpty()
+    }
+
+    /** A download reaching the move into place while its details are open loses Cancel, and focus stays in the dialog. */
+    @Test fun cancelGoesFromTheDetailsWhenTheGameStartsMovingIntoPlace() {
+        show()
+        press(listOf(Key.DirectionRight, Key.DirectionRight, Key.DirectionCenter, Key.DirectionRight)) // Super Metroid: details, Cancel download
+        rule.onNodeWithText("Cancel download").assertIsFocused()
+        changeGame(3, finishing(3, "Super Metroid"))
+        rule.onNodeWithText("Cancel download").assertDoesNotExist()
+        rule.onNodeWithTag("details-state", useUnmergedTree = true).assertTextEquals("Finishing…")
+        rule.onNodeWithText("Close").assertIsFocused()
+        assertThat(calls.filter { it.startsWith("cancel") }).isEmpty()
     }
 
     /** Found by audit: X on a download that retrying can't fix did nothing, and the details offered Retry. */

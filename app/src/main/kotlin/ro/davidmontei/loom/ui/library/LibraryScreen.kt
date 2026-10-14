@@ -704,8 +704,10 @@ private fun StateOverlay(game: GameItem, modifier: Modifier) {
 private fun StateBadge(game: GameItem) {
     when (game.state) {
         InstallState.INSTALLED -> StatusBadge("On device")
-        InstallState.DOWNLOADING -> StatusBadge(game.progress?.let { "${(it * 100).toInt()}%" } ?: (game.stateDetail ?: "Downloading"),
-            color = LoomColors.Accent, onColor = LoomColors.OnAccent)
+        InstallState.DOWNLOADING -> StatusBadge(
+            game.stateDetail.takeIf { game.finishing } ?: game.progress?.let { "${(it * 100).toInt()}%" } ?: (game.stateDetail ?: "Downloading"),
+            color = LoomColors.Accent, onColor = LoomColors.OnAccent,
+        )
         InstallState.QUEUED -> StatusBadge(game.stateDetail ?: "Queued", color = LoomColors.SurfaceHighest, onColor = LoomColors.Text)
         InstallState.FAILED -> StatusBadge("Failed", color = LoomColors.Error, onColor = LoomColors.OnError)
         InstallState.NOT_INSTALLED -> if (game.removedOnServer) StatusBadge("Removed from RomM", color = LoomColors.SurfaceHighest, onColor = LoomColors.TextMuted)
@@ -751,7 +753,8 @@ private fun GameDialog(
                         game.adopted -> " (Loom found it there)"
                         else -> ""
                     })
-                    InstallState.QUEUED, InstallState.DOWNLOADING -> add(game.stateDetail ?: "Downloading")
+                    InstallState.QUEUED, InstallState.DOWNLOADING ->
+                        add(if (game.finishing) "Moving it into your ROMs folder" else game.stateDetail ?: "Downloading")
                     InstallState.FAILED -> {
                         add(game.stateDetail ?: "The last download failed")
                         if (!game.retryable) add("Retrying won't help until this is fixed.")
@@ -790,6 +793,11 @@ private fun GameDialog(
             val notASave = Modifier.onFocusChanged { if (it.isFocused) focusedSaveAction = null }
             LoomButton(main.label, main.onClick, Modifier.focusRequester(first).focusRequester(firstButton).then(notASave), primary = main.primary)
             other?.let { LoomButton(it.label, it.onClick, notASave, destructive = it.destructive) }
+            // Where Cancel was: the move into the ROMs folder can't be stopped half way, so it says what's happening.
+            if (game.finishing) {
+                Text("Finishing…", style = MaterialTheme.typography.labelLarge, color = LoomColors.TextMuted,
+                    modifier = Modifier.align(Alignment.CenterVertically).testTag("details-state"))
+            }
             // The second button can go too (a failure retrying can't fix), taking focus with it: back to the first.
             InitialFocus(first, other == null, delayMs = 0)
         },
@@ -864,6 +872,8 @@ private fun detailsButtons(
         // Retrying a failure that retrying can't fix is refused, so it isn't offered.
         InstallState.FAILED -> if (game.retryable) Pair(DialogAction("Retry", primary = true) { retry(game) }, removeFromQueue)
             else Pair(removeFromQueue, null)
-        InstallState.QUEUED, InstallState.DOWNLOADING -> Pair(closeButton, DialogAction("Cancel download", destructive = true) { cancel(game) })
+        // Not while it's being moved into place: the engine can't stop that half way, so Cancel would do nothing.
+        InstallState.QUEUED, InstallState.DOWNLOADING ->
+            Pair(closeButton, DialogAction("Cancel download", destructive = true) { cancel(game) }.takeUnless { game.finishing })
     }
 }

@@ -24,6 +24,8 @@ import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.romm.RommException
 import ro.davidmontei.loom.storage.engine.Failure
 import ro.davidmontei.loom.storage.engine.FailureCode
+import ro.davidmontei.loom.storage.engine.JobEvent
+import ro.davidmontei.loom.storage.engine.JobMachine
 import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.JobRunner
 import ro.davidmontei.loom.storage.engine.NioFileOps
@@ -205,10 +207,18 @@ class DrainWorker @AssistedInject constructor(
         val first = running.values.minByOrNull { it.job.queueOrder } ?: return
         val done = repository.progress.value[first.job.id]?.bytesDone ?: first.job.bytesDone
         val queued = dao.jobsIn(JobPhase.QUEUED.name).size
-        runCatching { setForeground(notifications.foreground(first.job.title, done, first.job.bytesTotal, queued, first.job.id)) }
+        val cancel = cancelTarget(dao.job(first.job.id))
+        runCatching { setForeground(notifications.foreground(first.job.title, done, first.job.bytesTotal, queued, cancel)) }
     }
 
     companion object {
+        /**
+         * The job the notification's Cancel acts on: none once it is being moved into place, which
+         * can't be stopped half way, so Cancel would do nothing.
+         */
+        internal fun cancelTarget(job: DownloadJobEntity?): Long? =
+            job?.takeIf { JobMachine.canApply(it.status(), JobEvent.Cancel) }?.id
+
         const val UNIQUE_NAME = "download-queue"
         /** JobParameters.STOP_REASON_TIMEOUT: the foreground-service time limit (Android 15+). */
         private const val STOP_REASON_FGS_TIMEOUT = 3

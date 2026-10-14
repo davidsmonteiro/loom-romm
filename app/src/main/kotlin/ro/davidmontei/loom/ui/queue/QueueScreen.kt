@@ -291,8 +291,11 @@ fun QueueContent(
         .then(if (key == entryKey) Modifier.focusRequester(entry) else Modifier)
 
     val hasSaves = state.conflicts.isNotEmpty() || state.restorable.isNotEmpty()
-    val hints = listOf(ButtonHint("A", if (hasSaves) "Choose / pause / resume / retry" else "Pause / resume / retry"),
-        ButtonHint("X", "Cancel"), ButtonHint("B", "Back"))
+    // A job being moved into place can't be paused or cancelled: on its row, A and X aren't offered.
+    val finishingFocused = jobs.any { it.jobId == focusedKey && !it.canCancel }
+    val hints = if (finishingFocused) listOf(ButtonHint("B", "Back"))
+        else listOf(ButtonHint("A", if (hasSaves) "Choose / pause / resume / retry" else "Pause / resume / retry"),
+            ButtonHint("X", "Cancel"), ButtonHint("B", "Back"))
 
     // Focus coming into the screen from outside (a dialog's button that just went away) lands on the
     // list, which restores the row last focused: the one A or X was pressed on.
@@ -367,17 +370,30 @@ fun QueueContent(
                 }
             }
         }
-        confirmCancel?.let { item ->
-            LoomDialog(
-                title = if (item.failed) "Remove ${item.title} from the queue?" else "Cancel downloading ${item.title}?",
-                onDismiss = { confirmCancel = null },
-                body = { Text("Partly downloaded data is deleted. Nothing in your ROMs folder changes.", color = LoomColors.TextMuted) },
-                buttons = { f ->
-                    LoomButton("Keep", onClick = { confirmCancel = null }, modifier = Modifier.focusRequester(f))
-                    LoomButton(if (item.failed) "Remove" else "Cancel download", primary = true, destructive = true,
-                        onClick = { actions.cancel(item.jobId); confirmCancel = null })
-                },
-            )
+        confirmCancel?.let { asked ->
+            // The job as it is now: it can finish, or reach the move into place, while the question is open.
+            val item = jobs.firstOrNull { it.jobId == asked.jobId }
+            LaunchedEffect(item == null) { if (item == null) confirmCancel = null }
+            if (item != null) {
+                LoomDialog(
+                    title = if (item.failed) "Remove ${item.title} from the queue?" else "Cancel downloading ${item.title}?",
+                    onDismiss = { confirmCancel = null },
+                    body = { Text("Partly downloaded data is deleted. Nothing in your ROMs folder changes.", color = LoomColors.TextMuted) },
+                    buttons = { f ->
+                        LoomButton("Keep", onClick = { confirmCancel = null }, modifier = Modifier.focusRequester(f))
+                        if (item.canCancel) {
+                            LoomButton(if (item.failed) "Remove" else "Cancel download", primary = true, destructive = true,
+                                onClick = { actions.cancel(item.jobId); confirmCancel = null })
+                        } else {
+                            // Too late to cancel: it is being moved into the ROMs folder, which can't be stopped half way.
+                            Text("Finishing…", style = MaterialTheme.typography.labelLarge, color = LoomColors.TextMuted,
+                                modifier = Modifier.align(Alignment.CenterVertically).testTag("cancel-state"))
+                        }
+                        // The cancel button can go while it has focus: back to Keep.
+                        InitialFocus(f, item.canCancel, delayMs = 0)
+                    },
+                )
+            }
         }
         choosing?.let { romId ->
             // Settled meanwhile (in the background, or from the library): nothing left to choose.

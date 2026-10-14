@@ -8,6 +8,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
@@ -173,6 +174,46 @@ class QueueScreenTest {
         rule.onNodeWithTag("job-1").assertIsFocused()
         press(Key.ButtonX)
         rule.onNodeWithText("Keep").assertDoesNotExist()
+    }
+
+    /** On a job being moved into place A and X do nothing, so the hints don't offer them there. */
+    @Test fun aJobBeingMovedIntoPlaceOffersNothingToPress() {
+        show(sample.copy(active = listOf(item(1, "Final Fantasy VII (USA)", JobPhase.PROMOTING)) + sample.active.drop(1)))
+        rule.onNodeWithTag("job-1").assertIsFocused()
+        rule.onNodeWithText("Pause / resume / retry").assertDoesNotExist()
+        rule.onNodeWithText("Cancel").assertDoesNotExist()
+        rule.onNodeWithText("Back").assertExists()
+        press(Key.DirectionDown) // Metroid Prime, paused
+        rule.onNodeWithText("Pause / resume / retry").assertExists()
+        rule.onNodeWithText("Cancel").assertExists()
+    }
+
+    /**
+     * Found by review: the question to cancel stayed as it was when its job reached the move into
+     * place, and "Cancel download" then did nothing. It says what's happening instead.
+     */
+    @Test fun theCancelQuestionStopsOfferingCancelOnceTheJobIsMovedIntoPlace() {
+        show()
+        press(Key.ButtonX) // Final Fantasy VII, downloading
+        press(Key.DirectionRight)
+        button("Cancel download").assertIsFocused()
+        update { it.copy(active = listOf(item(1, "Final Fantasy VII (USA)", JobPhase.PROMOTING)) + it.active.drop(1)) }
+        button("Cancel download").assertDoesNotExist()
+        rule.onNodeWithTag("cancel-state", useUnmergedTree = true).assertTextEquals("Finishing…")
+        rule.onNodeWithText("Keep").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Keep").assertDoesNotExist()
+        assertThat(calls).isEmpty()
+    }
+
+    @Test fun theCancelQuestionGoesWhenItsJobFinishes() {
+        show()
+        press(Key.DirectionDown); press(Key.DirectionDown) // Mario Kart DS
+        press(Key.ButtonX)
+        rule.onNodeWithText("Cancel downloading Mario Kart DS (USA)?").assertExists()
+        update { it.copy(active = it.active.filterNot { job -> job.jobId == 3L }) } // installed meanwhile
+        rule.onNodeWithText("Cancel downloading Mario Kart DS (USA)?").assertDoesNotExist()
+        assertThat(calls).isEmpty()
     }
 
     @Test fun xIgnoresFinishedGames() {

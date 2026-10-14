@@ -31,17 +31,20 @@ class LibraryGamesQueryTest {
 
     @After fun tearDown() = db.close()
 
-    private suspend fun failedDownload(retryable: Boolean) {
+    private suspend fun download(phase: JobPhase, failureCode: String? = null, failureDetail: String? = null, retryable: Boolean = true) {
         db.catalogDao().upsertPlatforms(listOf(PlatformEntity(1, "psx", "psx", "PlayStation", "PlayStation", 1, "t")))
         db.catalogDao().upsertRoms(listOf(RomEntity(10, 1, "psx", "psx", "Gran Turismo 2", "gran turismo 2", "gran turismo 2",
             "GT2.chd", "GT2", "chd", 5_000_000_000, true, false, false, null, null, "USA", "t", false)))
         db.downloadDao().insertJobWithParts(
-            DownloadJobEntity(romId = 10, platformId = 1, title = "Gran Turismo 2", phase = JobPhase.FAILED.name,
-                failureCode = "FILE_TOO_LARGE_FOR_SD", failureDetail = "This card can't hold files over 4 GB (FAT32).",
+            DownloadJobEntity(romId = 10, platformId = 1, title = "Gran Turismo 2", phase = phase.name,
+                failureCode = failureCode, failureDetail = failureDetail,
                 failureRetryable = retryable, planJson = "{}", fingerprint = "f", volumeUuid = "9C33-6BBD",
                 stagingRoot = "/staging", romsRoot = "/roms", bytesTotal = 5_000_000_000, queueOrder = 1, updatedAt = 1),
         ) { emptyList() }
     }
+
+    private suspend fun failedDownload(retryable: Boolean) =
+        download(JobPhase.FAILED, "FILE_TOO_LARGE_FOR_SD", "This card can't hold files over 4 GB (FAT32).", retryable)
 
     /** Found by audit: the library offered Retry for failures the queue refuses to retry. */
     @Test fun aFailureRetryingCantFixReachesTheLibrary() = runBlocking<Unit> {
@@ -55,5 +58,19 @@ class LibraryGamesQueryTest {
     @Test fun otherFailuresCanBeRetried() = runBlocking<Unit> {
         failedDownload(retryable = true)
         assertThat(db.catalogDao().observeGames(1, 0, "").first().single().toItem().retryable).isTrue()
+    }
+
+    /** Found by review: the details offered Cancel while the game was moved into place, which can't be cancelled. */
+    @Test fun aGameBeingMovedIntoPlaceIsFinishing() = runBlocking<Unit> {
+        download(JobPhase.PROMOTING)
+        val game = db.catalogDao().observeGames(1, 0, "").first().single().toItem()
+        assertThat(game.state).isEqualTo(InstallState.DOWNLOADING)
+        assertThat(game.finishing).isTrue()
+        assertThat(game.stateDetail).isEqualTo("Finishing…")
+    }
+
+    @Test fun aGameStillDownloadingIsNotFinishing() = runBlocking<Unit> {
+        download(JobPhase.DOWNLOADING)
+        assertThat(db.catalogDao().observeGames(1, 0, "").first().single().toItem().finishing).isFalse()
     }
 }

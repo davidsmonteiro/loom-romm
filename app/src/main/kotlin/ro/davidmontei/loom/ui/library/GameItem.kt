@@ -32,6 +32,8 @@ data class GameItem(
     val save: GameSave? = null,
     /** Adopted by its name alone: nothing said what size the game should be, so it may be another copy. */
     val matchedByName: Boolean = false,
+    /** Being moved into its system folder, which can't be stopped half way: too late to cancel. */
+    val finishing: Boolean = false,
 )
 
 /** Where an installed game's save stands, as its details show it. */
@@ -105,7 +107,7 @@ fun GameRow.toItem(liveBytes: Long? = null): GameItem {
         JobPhase.QUEUED.name -> "Queued"
         JobPhase.VERIFYING.name -> "Verifying"
         JobPhase.EXTRACTING.name -> "Unpacking"
-        JobPhase.PROMOTING.name -> "Finishing"
+        JobPhase.PROMOTING.name -> "Finishing…"
         JobPhase.FAILED.name -> failureDetail ?: "Download failed"
         else -> null
     }
@@ -127,5 +129,6 @@ fun GameRow.toItem(liveBytes: Long? = null): GameItem {
         platformId = platformId,
         retryable = failureRetryable ?: true,
         matchedByName = installSource == "ADOPTED" && installVerifiedBy == "NAME",
+        finishing = jobPhase == JobPhase.PROMOTING.name,
     )
 }
