@@ -103,5 +103,9 @@ _Avoid_: channel
 What Loom recorded the last time a game's slot was in sync on the Thor: its own hash of the save unit, and the slot head's id, hash and time. Comparing each side with it tells which one changed.
 _Avoid_: last sync, sync row (that is RomM's record of the device's last download or upload)
 
+**Save backup**:
+A zip of a save unit Loom takes before it replaces that save, kept on the same card in `.loom/save-backups/<rom id>/` (outside the ROMs root), newest ten per game.
+_Avoid_: snapshot, copy
+
 **Save conflict**:
 A slot where Loom won't pick a side on its own: both sides changed since the baseline, the server's save went back or came from another emulator, or RomM disagrees with Loom. The user chooses Keep Thor, Keep server, Keep both or Skip.

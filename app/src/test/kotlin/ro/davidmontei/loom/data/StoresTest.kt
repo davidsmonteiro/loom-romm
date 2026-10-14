@@ -120,4 +120,13 @@ class StoresTest {
             assertThat(id.removePrefix("loom-")).hasLength(36) // a UUID
         }
     }
+
+    @Test fun azaharsFolderIsFoundUnlessSetInSettings() = runBlocking<Unit> {
+        val store = SettingsStore(prefs("settings"))
+        assertThat(store.snapshot().azaharUserDir).isNull()
+        store.setAzaharUserDir("/storage/6365-3230/Azahar")
+        assertThat(store.snapshot().azaharUserDir).isEqualTo("/storage/6365-3230/Azahar")
+        store.setAzaharUserDir(null)
+        assertThat(store.snapshot().azaharUserDir).isNull()
+    }
 }

@@ -36,6 +36,11 @@ data class Settings(
      * rows written by an older Loom lack the newer ones until a full sync.
      */
     val catalogFields: Int = 1,
+    /**
+     * Azahar's user directory when the user set one; null means the n3ds system folder, when it
+     * holds Azahar's `sdmc/Nintendo 3DS` (as on the Thor).
+     */
+    val azaharUserDir: String? = null,
 )
 
 /**
@@ -59,6 +64,7 @@ class SettingsStore(
             catalogWatermark = p[WATERMARK],
             lastCatalogSyncEpochMs = p[LAST_SYNC]?.toLongOrNull(),
             catalogFields = p[CATALOG_FIELDS] ?: 1,
+            azaharUserDir = p[AZAHAR_USER_DIR],
         )
     }
 
@@ -75,6 +81,11 @@ class SettingsStore(
         val id = "loom-" + (androidId()?.trim()?.lowercase()?.takeIf(::usableAndroidId) ?: UUID.randomUUID().toString())
         dataStore.edit { if (it[DEVICE_IDENTIFIER] == null) it[DEVICE_IDENTIFIER] = id }
         return dataStore.data.first()[DEVICE_IDENTIFIER]!!
+    }
+
+    /** [path] null goes back to finding Azahar's folder in the n3ds system folder. */
+    suspend fun setAzaharUserDir(path: String?) = dataStore.edit {
+        if (path.isNullOrBlank()) it.remove(AZAHAR_USER_DIR) else it[AZAHAR_USER_DIR] = path
     }
 
     suspend fun setServer(config: ServerConfig, version: String?) = dataStore.edit {
@@ -120,5 +131,6 @@ class SettingsStore(
         val LAST_SYNC = stringPreferencesKey("catalog_last_sync_ms")
         val DEVICE_IDENTIFIER = stringPreferencesKey("device_identifier")
         val CATALOG_FIELDS = intPreferencesKey("catalog_fields")
+        val AZAHAR_USER_DIR = stringPreferencesKey("azahar_user_dir")
     }
 }
