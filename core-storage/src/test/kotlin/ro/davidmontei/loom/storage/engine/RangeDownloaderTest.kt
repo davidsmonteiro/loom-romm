@@ -1,12 +1,18 @@
 package ro.davidmontei.loom.storage.engine
 
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
+import mockwebserver3.MockResponseBody
 import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
 import okhttp3.OkHttpClient
+import okio.BufferedSink
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -22,6 +28,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Resuming a part: what is already on the card is hashed alongside the request for the rest, not
@@ -51,7 +58,22 @@ class RangeDownloaderTest {
         Files.write(file, data.copyOf(have.toInt())) // a download paused a third of the way in
     }
 
-    @After fun tearDown() = server.close()
+    /** Holds a stalled response back; let go at the end, so the fake server can stop. */
+    private val stalled = CountDownLatch(1)
+
+    @After fun tearDown() {
+        stalled.countDown()
+        server.close()
+    }
+
+    /** Waits until [ready], as a slow card holding a read back would; gives up after 5 s. */
+    private fun waitFor(ready: () -> Boolean) {
+        val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (!ready()) {
+            check(System.nanoTime() < until) { "waited 5 s" }
+            Thread.sleep(2)
+        }
+    }
 
     private val part = PartRecord(
         jobId = 1, plan = PartPlan(1, "Game.iso", data.size.toLong(), PartCheck.Hash("sha1", sha1(data)), extract = false),
@@ -95,5 +117,50 @@ class RangeDownloaderTest {
         files.throttleBytesPer10Ms = 40_000 // about half a second for the rest
         val result = download(readBackWhen { Files.size(file) >= have + 300_000 })
         assertThat(result.digest).isEqualTo(sha1(data))
+    }
+
+    /**
+     * Found by review: what came in while the prefix was hashed was read back in one go, with the
+     * connection left unread meanwhile: about 12 s for a download paused at 3 GB, and past what RomM's
+     * proxy waits for (a minute) at larger ones. It is caught up on a little for each read instead.
+     */
+    @Test fun catchingUpKeepsReadingTheConnection() {
+        val big = random(6_000_000, 22)
+        files.files[2] = big
+        val staged = file.resolveSibling("2.part").also { Files.write(it, big.copyOf(have.toInt())) }
+        val bigPart = PartRecord(
+            jobId = 1, plan = PartPlan(2, "Big.iso", big.size.toLong(), PartCheck.Hash("sha1", sha1(big)), extract = false),
+            relUrl = "api/roms/2/files/content/Big.iso", durableBytes = have, validator = "Wed, 01 Oct 2026 10:00:00 GMT",
+            state = PartState.PARTIAL,
+        )
+        files.throttleBytesPer10Ms = 64_000
+        val caughtUp = AtomicLong() // bytes read back after the prefix
+        val readBack: (Path) -> InputStream = { path ->
+            object : FilterInputStream(Files.newInputStream(path)) {
+                var catchingUp = false // catching up skips the prefix; hashing the prefix doesn't
+
+                override fun skip(n: Long): Long = super.skip(n).also { catchingUp = true }
+
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    // The prefix is hashed only once 1.5 MB more has come: that is the catching up to do.
+                    if (!catchingUp) waitFor { Files.size(staged) >= have + 1_500_000 }
+                    return super.read(b, off, len).also { if (catchingUp && it > 0) caughtUp.addAndGet(it.toLong()) }
+                }
+            }
+        }
+        var seen = 0L
+        var mostBetweenReads = 0L
+        val result = runBlocking {
+            RangeDownloader(OkHttpClient(), readBack = readBack).download(bigPart, server.url("/api/roms/2/files/content/Big.iso"), staged,
+                onDurable = { _, _ -> },
+                onProgress = { caughtUp.get().let { now -> mostBetweenReads = maxOf(mostBetweenReads, now - seen); seen = now } },
+            )
+        }
+        assertThat(result.digest).isEqualTo(sha1(big))
+        assertThat(caughtUp.get()).isAtLeast(1_500_000L)
+        // At most twice what one read from the connection brings (256 KB) between two reads…
+        assertThat(mostBetweenReads).isAtMost(RangeDownloader.CATCH_UP_PER_READ * 256 * 1024L)
+        // …and once caught up, the rest is hashed as it comes, not read back again.
+        assertThat(caughtUp.get()).isLessThan(big.size - have - 512 * 1024L)
     }
 }

@@ -201,9 +201,18 @@ class RangeDownloader(
                         hashedTo = start
                     }
                     if (hashedTo >= 0) {
-                        if (hashedTo < written) hashRange(file, hashedTo, written, hasher)
-                        hasher.update(buffer, 0, n)
-                        hashedTo = written + n
+                        // What came in while the prefix was hashed is caught up on a little at a time, so the
+                        // connection keeps being read: read back in one go it could be gigabytes, longer
+                        // than RomM's proxy waits for a client that has stopped reading.
+                        if (hashedTo < written) {
+                            val upTo = minOf(written, hashedTo + CATCH_UP_PER_READ * n)
+                            hashRange(file, hashedTo, upTo, hasher)
+                            hashedTo = upTo
+                        }
+                        if (hashedTo == written) {
+                            hasher.update(buffer, 0, n)
+                            hashedTo = written + n
+                        }
                     }
                 }
                 written += n
@@ -291,6 +300,12 @@ class RangeDownloader(
 
     companion object {
         private val CONTENT_RANGE = Regex("""bytes\s+(?:(\d+)-\d+|\*)/(\d+|\*)""")
+
+        /**
+         * How much of the catching up is done for each read from the connection, as a multiple of what
+         * was read: more than one, so it catches up while the rest arrives.
+         */
+        const val CATCH_UP_PER_READ = 2
 
         /** (start, total) from `bytes 100-199/200`, or start -1 for an unsatisfied range; -1 when unknown. */
         fun parseContentRange(header: String?): Pair<Long, Long>? {
