@@ -70,7 +70,9 @@ class LibraryScreenTest {
         override fun cancel(game: GameItem) { calls += "cancel:${game.id}" }
         override fun uploadSave(game: GameItem) { calls += "upload:${game.id}" }
         override fun restoreSave(game: GameItem) { calls += "restore:${game.id}" }
-        override fun openQueue(focusJobId: Long?) { calls += if (focusJobId == null) "queue" else "queue:$focusJobId" }
+        override fun openQueue(focusJobId: Long?, focusConflictRomId: Int?) {
+            calls += focusJobId?.let { "queue:$it" } ?: focusConflictRomId?.let { "queue:conflict-$it" } ?: "queue"
+        }
         override fun openSettings() { calls += "settings" }
         override fun repair() { calls += "repair" }
         override fun chooseFolder(folder: String) { calls += "folder:$folder" }
@@ -538,7 +540,7 @@ class LibraryScreenTest {
         press(Key.DirectionUp)
         rule.onNodeWithText("Choose which to keep").assertIsFocused()
         press(Key.DirectionCenter)
-        assertThat(calls).contains("queue")
+        assertThat(calls.filter { it.startsWith("queue") }).containsExactly("queue:conflict-1") // this game's conflict, not the first
     }
 
     @Test fun aGameWhoseSavesLoomCantReachSaysWhy() {

@@ -16,8 +16,11 @@ import ro.davidmontei.loom.ui.settings.SettingsScreen
 /** First-run setup, or with [pairAgain] just its pairing step, opened on top of the screen that asked for it. */
 @Serializable data class OnboardingRoute(val pairAgain: Boolean = false)
 @Serializable data object LibraryRoute
-/** [focusJobId]: the job to put focus on, when opened from that game in the library. */
-@Serializable data class QueueRoute(val focusJobId: Long? = null)
+/**
+ * Opened from a game in the library: [focusJobId] is its download to put focus on, or
+ * [focusConflictRomId] the game whose save conflict to put focus on.
+ */
+@Serializable data class QueueRoute(val focusJobId: Long? = null, val focusConflictRomId: Int? = null)
 @Serializable data object SettingsRoute
 
 /** Three screens plus first-run onboarding. B (back) always pops; Library is the root. */
@@ -31,13 +34,14 @@ fun LoomNavHost(nav: NavHostController, onboarded: Boolean, openQueue: Boolean, 
         }
         composable<LibraryRoute> {
             LibraryScreen(
-                openQueue = { jobId -> nav.navigate(QueueRoute(jobId)) { launchSingleTop = true } },
+                openQueue = { jobId, romId -> nav.navigate(QueueRoute(jobId, romId)) { launchSingleTop = true } },
                 openSettings = { nav.navigate(SettingsRoute) { launchSingleTop = true } },
                 onRepair = pairAgain,
             )
         }
         composable<QueueRoute> { entry ->
-            QueueScreen(focusJobId = entry.toRoute<QueueRoute>().focusJobId, onBack = { nav.popBackStack() })
+            val route = entry.toRoute<QueueRoute>()
+            QueueScreen(focusJobId = route.focusJobId, focusConflictRomId = route.focusConflictRomId, onBack = { nav.popBackStack() })
         }
         composable<SettingsRoute> {
             SettingsScreen(onBack = { nav.popBackStack() }, onRepair = pairAgain)

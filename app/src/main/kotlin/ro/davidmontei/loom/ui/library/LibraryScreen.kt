@@ -124,8 +124,8 @@ interface LibraryActions {
     fun uploadSave(game: GameItem)
     /** Puts RomM's save in place of the Thor's; asked only once the user said the emulator is closed. */
     fun restoreSave(game: GameItem)
-    /** Opens the queue, on [focusJobId]'s row when given. */
-    fun openQueue(focusJobId: Long? = null)
+    /** Opens the queue, on [focusJobId]'s row, or the save conflict of game [focusConflictRomId], when given. */
+    fun openQueue(focusJobId: Long? = null, focusConflictRomId: Int? = null)
     fun openSettings()
     /** Pairs Loom with RomM again, after RomM rejected its token. */
     fun repair()
@@ -138,7 +138,7 @@ interface LibraryActions {
 
 @Composable
 fun LibraryScreen(
-    openQueue: (focusJobId: Long?) -> Unit,
+    openQueue: (focusJobId: Long?, focusConflictRomId: Int?) -> Unit,
     openSettings: () -> Unit,
     onRepair: () -> Unit,
     vm: LibraryViewModel = hiltViewModel(),
@@ -169,7 +169,7 @@ fun LibraryScreen(
             override fun cancel(game: GameItem) { vm.cancel(game) }
             override fun uploadSave(game: GameItem) { vm.uploadSave(game) }
             override fun restoreSave(game: GameItem) { vm.restoreSave(game) }
-            override fun openQueue(focusJobId: Long?) = openQueue(focusJobId)
+            override fun openQueue(focusJobId: Long?, focusConflictRomId: Int?) = openQueue(focusJobId, focusConflictRomId)
             override fun openSettings() = openSettings()
             override fun repair() = onRepair()
             override fun chooseFolder(folder: String) { vm.chooseFolder(folder) }
@@ -283,7 +283,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                 onCancel = { actions.cancel(it); detailsFor = null },
                 onUploadSave = { actions.uploadSave(it); detailsFor = null },
                 onRestoreSave = { confirmRestore = it; detailsFor = null },
-                onChooseSave = { actions.openQueue(); detailsFor = null },
+                onChooseSave = { actions.openQueue(focusConflictRomId = game.id); detailsFor = null },
             )
         }
         confirmRestore?.let { game ->

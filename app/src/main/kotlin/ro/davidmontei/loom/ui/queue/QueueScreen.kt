@@ -218,19 +218,22 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
 }
 
 @Composable
-fun QueueScreen(focusJobId: Long?, onBack: () -> Unit, vm: QueueViewModel = hiltViewModel()) {
+fun QueueScreen(focusJobId: Long?, focusConflictRomId: Int?, onBack: () -> Unit, vm: QueueViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     var message by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { vm.messages.collect { message = it; delay(4000); message = null } }
-    QueueContent(state, vm, focusJobId, message)
+    QueueContent(state, vm, focusJobId, message, focusConflictRomId)
 }
 
 /**
- * [focusJobId]: the job focus starts on (the game the library opened the queue for), else the first
- * row to act on: a save conflict, a save to restore, then the jobs.
+ * [focusJobId] or [focusConflictRomId]: the job, or the game's save conflict, focus starts on (the
+ * game the library opened the queue for), else the first row to act on: a save conflict, a save to
+ * restore, then the jobs.
  */
 @Composable
-fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? = null, message: String? = null) {
+fun QueueContent(
+    state: QueueUiState, actions: QueueActions, focusJobId: Long? = null, message: String? = null, focusConflictRomId: Int? = null,
+) {
     // The row X acts on: only while it has focus, and as it is now.
     var focusedKey by remember { mutableStateOf<Any?>(null) }
     var confirmCancel by remember { mutableStateOf<QueueItem?>(null) }
@@ -254,7 +257,9 @@ fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? =
     }
     // The rows A acts on, in screen order.
     val keys = rows.filterNot { it is QueueRow.Header }.map { it.key }
-    val startKey = jobs.firstOrNull { it.jobId == focusJobId }?.jobId ?: keys.firstOrNull()
+    val startKey = jobs.firstOrNull { it.jobId == focusJobId }?.jobId
+        ?: state.conflicts.firstOrNull { it.romId == focusConflictRomId }?.let { QueueRow.Conflict(it).key }
+        ?: keys.firstOrNull()
     // Where focus goes back into the list: the row last focused, or the one now in its place once that
     // one has left (a job finished or cancelled, a conflict settled), rather than the top of the queue.
     var lastIndex by remember { mutableStateOf<Int?>(null) }
@@ -306,9 +311,11 @@ fun QueueContent(state: QueueUiState, actions: QueueActions, focusJobId: Long? =
             // The start row, or the first read-only one when there's nothing to act on, so the pad can scroll the list.
             // Only while the list has no focus: the first job finishing mustn't pull it off the row the user is on.
             InitialFocus(first, startKey, readOnlyFirst, unless = { listHasFocus })
-            // A job far down a long queue isn't composed until it is scrolled to, and can't take focus before.
-            LaunchedEffect(focusJobId) {
-                val index = rows.indexOfFirst { it is QueueRow.Job && it.item.jobId == focusJobId }
+            // A row far down a long queue isn't composed until it is scrolled to, and can't take focus before.
+            LaunchedEffect(focusJobId, focusConflictRomId) {
+                val index = rows.indexOfFirst {
+                    (it is QueueRow.Job && it.item.jobId == focusJobId) || (it is QueueRow.Conflict && it.item.romId == focusConflictRomId)
+                }
                 if (index >= 0) listState.scrollToItem(index)
             }
             LazyColumn(

@@ -82,9 +82,9 @@ class QueueScreenTest {
 
     private var state by mutableStateOf(sample)
 
-    private fun show(initial: QueueUiState = sample, focusJobId: Long? = null) {
+    private fun show(initial: QueueUiState = sample, focusJobId: Long? = null, focusConflictRomId: Int? = null) {
         state = initial
-        rule.setContent { LoomTestTheme { QueueContent(state, actions, focusJobId) } }
+        rule.setContent { LoomTestTheme { QueueContent(state, actions, focusJobId, focusConflictRomId = focusConflictRomId) } }
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
     }
 
@@ -393,6 +393,15 @@ class QueueScreenTest {
         press(Key.ButtonX)
         rule.onNodeWithText("Keep").assertDoesNotExist()
         assertThat(calls).isEmpty()
+    }
+
+    /** Found by review: "Choose which to keep" in a game's details landed on the oldest conflict, so A answered another game's. */
+    @Test fun opensOnTheConflictOfTheGameItWasOpenedFor() {
+        val conflicts = (1..12).map { pokemonX.copy(romId = 100 + it, title = "Game $it") }
+        show(withSaves.copy(conflicts = conflicts), focusConflictRomId = 111)
+        rule.onNodeWithTag("conflict-111").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Game 11: which save to keep?").assertExists()
     }
 
     @Test fun openedForAJobItStillStartsOnThatJob() {
