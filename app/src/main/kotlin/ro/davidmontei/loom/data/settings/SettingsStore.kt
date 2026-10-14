@@ -31,6 +31,11 @@ data class Settings(
     /** Server-clock watermark for incremental catalog sync (ISO-8601), null before the first sync. */
     val catalogWatermark: String?,
     val lastCatalogSyncEpochMs: Long?,
+    /**
+     * Which ROM fields the catalog rows were last fully written with (`CatalogSyncer.CATALOG_FIELDS`);
+     * rows written by an older Loom lack the newer ones until a full sync.
+     */
+    val catalogFields: Int = 1,
 )
 
 /** User settings in Preferences DataStore. Credentials live separately in CredentialStore. */
@@ -46,6 +51,7 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
             maxConcurrentDownloads = (p[CONCURRENCY] ?: 1).coerceIn(1, 3),
             catalogWatermark = p[WATERMARK],
             lastCatalogSyncEpochMs = p[LAST_SYNC]?.toLongOrNull(),
+            catalogFields = p[CATALOG_FIELDS] ?: 1,
         )
     }
 
@@ -74,9 +80,11 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setMaxConcurrentDownloads(n: Int) = dataStore.edit { it[CONCURRENCY] = n.coerceIn(1, 3) }
 
-    suspend fun setCatalogSynced(watermark: String?, atEpochMs: Long) = dataStore.edit {
+    /** Records a finished sync; [fields] is the catalog row version a full sync writes (see [Settings.catalogFields]). */
+    suspend fun setCatalogSynced(watermark: String?, atEpochMs: Long, fields: Int) = dataStore.edit {
         if (watermark != null) it[WATERMARK] = watermark else it.remove(WATERMARK)
         it[LAST_SYNC] = atEpochMs.toString()
+        it[CATALOG_FIELDS] = fields
     }
 
     /** Forget the sync watermark so the next sync is a full one. */
@@ -92,5 +100,6 @@ class SettingsStore(private val dataStore: DataStore<Preferences>) {
         val WATERMARK = stringPreferencesKey("catalog_watermark")
         val LAST_SYNC = stringPreferencesKey("catalog_last_sync_ms")
         val DEVICE_IDENTIFIER = stringPreferencesKey("device_identifier")
+        val CATALOG_FIELDS = intPreferencesKey("catalog_fields")
     }
 }

@@ -50,6 +50,11 @@ data class RomEntity(
     @ColumnInfo(name = "updated_at") val updatedAt: String,
     @ColumnInfo(name = "missing_from_fs") val missingFromFs: Boolean,
     @ColumnInfo(name = "removed_on_server") val removedOnServer: Boolean = false,
+    /** The title ID RomM read from the ROM, e.g. "000400000011C400"; null when it didn't. */
+    @ColumnInfo(name = "title_id") val titleId: String? = null,
+    /** Where RomM says the game keeps its save, keyed as [saveTargetLayout] says, e.g. "00040000/0011c400". */
+    @ColumnInfo(name = "save_target") val saveTarget: String? = null,
+    @ColumnInfo(name = "save_target_layout") val saveTargetLayout: String? = null,
 )
 
 /** One file of a ROM, with the hashes RomM computed (null when it didn't). */

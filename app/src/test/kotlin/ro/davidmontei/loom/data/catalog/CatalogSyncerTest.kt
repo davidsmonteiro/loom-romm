@@ -129,7 +129,7 @@ class CatalogSyncerTest {
 
     @Test fun incrementalSyncUsesOverlapAndAppliesDeletions() = runBlocking<Unit> {
         val dao = db.catalogDao()
-        settings.setCatalogSynced("2026-10-07T09:30:00.000000+00:00", 0)
+        settings.setCatalogSynced("2026-10-07T09:30:00.000000+00:00", 0, CatalogSyncer.CATALOG_FIELDS)
         dao.upsertPlatforms(listOf(platform(1, "snes"), platform(2, "gba")).map { p ->
             RommJson.decodeFromJsonElement(PlatformDto.serializer(), p).toEntity()
         })
@@ -158,7 +158,7 @@ class CatalogSyncerTest {
     }
 
     @Test fun fullSyncIgnoresWatermark() = runBlocking<Unit> {
-        settings.setCatalogSynced("2026-10-07T09:30:00.000000+00:00", 0)
+        settings.setCatalogSynced("2026-10-07T09:30:00.000000+00:00", 0, CatalogSyncer.CATALOG_FIELDS)
         server.enqueue(heartbeat())
         server.enqueue(json("[]"))
         server.enqueue(json(page(emptyList(), total = 0)))
@@ -167,6 +167,31 @@ class CatalogSyncerTest {
         assertThat(result.full).isTrue()
         server.takeRequest(); server.takeRequest()
         assertThat(server.takeRequest().url.queryParameter("updated_after")).isNull()
+    }
+
+    /** A catalog written before Loom stored title ids gets one full pass, so every 3DS game has its id. */
+    @Test fun theFirstSyncAfterAnUpgradeIsFullAndStoresTitleIds() = runBlocking<Unit> {
+        settings.setCatalogSynced("2026-10-07T09:30:00.000000+00:00", 0, fields = 1)
+        val pokemon = buildJsonObject {
+            rom(10, 1, "2026-09-01T00:00:00+00:00").forEach { (k, v) -> put(k, v) }
+            put("title_id", "000400000011C400"); put("save_target", "00040000/0011c400"); put("save_target_layout", "folder-split")
+        }
+        server.enqueue(heartbeat())
+        server.enqueue(json(JsonArray(listOf(platform(1, "3ds"))).toString()))
+        server.enqueue(json(page(listOf(pokemon), total = 1)))
+        server.enqueue(json("[10]"))
+
+        assertThat(syncer.sync(api, full = false).full).isTrue()
+        server.takeRequest(); server.takeRequest()
+        assertThat(server.takeRequest().url.queryParameter("updated_after")).isNull()
+        val rom = db.catalogDao().rom(10)!!
+        assertThat(rom.titleId).isEqualTo("000400000011C400")
+        assertThat(rom.saveTarget).isEqualTo("00040000/0011c400")
+        assertThat(rom.saveTargetLayout).isEqualTo("folder-split")
+
+        // From then on, incremental again.
+        server.enqueue(heartbeat()); server.enqueue(json("[]")); server.enqueue(json(page(emptyList(), total = 0))); server.enqueue(json("[10]"))
+        assertThat(syncer.sync(api, full = false).full).isFalse()
     }
 
     @Test fun watermarkMathHandlesSpacesAndOffsets() {

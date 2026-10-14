@@ -26,9 +26,10 @@ data class SyncResult(val full: Boolean, val romsWritten: Int, val serverRomCoun
  * Brings the offline catalog in line with the server.
  *
  * - Platforms: always fetched whole (a few dozen rows).
- * - ROMs: a full pass the first time and on request; afterwards only ROMs with
- *   `updated_at` newer than the watermark minus a one-hour overlap. The watermark is the newest
- *   `updated_at` seen, so it runs on the server's clock, not the Thor's.
+ * - ROMs: a full pass the first time, on request, and once after Loom starts storing a new ROM
+ *   field; afterwards only ROMs with `updated_at` newer than the watermark minus a one-hour
+ *   overlap. The watermark is the newest `updated_at` seen, so it runs on the server's clock,
+ *   not the Thor's.
  * - Deletions: the server's complete id list is diffed against the local one.
  */
 class CatalogSyncer(
@@ -45,8 +46,11 @@ class CatalogSyncer(
         val serverPlatformIds = platforms.map { it.id }.toSet()
         dao.deletePlatformsWithoutInstalls(dao.platformIds().filterNot { it in serverPlatformIds })
 
-        val previous = settings.snapshot().catalogWatermark
-        val incremental = !full && previous != null
+        val stored = settings.snapshot()
+        val previous = stored.catalogWatermark
+        // Rows written by an older Loom lack fields it didn't store (title ids for save sync): those
+        // only arrive with a full pass, since an incremental one skips ROMs that didn't change.
+        val incremental = !full && previous != null && stored.catalogFields >= CATALOG_FIELDS
         val updatedAfter = if (incremental) overlap(previous!!) else null
 
         var newest: OffsetDateTime? = previous?.let(::parseInstant)
@@ -62,11 +66,18 @@ class CatalogSyncer(
         val serverIds = rommCall { api.romIdentifiers() }.toSet()
         dao.applyServerIds(serverIds)
 
-        settings.setCatalogSynced(newest?.let(::formatInstant), nowMs())
+        val fields = if (incremental) stored.catalogFields else CATALOG_FIELDS
+        settings.setCatalogSynced(newest?.let(::formatInstant), nowMs(), fields)
         return SyncResult(full = !incremental, romsWritten = written, serverRomCount = serverIds.size, serverVersion = version)
     }
 
     companion object {
+        /**
+         * The ROM fields a full sync writes. Raised whenever ROM rows gain a field (2: title id and
+         * save target), so the first sync after the upgrade is a full one that fills it everywhere.
+         */
+        const val CATALOG_FIELDS = 2
+
         private val WIRE = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSSxxx")
 
         fun parseInstant(raw: String): OffsetDateTime? =
@@ -114,6 +125,9 @@ internal fun RomDto.toEntity(): RomEntity {
         regions = regions.joinToString(","),
         updatedAt = updatedAt,
         missingFromFs = missingFromFs,
+        titleId = titleId?.takeIf { it.isNotBlank() },
+        saveTarget = saveTarget?.takeIf { it.isNotBlank() },
+        saveTargetLayout = saveTargetLayout?.takeIf { it.isNotBlank() },
     )
 }
 
