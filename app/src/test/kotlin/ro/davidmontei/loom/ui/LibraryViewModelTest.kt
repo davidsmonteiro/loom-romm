@@ -45,6 +45,8 @@ import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.RomEntity
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.db.SaveUnitEntity
+import ro.davidmontei.loom.data.db.SwitchTitleEntity
+import ro.davidmontei.loom.data.db.SwitchTitleSource
 import ro.davidmontei.loom.data.db.VerifiedBy
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.download.QueueKicker
@@ -65,6 +67,7 @@ import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.LibraryViewModel
 import ro.davidmontei.loom.ui.library.saveLine
 import ro.davidmontei.loom.ui.library.toItem
+import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 import java.io.File
 
 /** A platform's first download: where its games go, decided from the card or asked. */
@@ -228,7 +231,7 @@ class LibraryViewModelTest {
 
         vm.askSaveFolder(game).join()
         val question = vm.saveFolderQuestion.value!!
-        assertThat(question.options.map { it.titleId }).containsExactly("0100AAAA00000000")
+        assertThat(question.options.map { it.id }).containsExactly("0100AAAA00000000")
         assertThat(question.options.single().fileCount).isEqualTo(1)
         assertThat(question.current).isNull()
 
@@ -238,6 +241,41 @@ class LibraryViewModelTest {
         assertThat(db.saveDao().switchTitle(40)!!.titleId).isEqualTo("0100AAAA00000000")
         assertThat(withTimeout(5_000) { message.await() }).startsWith("Wonder's save is Eden's 0100AAAA00000000 folder")
         assertThat(gamesOnScreen { games -> games.single().save?.folderChosen == true }.single().save!!.folderChosen).isTrue()
+    }
+
+    /**
+     * A Switch game whose save Eden keeps in its console-wide folder and the profile's: its details
+     * ask which one Loom syncs, and the answer is the game's, remembered, so they can change it later.
+     */
+    @Test fun theSyncedFolderQuestionListsBothFoldersAndRemembersTheAnswer() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(4, "switch", "switch", "Nintendo Switch", "Nintendo Switch", 1, "t")))
+        db.catalogDao().upsertRoms(listOf(rom(40, 4, "switch", "Wonder", "Wonder.xci")))
+        installed(40, 4, "switch/Wonder.xci")
+        db.saveDao().upsertSwitchTitle(SwitchTitleEntity(40, "0100AAAA00000000", SwitchTitleSource.OWNER, null, 0))
+        val users = File(roms, "saves/Eden/user/save/0000000000000000")
+        val profile = File(users, "4E431822D6DEFD527268BA35B5C09533/0100AAAA00000000").apply { mkdirs() }
+        File(profile, "game_data.sav").writeBytes(ByteArray(64))
+        val consoleWide = File(users, "${"0".repeat(32)}/0100AAAA00000000").apply { mkdirs() }
+        File(consoleWide, "device.bin").writeBytes(ByteArray(32))
+        File(consoleWide, "device.bin").setLastModified(System.currentTimeMillis() - 86_400_000)
+        db.saveDao().upsertUnit(SaveUnitEntity(40, "eden", null, null, 0, 0, null, null, SaveSyncState.MOVED, "Eden now keeps it elsewhere", 0))
+
+        vm.selectPlatform(4)
+        val game = gamesOnScreen { games -> games.any { it.save != null } }.single()
+        vm.askSyncedFolder(game).join()
+        val question = vm.saveFolderQuestion.value!!
+        assertThat(question.kind).isEqualTo(SaveFolderQuestion.Kind.SYNCED)
+        assertThat(question.options.map { it.name to it.fileCount }).containsExactly("Profile folder" to 1, "Console-wide folder" to 1).inOrder()
+        assertThat(question.options.map { it.id }).containsExactly(profile.path, consoleWide.path).inOrder()
+
+        val message = async { vm.messages.first() }
+        vm.chooseSaveFolder(profile.path).join()
+        assertThat(vm.saveFolderQuestion.value).isNull()
+        assertThat(db.saveDao().syncedFolder(40)!!.folder).isEqualTo(profile.path)
+        assertThat(withTimeout(5_000) { message.await() })
+            .startsWith("Loom now syncs Wonder's save from Eden's profile folder, and leaves the other as it is")
+        assertThat(gamesOnScreen { games -> games.single().save?.syncedFolderChosen == true }.single().save!!.syncedFolderChosen).isTrue()
+        assertThat(consoleWide.resolve("device.bin").exists() && profile.resolve("game_data.sav").exists()).isTrue()
     }
 
     /** The details' words for a save depend on whether Loom uploads it by itself. */

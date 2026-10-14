@@ -134,7 +134,7 @@ The `header_key` in the owner's `prod.keys`, dumped from their Switch: it decryp
 _Avoid_: prod key, keys (prod.keys holds many keys; Loom only ever uses this one)
 
 **Eden profile**:
-A user folder (32 hex digits) in Eden's `user/save/0000000000000000/`, holding that user's saves. Loom syncs one profile's saves: the only one, or the one chosen in Settings. The all-zeros folder holds per-console saves and is no profile.
+A user folder (32 hex digits) in Eden's `user/save/0000000000000000/`, holding that user's saves. Loom syncs one profile's saves: the only one, or the one chosen in Settings. The all-zeros folder holds per-console saves and is no profile. When Eden holds a game's save in both (it saved per console, then per user), the owner picks which one Loom syncs; the other is left alone.
 
 **Archival copy**:
 A save version uploaded outside every slot, which negotiate never pairs. Keep both puts the Thor's save there, as "<game> (Thor <UTC date and time>).zip".

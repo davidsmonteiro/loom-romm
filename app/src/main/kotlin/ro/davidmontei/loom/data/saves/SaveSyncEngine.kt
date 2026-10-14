@@ -296,6 +296,10 @@ class SaveSyncEngine(
                         unsupported[save.romId] = save.reason
                         setState(save.romId, SaveSyncState.NEEDS_FOLDER, save.reason, emulator = units.emulatorFor(rom))
                     }
+                    is ResolvedSave.Moved -> {
+                        unsupported[save.romId] = save.reason
+                        setState(save.romId, SaveSyncState.MOVED, save.reason, emulator = units.emulatorFor(rom))
+                    }
                     is ResolvedSave.Unavailable -> {
                         failed[save.romId] = save.reason
                         setState(save.romId, SaveSyncState.ERROR, save.reason, emulator = units.emulatorFor(rom))
@@ -519,7 +523,7 @@ class SaveSyncEngine(
     private fun withoutRomm(game: Prepared): SaveSyncState? {
         val before = game.before?.takeIf { it.unitPath == game.save.unitPath }
         val lastLook = before?.state?.takeIf { it in COMPARED }
-        if (lastLook == SaveSyncState.SERVER_NEWER || (lastLook != null && before?.localHash == game.localHash)) return null
+        if (lastLook == SaveSyncState.SERVER_NEWER || (lastLook != null && before.localHash == game.localHash)) return null
         val base = game.baseline
         return when {
             base != null -> when (game.localHash) {
@@ -558,6 +562,7 @@ class SaveSyncEngine(
             }
             is ResolvedSave.Unsupported -> Opened.Refused(resolved.reason)
             is ResolvedSave.NeedsFolder -> Opened.Refused(resolved.reason)
+            is ResolvedSave.Moved -> Opened.Refused(resolved.reason)
             is ResolvedSave.Unavailable -> Opened.Refused(resolved.reason)
         }
     }

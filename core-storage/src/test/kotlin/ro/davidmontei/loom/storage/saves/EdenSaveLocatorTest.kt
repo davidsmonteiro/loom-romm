@@ -142,6 +142,40 @@ class EdenSaveLocatorTest {
         assertThat((locator.locate(arceus, null, synced = device) as EdenSaveLocation.Found).unit.folder).isEqualTo(own)
     }
 
+    /**
+     * With the save in both folders, the owner's pick of one stands: Loom syncs it and no longer
+     * stops on the other. A pick that is neither of the two (another title's, another profile's) is no pick.
+     */
+    @Test fun theFolderTheOwnerPickedOfTheTwoIsTheOne() {
+        val eden = thorEden()
+        val zeros = "0".repeat(32)
+        val device = users(eden).resolve("$zeros/$arceus")
+        val own = users(eden).resolve("$profile/$arceus")
+        folderOf(device, "device.bin" to byteArrayOf(1))
+        folderOf(own, "user.bin" to byteArrayOf(2))
+        val locator = EdenSaveLocator(eden)
+        assertThat(locator.locate(arceus, null, synced = device)).isEqualTo(EdenSaveLocation.Moved(device, own))
+        assertThat(locator.bothFolders(arceus, null)).containsExactly(device, own).inOrder()
+
+        assertThat((locator.locate(arceus, null, synced = device, pinned = device) as EdenSaveLocation.Found).unit)
+            .isEqualTo(SaveRoot(arceus.toString(), device))
+        assertThat((locator.locate(arceus, null, synced = device, pinned = own) as EdenSaveLocation.Found).unit)
+            .isEqualTo(SaveRoot(arceus.toString(), own))
+        assertThat((locator.locate(arceus, null, synced = own, pinned = device) as EdenSaveLocation.Found).unit.folder).isEqualTo(device)
+
+        val elsewhere = users(eden).resolve("$profile/$wonder")
+        assertThat(locator.locate(arceus, null, synced = device, pinned = elsewhere)).isEqualTo(EdenSaveLocation.Moved(device, own))
+        assertThat(Files.exists(device) && Files.exists(own)).isTrue() // looking moves nothing
+    }
+
+    /** Several profiles and none chosen: only the console-wide folder can be named. */
+    @Test fun withoutAProfileOnlyTheConsoleWideFolderIsKnown() {
+        val eden = thorEden()
+        Files.createDirectories(users(eden).resolve("A".repeat(32)))
+        assertThat(EdenSaveLocator(eden).bothFolders(arceus, null)).containsExactly(users(eden).resolve("${"0".repeat(32)}/$arceus"))
+        assertThat(EdenSaveLocator(eden).bothFolders(arceus, profile)).hasSize(2)
+    }
+
     @Test fun withoutEdensSaveFolderThereIsNoPlaceForSaves() {
         val empty = tmp.newFolder("Eden").toPath()
         assertThat(EdenSaveLocator(empty).locate(wonder, null)).isEqualTo(EdenSaveLocation.NoSaveFolder)

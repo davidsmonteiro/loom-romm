@@ -27,7 +27,8 @@ sealed interface EdenSaveLocation {
     /**
      * Eden now keeps the game's save in [now] (its console-wide folder or the profile's), while
      * Loom synced it from [synced], which still holds files. Loom doesn't switch on its own: the
-     * two folders hold different saves, and either side's archive would land in the other.
+     * two folders hold different saves, and either side's archive would land in the other. The
+     * owner says which one Loom syncs from then on (`pinned` in [EdenSaveLocator.locate]).
      */
     data class Moved(val synced: Path, val now: Path) : EdenSaveLocation
 }
@@ -67,21 +68,19 @@ class EdenSaveLocator(private val saveDir: Path) {
 
     /**
      * The save of [titleId] in [chosenProfile], the profile chosen in Settings, which only counts
-     * when there are several. [synced] is the folder the game last synced from, if any.
+     * when there are several. [synced] is the folder the game last synced from, if any; [pinned]
+     * the one the owner chose to sync it from when Eden kept its save in both its console-wide
+     * folder and the profile's, which stands while it is one of those two.
      *
      * @throws java.io.IOException when the folders can't be listed: try again later.
      */
-    fun locate(titleId: SwitchTitleId, chosenProfile: String?, synced: Path? = null): EdenSaveLocation {
+    fun locate(titleId: SwitchTitleId, chosenProfile: String?, synced: Path? = null, pinned: Path? = null): EdenSaveLocation {
         if (!saveDir.resolve("user").resolve("save").isDirectory(LinkOption.NOFOLLOW_LINKS)) return EdenSaveLocation.NoSaveFolder
         val profiles = profiles()
         val name = titleId.toString()
         val device = usersDir.resolve(DEVICE_PROFILE).resolve(name)
-        val profile = when {
-            profiles.size == 1 -> profiles.single()
-            profiles.isEmpty() -> null
-            else -> profiles.firstOrNull { it.equals(chosenProfile, ignoreCase = true) }
-        }
-        val own = profile?.let { usersDir.resolve(it).resolve(name) }
+        val own = profileOf(profiles, chosenProfile)?.let { usersDir.resolve(it).resolve(name) }
+        if (pinned != null && (pinned == device || pinned == own)) return EdenSaveLocation.Found(SaveRoot(name, pinned))
         // A save already in the profile stays the one; else one among the device saves, or where Eden will put it.
         val inDevice = own?.isDirectory(LinkOption.NOFOLLOW_LINKS) != true &&
             (device.isDirectory(LinkOption.NOFOLLOW_LINKS) || name in DEVICE_SAVE_TITLES)
@@ -98,8 +97,25 @@ class EdenSaveLocator(private val saveDir: Path) {
         }
     }
 
+    /**
+     * The two folders [titleId]'s save can be in, for the owner to say which one Loom syncs: the
+     * console-wide one, then the profile's (left out while Loom can't tell the profile).
+     *
+     * @throws java.io.IOException when the folders can't be listed: try again later.
+     */
+    fun bothFolders(titleId: SwitchTitleId, chosenProfile: String?): List<Path> = listOfNotNull(
+        usersDir.resolve(DEVICE_PROFILE).resolve(titleId.toString()),
+        profileOf(profiles(), chosenProfile)?.let { usersDir.resolve(it).resolve(titleId.toString()) },
+    )
+
+    /** The profile Loom syncs: the only one, else the one chosen in Settings; null when there's none or no choice. */
+    private fun profileOf(profiles: List<String>, chosenProfile: String?): String? = when {
+        profiles.size == 1 -> profiles.single()
+        else -> profiles.firstOrNull { it.equals(chosenProfile, ignoreCase = true) }
+    }
+
     /** Whether [path] is the all-zeros folder Eden keeps console-wide saves in, or one of its title folders. */
-    fun isConsoleWide(path: Path): Boolean = path.parent?.name == DEVICE_PROFILE || path.name == DEVICE_PROFILE
+    fun isConsoleWide(path: Path): Boolean = isConsoleWideFolder(path)
 
     private fun holdsFiles(dir: Path): Boolean = dir.isDirectory(LinkOption.NOFOLLOW_LINKS) && SaveZipper.entries(listOf(SaveRoot("x", dir))).isNotEmpty()
 
@@ -154,5 +170,8 @@ class EdenSaveLocator(private val saveDir: Path) {
 
         /** Whether [dir] is Eden's save folder: it holds `user/save`. */
         fun holdsEdenData(dir: Path): Boolean = dir.resolve("user").resolve("save").isDirectory(LinkOption.NOFOLLOW_LINKS)
+
+        /** Whether [path] is the all-zeros folder Eden keeps console-wide saves in, or one of its title folders. */
+        fun isConsoleWideFolder(path: Path): Boolean = path.parent?.name == DEVICE_PROFILE || path.name == DEVICE_PROFILE
     }
 }

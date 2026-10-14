@@ -36,6 +36,8 @@ class SaveWordingTest {
         assertThat(line(SaveSyncState.SERVER_NEWER)).isEqualTo("Save: newer on RomM")
         assertThat(line(SaveSyncState.LOCAL_MISSING)).isEqualTo("Save: missing on the Thor; RomM has a copy")
         assertThat(line(SaveSyncState.CONFLICT)).isEqualTo("Save: changed on the Thor and on RomM. Choose which to keep.")
+        assertThat(saveLine(GameSave(supported = true, SaveSyncState.MOVED, "Eden now keeps this game's save in its profile folder", "eden")))
+            .isEqualTo("Save: in two Eden folders, each holding a different save. Choose which one Loom syncs.")
         assertThat(line(SaveSyncState.UNSUPPORTED, "Loom can't read this game's title ID"))
             .isEqualTo("Save: not synced. Loom can't read this game's title ID")
         assertThat(line(SaveSyncState.ERROR, "Couldn't read the save")).isEqualTo("Save: the last sync failed. Couldn't read the save")

@@ -51,22 +51,26 @@ data class GameSave(
     val folderChosen: Boolean = false,
     /** The look at the save its details asked for, while it runs or when it couldn't ask RomM. */
     val look: SaveLook? = null,
+    /** The user chose which of two folders Loom syncs the save from (Eden kept it in both): they can choose again. */
+    val syncedFolderChosen: Boolean = false,
 )
 
 /**
  * Adds where the game's save stands, once it's installed: [unit] (null before Loom first looked)
  * on a platform Loom syncs saves for, else why it doesn't. [autoUpload]: the automatic upload
- * setting; [folderChosen]: the user chose the game's save folder; [look]: the details' look at it.
+ * setting; [folderChosen]: the user chose the game's save folder; [look]: the details' look at it;
+ * [syncedFolderChosen]: the user chose which of its two folders Loom syncs.
  */
 fun GameItem.withSave(
     platformSlug: String, unit: SaveUnitEntity?, autoUpload: Boolean = true, folderChosen: Boolean = false, look: SaveLook? = null,
+    syncedFolderChosen: Boolean = false,
 ): GameItem = copy(
     save = when {
         state != InstallState.INSTALLED -> null
         !SaveUnitResolver.supportsPlatform(platformSlug) ->
             GameSave(supported = false, SaveSyncState.UNSUPPORTED, SaveUnitResolver.unsupportedReason(platformSlug), emulator = null)
         else -> GameSave(supported = true, unit?.state, unit?.detail, unit?.emulator ?: SaveUnitResolver.emulatorForPlatform(platformSlug),
-            autoUpload, folderChosen, look)
+            autoUpload, folderChosen, look, syncedFolderChosen)
     },
 )
 
@@ -89,6 +93,7 @@ fun saveLine(save: GameSave): String = "Save: " + when (save.state) {
     SaveSyncState.LOCAL_MISSING -> "missing on the Thor; RomM has a copy"
     SaveSyncState.CONFLICT -> "changed on the Thor and on RomM. Choose which to keep."
     SaveSyncState.NEEDS_FOLDER -> "choose its ${emulatorName(save.emulator)} save folder. " + save.detail.orEmpty()
+    SaveSyncState.MOVED -> "in two ${emulatorName(save.emulator)} folders, each holding a different save. Choose which one Loom syncs."
     SaveSyncState.UNSUPPORTED -> "not synced. " + save.detail.orEmpty()
     SaveSyncState.ERROR -> "the last sync failed. " + save.detail.orEmpty()
 }

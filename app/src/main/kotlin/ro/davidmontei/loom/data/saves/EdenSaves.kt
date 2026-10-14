@@ -8,20 +8,24 @@ import ro.davidmontei.loom.data.db.RomEntity
 import ro.davidmontei.loom.data.db.SaveDao
 import ro.davidmontei.loom.data.db.SwitchTitleEntity
 import ro.davidmontei.loom.data.db.SwitchTitleSource
+import ro.davidmontei.loom.data.db.SyncedFolderEntity
 import ro.davidmontei.loom.data.settings.Settings
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.storage.saves.EdenSaveLocation
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import ro.davidmontei.loom.storage.saves.EdenTitleFolder
 import ro.davidmontei.loom.storage.saves.SAVE_SLOT
+import ro.davidmontei.loom.storage.saves.SaveRoot
 import ro.davidmontei.loom.storage.saves.SwitchHeaderKey
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import ro.davidmontei.loom.storage.saves.SwitchTitleIdReader
 import ro.davidmontei.loom.storage.saves.SwitchTitleIdResult
+import ro.davidmontei.loom.storage.saves.UnitSnapshot
 import java.io.File
 import java.io.IOException
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.time.Instant
 
 /** The save folders the owner can pick a Switch game's from, or why there's nothing to pick. */
 sealed interface EdenFolderChoice {
@@ -30,6 +34,17 @@ sealed interface EdenFolderChoice {
 
     data class Unavailable(val reason: String) : EdenFolderChoice
 }
+
+/** The two Eden folders a Switch game's save can be synced from, or why there's nothing to pick. */
+sealed interface SyncedFolderChoice {
+    /** Both folders, newest first; [current] is the one Loom syncs, or synced until Eden moved the save. */
+    data class Options(val folders: List<SyncedFolderOption>, val current: Path?) : SyncedFolderChoice
+
+    data class Unavailable(val reason: String) : SyncedFolderChoice
+}
+
+/** One of a Switch game's two Eden folders, as the owner tells them apart: which it is, and what it holds. */
+data class SyncedFolderOption(val folder: Path, val consoleWide: Boolean, val fileCount: Int, val bytes: Long, val newestModified: Instant?)
 
 /**
  * Switch games' saves in Eden. Eden keeps a game's save in a folder named after its title ID,
@@ -50,33 +65,15 @@ class EdenSaves(
     private val maxUnitBytes: Long = MAX_UNIT_BYTES,
 ) {
     suspend fun resolve(rom: RomEntity, install: InstallEntity): ResolvedSave = withContext(Dispatchers.IO) {
-        val s = settings.snapshot()
-        val dir = saveDir(s, install.romsRoot) ?: return@withContext ResolvedSave.Unsupported(
-            rom.id, "Eden's saves aren't in ${defaultSaveDir(install.romsRoot)}: move Eden's save folder there, or choose it in Settings",
-        )
-        if (!EdenSaveLocator.holdsEdenData(dir.toPath())) {
-            return@withContext ResolvedSave.Unsupported(rom.id, "There's no user/save in $dir: choose the folder Eden saves in, in Settings")
+        val placed = when (val p = place(rom, install)) {
+            is Placed.Stop -> return@withContext p.save
+            is Placed.Known -> p
         }
-        val locator = EdenSaveLocator(dir.toPath())
+        val dir = placed.dir
         try {
-            val profiles = locator.profiles()
-            if (profiles.size > 1 && profiles.none { it.equals(s.edenProfile, ignoreCase = true) }) {
-                return@withContext ResolvedSave.Unsupported(rom.id, SEVERAL_PROFILES)
-            }
-            val titleId = when (val title = titleId(rom, install)) {
-                is Title.Known -> title.id
-                is Title.Ask -> return@withContext ResolvedSave.NeedsFolder(rom.id, title.reason)
-                is Title.NoSave -> return@withContext ResolvedSave.Unsupported(rom.id, title.reason)
-                is Title.CantLook -> return@withContext ResolvedSave.Unavailable(rom.id, title.reason)
-            }
-            // Two games syncing one folder would restore each other's saves over it.
-            saves.otherGamesWithSwitchTitle(titleId.toString(), rom.id).firstOrNull()?.let { other ->
-                return@withContext ResolvedSave.Unsupported(
-                    rom.id, "$other has the same Eden save folder ($titleId), and Loom syncs a folder for one game only",
-                )
-            }
             val synced = saves.baseline(rom.id, SAVE_SLOT)?.unitPath?.let { Paths.get(it) }
-            when (val location = locator.locate(titleId, s.edenProfile, synced)) {
+            val pinned = saves.syncedFolder(rom.id)?.folder?.let { Paths.get(it) }
+            when (val location = placed.locator.locate(placed.titleId, placed.profile, synced, pinned)) {
                 is EdenSaveLocation.Found -> ResolvedSave.Ready(
                     romId = rom.id,
                     emulator = EdenSaveLocator.EMULATOR_ID,
@@ -88,14 +85,97 @@ class EdenSaves(
                 EdenSaveLocation.NoSaveFolder -> ResolvedSave.Unsupported(rom.id, "There's no user/save in $dir")
                 EdenSaveLocation.NoProfile -> ResolvedSave.Unsupported(rom.id, "Eden hasn't saved a game in $dir yet: play one until it saves")
                 is EdenSaveLocation.ChooseProfile -> ResolvedSave.Unsupported(rom.id, SEVERAL_PROFILES)
-                is EdenSaveLocation.Moved -> ResolvedSave.Unsupported(
-                    rom.id, "Eden now keeps this game's save in its ${kind(locator, location.now)} folder, but Loom synced its " +
-                        "${kind(locator, location.synced)} one, which still holds a save. Loom won't switch between them; keep the save in one of them",
+                is EdenSaveLocation.Moved -> ResolvedSave.Moved(
+                    rom.id, "Eden now keeps this game's save in its ${kind(location.now)} folder, but Loom synced its " +
+                        "${kind(location.synced)} one, which still holds a save. Choose which one Loom syncs",
                 )
             }
         } catch (e: IOException) {
             ResolvedSave.Unavailable(rom.id, "Couldn't read Eden's save folder: ${e.message}")
         }
+    }
+
+    /** Where a Switch game's save is looked for: Eden's folder, the profile and the title ID, or why Loom can't look. */
+    private sealed interface Placed {
+        class Known(val dir: File, val locator: EdenSaveLocator, val profile: String?, val titleId: SwitchTitleId) : Placed
+
+        /** [save] says why not: never [ResolvedSave.Ready]. */
+        class Stop(val save: ResolvedSave) : Placed
+    }
+
+    private suspend fun place(rom: RomEntity, install: InstallEntity): Placed {
+        val s = settings.snapshot()
+        val dir = saveDir(s, install.romsRoot) ?: return Placed.Stop(ResolvedSave.Unsupported(
+            rom.id, "Eden's saves aren't in ${defaultSaveDir(install.romsRoot)}: move Eden's save folder there, or choose it in Settings",
+        ))
+        if (!EdenSaveLocator.holdsEdenData(dir.toPath())) {
+            return Placed.Stop(ResolvedSave.Unsupported(rom.id, "There's no user/save in $dir: choose the folder Eden saves in, in Settings"))
+        }
+        val locator = EdenSaveLocator(dir.toPath())
+        try {
+            val profiles = locator.profiles()
+            if (profiles.size > 1 && profiles.none { it.equals(s.edenProfile, ignoreCase = true) }) {
+                return Placed.Stop(ResolvedSave.Unsupported(rom.id, SEVERAL_PROFILES))
+            }
+            val titleId = when (val title = titleId(rom, install)) {
+                is Title.Known -> title.id
+                is Title.Ask -> return Placed.Stop(ResolvedSave.NeedsFolder(rom.id, title.reason))
+                is Title.NoSave -> return Placed.Stop(ResolvedSave.Unsupported(rom.id, title.reason))
+                is Title.CantLook -> return Placed.Stop(ResolvedSave.Unavailable(rom.id, title.reason))
+            }
+            // Two games syncing one folder would restore each other's saves over it.
+            saves.otherGamesWithSwitchTitle(titleId.toString(), rom.id).firstOrNull()?.let { other ->
+                return Placed.Stop(ResolvedSave.Unsupported(
+                    rom.id, "$other has the same Eden save folder ($titleId), and Loom syncs a folder for one game only",
+                ))
+            }
+            return Placed.Known(dir, locator, s.edenProfile, titleId)
+        } catch (e: IOException) {
+            return Placed.Stop(ResolvedSave.Unavailable(rom.id, "Couldn't read Eden's save folder: ${e.message}"))
+        }
+    }
+
+    /**
+     * The two folders [romId]'s save can be synced from, for the owner to pick one when Eden kept
+     * it in both (its console-wide folder and the profile's): what each holds, newest first, and
+     * the one Loom syncs now, or synced until Eden moved it.
+     */
+    suspend fun syncedFolderChoice(romId: Int): SyncedFolderChoice = withContext(Dispatchers.IO) {
+        val install = catalog.install(romId) ?: return@withContext SyncedFolderChoice.Unavailable("The game isn't installed any more")
+        val rom = catalog.rom(romId) ?: return@withContext SyncedFolderChoice.Unavailable("The game isn't in the catalog any more")
+        val placed = when (val p = place(rom, install)) {
+            is Placed.Stop -> return@withContext SyncedFolderChoice.Unavailable(reasonOf(p.save))
+            is Placed.Known -> p
+        }
+        try {
+            val folders = placed.locator.bothFolders(placed.titleId, placed.profile)
+            if (folders.size < 2) return@withContext SyncedFolderChoice.Unavailable("Eden has no profile folder for this game's save yet")
+            val current = listOfNotNull(saves.syncedFolder(romId)?.folder, saves.baseline(romId, SAVE_SLOT)?.unitPath)
+                .map { Paths.get(it) }.firstOrNull { it in folders }
+            val options = folders.map { folder ->
+                val snapshot = UnitSnapshot.of(listOf(SaveRoot(placed.titleId.toString(), folder)))
+                SyncedFolderOption(folder, EdenSaveLocator.isConsoleWideFolder(folder), snapshot.fileCount, snapshot.totalBytes, snapshot.newestModified)
+            }
+            SyncedFolderChoice.Options(options.sortedWith(compareByDescending<SyncedFolderOption> { it.newestModified }.thenBy { !it.consoleWide }), current)
+        } catch (e: IOException) {
+            SyncedFolderChoice.Unavailable("Couldn't read Eden's save folder: ${e.message}")
+        }
+    }
+
+    /**
+     * The owner's answer to [SyncedFolderChoice]: Loom syncs [romId]'s save from [folder] from now
+     * on, and leaves the other folder as it is. Nothing moves; the next look compares [folder]'s
+     * save with RomM's as for a first sync, unless it is the folder last synced.
+     */
+    suspend fun chooseSyncedFolder(romId: Int, folder: Path) =
+        saves.upsertSyncedFolder(SyncedFolderEntity(romId, folder.toString(), now()))
+
+    private fun reasonOf(save: ResolvedSave): String = when (save) {
+        is ResolvedSave.Unsupported -> save.reason
+        is ResolvedSave.NeedsFolder -> save.reason
+        is ResolvedSave.Moved -> save.reason
+        is ResolvedSave.Unavailable -> save.reason
+        is ResolvedSave.Ready -> ""
     }
 
     /** What the owner can pick [romId]'s save folder from: the folders in the profile Loom syncs. */
@@ -117,11 +197,14 @@ class EdenSaves(
         }
     }
 
-    private fun kind(locator: EdenSaveLocator, folder: Path) = if (locator.isConsoleWide(folder)) "console-wide" else "profile"
-
-    /** The owner's answer: [titleId]'s folder is [romId]'s save. It stands until they choose another. */
-    suspend fun chooseFolder(romId: Int, titleId: SwitchTitleId) =
+    /**
+     * The owner's answer: [titleId]'s folder is [romId]'s save. It stands until they choose another.
+     * Which of that title's two folders Loom syncs is asked again, should Eden keep it in both.
+     */
+    suspend fun chooseFolder(romId: Int, titleId: SwitchTitleId) {
         saves.upsertSwitchTitle(SwitchTitleEntity(romId, titleId.toString(), SwitchTitleSource.OWNER, null, now()))
+        saves.forgetSyncedFolder(romId)
+    }
 
     private sealed interface Title {
         data class Known(val id: SwitchTitleId) : Title
@@ -254,6 +337,9 @@ class EdenSaves(
     private fun isImage(file: File) = file.extension.lowercase() in SwitchTitleIdReader.EXTENSIONS
 
     companion object {
+        /** Which of a game's two Eden folders [folder] is, as the owner knows it: "console-wide" or "profile". */
+        fun kind(folder: Path) = if (EdenSaveLocator.isConsoleWideFolder(folder)) "console-wide" else "profile"
+
         /** Eden's save folder in the ROMs root, as on the Thor. */
         const val DEFAULT_FOLDER = "saves/Eden"
 

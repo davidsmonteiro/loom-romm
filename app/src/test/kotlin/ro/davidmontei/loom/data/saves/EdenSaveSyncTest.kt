@@ -225,12 +225,111 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         writeEdenSave(wonder, bytes(2)) // the profile's folder appears
         engine().sync(SaveSyncRequest.PUSH)
 
-        assertThat(state(wonder)).isEqualTo(SaveSyncState.UNSUPPORTED)
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.MOVED)
         assertThat(detail(wonder)).isEqualTo(
             "Eden now keeps this game's save in its profile folder, but Loom synced its console-wide one, which still holds a save. " +
-                "Loom won't switch between them; keep the save in one of them",
+                "Choose which one Loom syncs",
         )
         assertThat(romm.uploads()).hasSize(1)
+    }
+
+    // --- a save Eden keeps in two folders: the owner says which one Loom syncs ---
+
+    private val consoleWide get() = File(eden, "user/save/0000000000000000/$ZEROS/${wonder.titleId}")
+
+    /**
+     * Wonder (its title ID read with prod.keys) synced from Eden's console-wide folder, then Eden
+     * wrote a save for it in the profile's folder too: Loom stops and asks.
+     */
+    private suspend fun wonderInBothFolders() {
+        putProdKeys()
+        installSwitch(wonder)
+        consoleWide.mkdirs()
+        File(consoleWide, "device.bin").writeBytes(bytes(1, size = 3000))
+        consoleWide.listFiles()!!.forEach { it.setLastModified(clock.minusSeconds(3600).toEpochMilli()) }
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(wonder.romId)
+        writeEdenSave(wonder, bytes(2)) // the profile's folder appears, written 10 minutes ago
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.MOVED)
+    }
+
+    private fun folderBytes(dir: File) = dir.walkTopDown().filter { it.isFile }.associate { it.relativeTo(dir).path to it.readBytes().toList() }
+
+    /** The choice lists both folders, newest first, with what each holds and which one Loom synced. */
+    @Test fun aSaveInTwoFoldersOffersBoth() = runBlocking<Unit> {
+        wonderInBothFolders()
+
+        val choice = eden().syncedFolderChoice(wonder.romId) as SyncedFolderChoice.Options
+
+        val profile = edenFolder(wonder)
+        assertThat(choice.folders).containsExactly(
+            SyncedFolderOption(profile.toPath(), consoleWide = false, fileCount = 2, bytes = 4096L + "OPTIONS".length,
+                newestModified = clock.minusSeconds(600)),
+            SyncedFolderOption(consoleWide.toPath(), consoleWide = true, fileCount = 1, bytes = 3000, newestModified = clock.minusSeconds(3600)),
+        ).inOrder()
+        assertThat(choice.current).isEqualTo(consoleWide.toPath())
+    }
+
+    /**
+     * Keeping the folder Loom synced: it carries on as before, its changes go up, and the profile's
+     * save is left exactly as it was. The choice is the game's own and stands.
+     */
+    @Test fun keepingTheSyncedFolderCarriesOnAndLeavesTheOtherAlone() = runBlocking<Unit> {
+        wonderInBothFolders()
+        val profile = folderBytes(edenFolder(wonder))
+        val repository = SaveRepository(engine(), saves, eden(), scope)
+
+        assertThat(repository.chooseSyncedFolder(wonder.romId, wonder.title, consoleWide.toPath()))
+            .isEqualTo("Loom now syncs Super Mario Bros Wonder's save from Eden's console-wide folder, and leaves the other as it is")
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.IN_SYNC)
+        assertThat(romm.uploads()).hasSize(1) // looking, not uploading
+
+        File(consoleWide, "device.bin").writeBytes(bytes(3, size = 3000)) // played on, console-wide
+        consoleWide.listFiles()!!.forEach { it.setLastModified(clock.minusSeconds(300).toEpochMilli()) }
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(wonder.romId)
+        assertThat(archiveEntries(romm.head(wonder.romId)!!.bytes)).containsExactly("0100A0B00C0D0000/device.bin")
+        assertThat(folderBytes(edenFolder(wonder))).isEqualTo(profile)
+        assertThat(saves.syncedFolder(wonder.romId)!!.folder).isEqualTo(consoleWide.path)
+    }
+
+    /**
+     * Taking the profile's folder: its save is compared with RomM's as a first sync would, so two
+     * different saves are a conflict to settle, never an upload over RomM's. Keeping RomM's then
+     * backs up the profile's save before restoring, and the console-wide folder is left alone.
+     */
+    @Test fun takingTheOtherFolderComparesItWithRommsFirst() = runBlocking<Unit> {
+        wonderInBothFolders()
+        val console = folderBytes(consoleWide)
+        val profileHash = SaveHasher.hashUnit(edenUnit(wonder))
+        val repository = SaveRepository(engine(), saves, eden(), scope)
+
+        assertThat(repository.chooseSyncedFolder(wonder.romId, wonder.title, edenFolder(wonder).toPath())).isEqualTo(
+            "Loom now syncs Super Mario Bros Wonder's save from Eden's profile folder, and leaves the other as it is. " +
+                "It isn't the save RomM has: choose which to keep in the queue",
+        )
+        assertThat(saves.conflict(wonder.romId)!!.reason).isEqualTo(SyncDecision.FIRST_SYNC_DIFFERS.name)
+        assertThat(romm.uploads()).hasSize(1)
+
+        assertThat(engine().resolveConflict(wonder.romId, ConflictChoice.KEEP_SERVER)).isEqualTo(ResolveResult.Done)
+        assertThat(File(edenFolder(wonder), "device.bin").readBytes()).isEqualTo(bytes(1, size = 3000)) // RomM's, from the console-wide folder
+        val backups = File(volume, ".loom/save-backups/${wonder.romId}").listFiles().orEmpty().filter { it.name.endsWith(".zip") }
+        assertThat(backups.map { SaveHasher.hashFile(it.toPath()) }).containsExactly(profileHash)
+        assertThat(folderBytes(consoleWide)).isEqualTo(console)
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
+    /** Picking the game's title folder again asks again which of its two folders Loom syncs. */
+    @Test fun pickingTheTitleFolderAgainAsksWhichOfItsFoldersAgain() = runBlocking<Unit> {
+        wonderInBothFolders()
+        eden().chooseSyncedFolder(wonder.romId, consoleWide.toPath())
+        engine().sync(SaveSyncRequest.CHECK)
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.IN_SYNC)
+
+        eden().chooseFolder(wonder.romId, SwitchTitleId.parse(wonder.titleId)!!)
+        engine().sync(SaveSyncRequest.CHECK)
+
+        assertThat(saves.syncedFolder(wonder.romId)).isNull()
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.MOVED)
     }
 
     /**

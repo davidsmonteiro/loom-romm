@@ -101,6 +101,28 @@ class MigrationTest {
         }
     }
 
+    /** Version 4 (Loom 0.3.0) keeps Switch games' title IDs and gains the folders owners chose to sync from. */
+    @Test fun version4GainsSyncedFoldersKeepingSwitchTitleIds() = runBlocking<Unit> {
+        val file = context.getDatabasePath(DB).apply { parentFile!!.mkdirs(); delete() }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            createFromSchema(db, version = 4)
+            db.execSQL("INSERT INTO switch_titles VALUES (30, '010015100B514000', 'IMAGE', 'print', 1)")
+        }
+
+        val room = DataModule.database(context)
+        try {
+            val saves = room.saveDao()
+            assertThat(saves.switchTitle(30)!!.titleId).isEqualTo("010015100B514000")
+            val folder = "/storage/6365-3230/ROMs/saves/Eden/user/save/0000000000000000/${"0".repeat(32)}/010015100B514000"
+            saves.upsertSyncedFolder(SyncedFolderEntity(30, folder, 2))
+            assertThat(saves.syncedFolder(30)!!.folder).isEqualTo(folder)
+            saves.upsertUnit(SaveUnitEntity(30, "eden", null, null, 0, 0, null, null, SaveSyncState.MOVED, "why", 3))
+            assertThat(saves.unit(30)!!.state).isEqualTo(SaveSyncState.MOVED)
+        } finally {
+            room.close()
+        }
+    }
+
     /** Creates the tables, indices and Room's identity row of an exported schema version. */
     private fun createFromSchema(db: SQLiteDatabase, version: Int) {
         val name = "ro.davidmontei.loom.data.db.LoomDatabase/$version.json"

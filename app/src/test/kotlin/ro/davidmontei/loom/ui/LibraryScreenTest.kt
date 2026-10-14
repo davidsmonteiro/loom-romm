@@ -49,8 +49,8 @@ import ro.davidmontei.loom.ui.library.LibraryContent
 import ro.davidmontei.loom.ui.library.LibraryFilter
 import ro.davidmontei.loom.ui.library.LibraryHeader
 import ro.davidmontei.loom.ui.library.LibraryUiState
-import ro.davidmontei.loom.ui.library.SaveFolderOption
-import ro.davidmontei.loom.ui.library.SaveFolderQuestion
+import ro.davidmontei.loom.ui.saves.SaveFolderOption
+import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 
 @OptIn(ExperimentalTestApi::class)
 /**
@@ -89,7 +89,8 @@ class LibraryScreenTest {
         override fun showSuggestedFolders() { calls += "suggestedFolders" }
         override fun dismissFolderQuestion() { calls += "dismissFolder" }
         override fun askSaveFolder(game: GameItem) { calls += "askSaveFolder:${game.id}" }
-        override fun chooseSaveFolder(titleId: String) { calls += "saveFolder:$titleId" }
+        override fun askSyncedFolder(game: GameItem) { calls += "askSyncedFolder:${game.id}" }
+        override fun chooseSaveFolder(id: String) { calls += "saveFolder:$id" }
         override fun dismissSaveFolderQuestion() { calls += "dismissSaveFolder" }
     }
 
@@ -626,6 +627,7 @@ class LibraryScreenTest {
             SaveSyncState.LOCAL_MISSING to (listOf(restore) to listOf(upload, restore)),
             SaveSyncState.CONFLICT to (listOf(choose) to listOf(choose)),
             SaveSyncState.NEEDS_FOLDER to (listOf(folder) to listOf(folder)),
+            SaveSyncState.MOVED to (listOf(folder) to listOf(folder)),
             SaveSyncState.UNSUPPORTED to (emptyList<String>() to listOf(upload)),
             SaveSyncState.ERROR to (listOf(upload) to listOf(upload)),
         )
@@ -817,6 +819,75 @@ class LibraryScreenTest {
         assertThat(calls).contains("askSaveFolder:1")
     }
 
+    /**
+     * Found on the Thor: a game whose save Eden moved to the profile's folder, while the console-wide
+     * one still held the save Loom synced, stopped with nothing to do but move files by hand. Its
+     * details now ask which folder Loom syncs.
+     */
+    @Test fun aSaveInTwoFoldersAsksWhichOneToSync() {
+        state = withSave(1, eden(SaveSyncState.MOVED, "Eden now keeps this game's save in its profile folder"))
+        show()
+        press(Key.DirectionCenter)
+        rule.onNodeWithTag("save-line", useUnmergedTree = true)
+            .assertTextEquals("Save: in two Eden folders, each holding a different save. Choose which one Loom syncs.")
+        rule.onNodeWithText("Upload save").assertDoesNotExist()
+        rule.onNodeWithText("Close").assertIsFocused()
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Choose save folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("askSyncedFolder:1")
+        assertThat(calls).doesNotContain("askSaveFolder:1")
+    }
+
+    /** Once the owner said which folder, the details can change it; a chosen title folder asks that first (and this again). */
+    @Test fun aChosenSyncedFolderCanBeChanged() {
+        state = withSave(1, eden(SaveSyncState.IN_SYNC).copy(syncedFolderChosen = true))
+        show()
+        press(Key.DirectionCenter); press(Key.DirectionUp)
+        rule.onNodeWithText("Change save folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("askSyncedFolder:1")
+
+        changeGame(1, games.first { it.id == 1 }.copy(save = eden(SaveSyncState.IN_SYNC, chosen = true).copy(syncedFolderChosen = true)))
+        press(Key.DirectionCenter); press(Key.DirectionUp); press(Key.DirectionCenter)
+        assertThat(calls).contains("askSaveFolder:1")
+    }
+
+    private val consoleWideFolder = "/storage/6365-3230/ROMs/saves/Eden/user/save/0000000000000000/${"0".repeat(32)}/010015100B514000"
+    private val profileFolder = "/storage/6365-3230/ROMs/saves/Eden/user/save/0000000000000000/4E431822D6DEFD527268BA35B5C09533/010015100B514000"
+    private val bothFolders get() = SaveFolderQuestion(
+        romId = 1, title = "Chrono Trigger", emulator = "eden",
+        options = listOf(
+            SaveFolderOption(profileFolder, 2, 1_200_000, now - 60_000, name = "Profile folder"),
+            SaveFolderOption(consoleWideFolder, 4, 300_000, now - 86_400_000, name = "Console-wide folder"),
+        ),
+        current = consoleWideFolder, kind = SaveFolderQuestion.Kind.SYNCED,
+    )
+
+    /** Both folders, newest first with what each holds, the one synced so far marked; A takes the one focused. */
+    @Test fun theSyncedFolderQuestionShowsBothFolders() {
+        state = state.copy(saveFolderQuestion = bothFolders)
+        show()
+        rule.onNodeWithText("Which Eden folder should Loom sync Chrono Trigger's save from?").assertExists()
+        rule.onNodeWithText("Eden keeps this game's save in two folders, its console-wide one and the profile's, and they hold different " +
+            "saves. Loom syncs the one you pick from now on, and leaves the other as it is.").assertExists()
+        rule.onNodeWithText("Profile folder", useUnmergedTree = true).assertExists()
+        rule.onNodeWithText("4 files · 293 KB · synced so far", substring = true, useUnmergedTree = true).assertExists()
+        rule.onNodeWithTag("save-folder-$profileFolder", useUnmergedTree = true).assertIsFocused()
+        press(Key.DirectionRight)
+        rule.onNodeWithTag("save-folder-$consoleWideFolder", useUnmergedTree = true).assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("saveFolder:$consoleWideFolder")
+    }
+
+    @Test fun bLeavesTheSyncedFolderQuestionChoosingNothing() {
+        state = state.copy(saveFolderQuestion = bothFolders)
+        show()
+        back()
+        assertThat(calls).contains("dismissSaveFolder")
+        assertThat(calls.filter { it.startsWith("saveFolder:") }).isEmpty()
+    }
+
     @Test fun aSaveFolderLoomReadItselfCantBeChanged() {
         state = withSave(1, eden(SaveSyncState.LOCAL_NEWER))
         show()
@@ -837,7 +908,7 @@ class LibraryScreenTest {
 
     private val now = System.currentTimeMillis()
     private val wonderQuestion get() = SaveFolderQuestion(
-        game = games[0].copy(save = eden(SaveSyncState.NEEDS_FOLDER, EdenSaves.NO_KEYS)),
+        romId = 1, title = "Chrono Trigger", emulator = "eden",
         options = listOf(SaveFolderOption("010015100B514000", 4, 1_200_000, now - 60_000), SaveFolderOption("01001F5010DFA000", 2, 300_000, now - 86_400_000)),
         current = null,
     )

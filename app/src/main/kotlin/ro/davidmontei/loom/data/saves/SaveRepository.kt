@@ -20,6 +20,7 @@ import ro.davidmontei.loom.romm.RommException
 import ro.davidmontei.loom.storage.saves.AzaharSaveLocator
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
+import java.nio.file.Path
 
 /** A look at one game's save that its details asked for: still running, or done without RomM. */
 sealed interface SaveLook {
@@ -113,16 +114,40 @@ class SaveRepository(
      */
     suspend fun chooseSaveFolder(romId: Int, title: String, titleId: SwitchTitleId): String = request {
         eden.chooseFolder(romId, titleId)
+        "$title's save is Eden's $titleId folder" + lookAfterChoosing(romId)
+    }
+
+    /** The Switch games whose synced folder the owner chose, of the two Eden kept their save in: they can choose again. */
+    fun observeSyncedFolders(): Flow<Set<Int>> = saves.observeSyncedFolders().map { it.toSet() }
+
+    /** The two Eden folders [romId]'s save can be synced from. */
+    suspend fun syncedFolderChoice(romId: Int): SyncedFolderChoice = eden.syncedFolderChoice(romId)
+
+    /**
+     * The owner's answer to "which of the two folders does Loom sync?": remembered, then Loom looks
+     * at the game's save again (moving nothing), so its details show where it stands. The other
+     * folder is left as it is.
+     */
+    suspend fun chooseSyncedFolder(romId: Int, title: String, folder: Path): String = request {
+        eden.chooseSyncedFolder(romId, folder)
+        "Loom now syncs $title's save from Eden's ${EdenSaves.kind(folder)} folder, and leaves the other as it is" + lookAfterChoosing(romId)
+    }
+
+    /** Looks at [romId]'s save after the owner said where it is, moving nothing: what came of it, as the end of a sentence. */
+    private suspend fun lookAfterChoosing(romId: Int): String {
         val report = try {
             engine.sync(SaveSyncRequest.CHECK.copy(romIds = setOf(romId)))
         } catch (e: RommException) {
             null
         }
-        "$title's save is Eden's $titleId folder" + when {
+        return when {
             report == null || report.unavailable != null || romId in report.failed -> ". Loom couldn't look at it yet; the next sync does"
             romId in report.unsupported -> ", but it isn't synced: ${report.unsupported.getValue(romId)}"
-            engine.observeGame(romId).first()?.state == SaveSyncState.NO_SAVE -> ". Neither the Thor nor RomM has a save of it yet"
-            else -> ""
+            else -> when (engine.observeGame(romId).first()?.state) {
+                SaveSyncState.NO_SAVE -> ". Neither the Thor nor RomM has a save of it yet"
+                SaveSyncState.CONFLICT -> ". It isn't the save RomM has: choose which to keep in the queue"
+                else -> ""
+            }
         }
     }
 
