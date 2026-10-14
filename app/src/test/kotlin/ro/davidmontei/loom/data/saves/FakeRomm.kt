@@ -60,6 +60,8 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
     var uploadAnswer: (() -> MockResponse)? = null
     /** Answers negotiate with this instead (e.g. a 500). */
     var negotiateAnswer: (() -> MockResponse)? = null
+    /** Runs before each request is answered: where the emulator "writes" while Loom waits for RomM. */
+    @Volatile var onRequest: ((RecordedRequest) -> Unit)? = null
     /** How long negotiate takes, to catch two runs overlapping. */
     var negotiateDelayMs = 0L
 
@@ -86,6 +88,7 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
 
     override fun dispatch(request: RecordedRequest): MockResponse {
         requests += request
+        onRequest?.invoke(request)
         val path = request.url.encodedPath
         return when {
             request.method == "POST" && path == "/api/sync/negotiate" -> negotiateAnswer?.invoke() ?: negotiate(json(request))

@@ -20,6 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.settings.ServerConfig
+import ro.davidmontei.loom.storage.saves.SyncDecision
 import java.time.Duration
 
 /** What the screens ask of one game's save, and the answer the user reads. */
@@ -155,6 +156,77 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_SERVER))
             .isEqualTo("The Thor now has RomM's save of Pokemon X; the one it replaced is backed up on the card")
         assertThat(localMain(pokemonX)).isEqualTo(bytes(2))
+    }
+
+    /** Azahar wrote while the restore was asking RomM for its save: nothing is replaced, and Loom looks again. */
+    @Test fun aSaveWrittenDuringARestoreIsLookedAtAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.addSave(7, archiveOf(bytes(2)))
+        romm.onRequest = { request ->
+            if (request.method == "GET" && request.url.encodedPath == "/api/saves") {
+                romm.onRequest = null
+                writeSave(pokemonX, bytes(3), minutesAgo = 5)
+            }
+        }
+
+        assertThat(repository.restore(7, "Pokemon X")).isEqualTo(
+            "Didn't restore Pokemon X's save: The save on the Thor changed since Loom looked; nothing was replaced. " +
+                "Loom looked again: choose which to keep in the queue",
+        )
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(3))
+    }
+
+    /** The same while Keep server asks RomM for its save: nothing is replaced, and the conflict shows both sides as they are now. */
+    @Test fun aSaveWrittenWhileKeepingRommsIsLookedAtAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.addSave(7, archiveOf(bytes(2)))
+        engine().sync(SaveSyncRequest.PUSH)
+        lateinit var played: String
+        romm.onRequest = { request ->
+            if (request.method == "GET" && request.url.encodedPath == "/api/saves") {
+                romm.onRequest = null
+                played = writeSave(pokemonX, bytes(3), minutesAgo = 5)
+            }
+        }
+
+        assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_SERVER)).isEqualTo(
+            "Nothing changed for Pokemon X: The save on the Thor changed since this choice was shown. " +
+                "Loom looked again: choose which to keep in the queue",
+        )
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(3))
+        assertThat(db.saveDao().conflict(7)!!.localHash).isEqualTo(played)
+    }
+
+    /** RomM's side moved on since the choice was shown: Loom looks again, and the conflict shows RomM's new save. */
+    @Test fun anAnswerOnAServerSaveThatMovedOnLooksAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.addSave(7, archiveOf(bytes(2)))
+        engine().sync(SaveSyncRequest.PUSH)
+        val newer = romm.addSave(7, archiveOf(bytes(4))) // played on elsewhere
+
+        assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_THOR)).isEqualTo(
+            "Nothing changed for Pokemon X: RomM's save changed since this choice was shown. Loom looked again: choose which to keep in the queue",
+        )
+        assertThat(db.saveDao().conflict(7)!!.serverSaveId).isEqualTo(newer.id)
+        assertThat(romm.uploads()).isEmpty()
+    }
+
+    /** RomM's newer save came from another emulator: never restored, and the queue then asks which to keep. */
+    @Test fun aRestoreOfAnotherEmulatorsSaveLooksAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.addSave(7, archiveOf(bytes(2)), emulator = "citra")
+
+        assertThat(repository.restore(7, "Pokemon X")).isEqualTo(
+            "Didn't restore Pokemon X's save: RomM's save was made by citra. Loom looked again: choose which to keep in the queue",
+        )
+        assertThat(db.saveDao().conflict(7)!!.reason).isEqualTo(SyncDecision.FOREIGN_EMULATOR.name)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
     }
 
     /** Azahar made a new save after the old one was deleted: Restore is refused, and looking again sends nothing. */
