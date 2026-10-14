@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -31,10 +33,13 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.TokenCipher
+import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.SettingsStore
+import ro.davidmontei.loom.data.settings.WriteThroughDataStore
 import ro.davidmontei.loom.romm.pairing.PairedCredentials
+import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -55,9 +60,13 @@ private class UpdateLosingDataStore(private val lateFirstValue: Boolean) : DataS
     private val subscriptions = AtomicInteger()
     private val firstWrite = CompletableDeferred<Unit>()
 
+    /** Completes once the first collector has subscribed: a write after this is one its value is older than. */
+    val firstSubscribed = CompletableDeferred<Unit>()
+
     override val data: Flow<Preferences> = flow {
         if (subscriptions.incrementAndGet() > 1) return@flow emitAll(value)
         val before = value.value
+        firstSubscribed.complete(Unit)
         if (lateFirstValue) {
             firstWrite.await()
             delay(200) // lands after the write has returned
@@ -123,6 +132,52 @@ class StoresTest {
         assertThat(store.current.value?.deviceId).isEqualTo("dev-1")
         assertThat(withTimeoutOrNull(2_000) { store.awaitLoaded(); true }).isTrue() // the late read has arrived
         assertThat(store.current.value?.deviceId).isEqualTo("dev-1")
+    }
+
+    /**
+     * CatalogRefreshScheduler follows the settings for as long as Loom runs, and each screen's state
+     * for as long as it's open: such a reader sees every change, not just the value it started with.
+     */
+    @Test fun aLongLivedSettingsReaderSeesEveryChange() = runBlocking<Unit> {
+        val store = SettingsStore(WriteThroughDataStore(UpdateLosingDataStore(lateFirstValue = false), scope))
+        val seen = MutableStateFlow<CatalogRefresh?>(null)
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { store.settings.collect { seen.value = it.catalogRefresh } }
+        assertThat(withTimeoutOrNull(2_000) { seen.first { it == CatalogRefresh.EVERY_12_HOURS } }).isNotNull()
+        store.setCatalogRefresh(CatalogRefresh.EVERY_6_HOURS)
+        assertThat(withTimeoutOrNull(2_000) { seen.first { it == CatalogRefresh.EVERY_6_HOURS } }).isNotNull()
+        store.setCatalogRefresh(CatalogRefresh.OFF)
+        assertThat(withTimeoutOrNull(2_000) { seen.first { it == CatalogRefresh.OFF } }).isNotNull()
+    }
+
+    /** A setting changed right as Loom starts: the settings file's first read, older than the change, arrives after it and doesn't undo it. */
+    @Test fun aSettingsReadOlderThanAChangeDoesntUndoIt() = runBlocking<Unit> {
+        val file = UpdateLosingDataStore(lateFirstValue = true)
+        val store = SettingsStore(WriteThroughDataStore(file, scope))
+        withTimeout(2_000) { file.firstSubscribed.await() } // Loom has started reading the file
+        store.setAutoUploadSaves(false)
+        assertThat(store.snapshot().autoUploadSaves).isFalse()
+        delay(500) // the read Loom started with arrives 200 ms after the change
+        assertThat(store.snapshot().autoUploadSaves).isFalse()
+    }
+
+    /**
+     * SettingsStore and MappingRepository write the same file (AppModule gives them one): a reader of
+     * the platform folders sees a choice made after it started, and neither store's writes undo the other's.
+     */
+    @Test fun theStoresSharingTheSettingsFileKeepEachOthersChanges() = runBlocking<Unit> {
+        val file = WriteThroughDataStore(UpdateLosingDataStore(lateFirstValue = false), scope)
+        val settings = SettingsStore(file)
+        val mapping = MappingRepository(file)
+        val overrides = MutableStateFlow<List<PlatformMappingEntry>?>(null)
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { mapping.overrides.collect { overrides.value = it } }
+
+        mapping.chooseFolder("arcade", "fbneo")
+        settings.setRomsRoot("/storage/9C33-6BBD/ROMs")
+        mapping.chooseFolder("snes", "sfc")
+
+        assertThat(withTimeoutOrNull(2_000) { overrides.first { it?.size == 2 } }).isNotNull()
+        assertThat(mapping.currentMapper().resolve("arcade", "arcade").folder).isEqualTo("fbneo")
+        assertThat(settings.snapshot().romsRoot).isEqualTo("/storage/9C33-6BBD/ROMs")
     }
 
     @Test fun undecryptableTokenReadsAsUnpaired() = runBlocking<Unit> {

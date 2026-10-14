@@ -17,6 +17,10 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import ro.davidmontei.loom.storage.mapping.PlatformMatch
+import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
+import ro.davidmontei.loom.storage.mapping.InvalidMappingException
+import org.junit.Assert.assertThrows
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import ro.davidmontei.loom.data.db.InstallEntity
@@ -42,6 +46,7 @@ class InstallManagerTest {
     private lateinit var volume: File
     private lateinit var romsRoot: File
     private lateinit var manager: InstallManager
+    private lateinit var mapping: MappingRepository
     private var mounted = true
 
     @Before fun setUp() = runBlocking {
@@ -55,7 +60,8 @@ class InstallManagerTest {
             override fun forPath(path: String) = if (mounted) VolumeInfo("9C33-6BBD", volume, "SD card", true) else null
             override fun isMounted(volumeId: String) = mounted
         }
-        manager = InstallManager(db.catalogDao(), settings, MappingRepository(prefs), volumes, nowMs = { 7 })
+        mapping = MappingRepository(prefs)
+        manager = InstallManager(db.catalogDao(), settings, mapping, volumes, nowMs = { 7 })
 
         val dao = db.catalogDao()
         dao.upsertPlatforms(listOf(
@@ -116,6 +122,21 @@ class InstallManagerTest {
         assertThat(dao.install(20)!!.kind).isEqualTo(InstallKind.DIRECTORY)
         assertThat(dao.install(20)!!.verifiedBy).isEqualTo(VerifiedBy.NAME) // a folder: no size to compare
         assertThat(dao.install(30)!!.relPath).isEqualTo("nds/Mario Kart DS (USA).nds")
+    }
+
+    /**
+     * ROMs/saves holds emulators' saves (ROMs/saves/Eden), not games: it can't be chosen as a
+     * platform's folder any more, and a platform pointed there before (it was once offered among
+     * every folder) adopts nothing from it, whatever its case.
+     */
+    @Test fun nothingInTheSavesFolderIsAdopted() = runBlocking<Unit> {
+        assertThrows(InvalidMappingException::class.java) { runBlocking { mapping.chooseFolder("snes", "Saves") } }
+        mapping.setOverride(PlatformMappingEntry(PlatformMatch(fsSlug = "snes"), folder = "Saves")) // as an older Loom stored it
+        put("Saves/Chrono Trigger (USA).sfc", 4096)
+        put("Saves/Eden/nand/system.bin", 10)
+
+        assertThat(manager.reconcile().adopted).isEqualTo(0)
+        assertThat(db.catalogDao().install(10)).isNull()
     }
 
     /**
@@ -322,7 +343,7 @@ class InstallManagerTest {
      * ROMs/saves holds emulators' saves (Eden's in saves/Eden on the Thor). A platform RomM keeps in
      * a server folder of that name doesn't get it as its system folder, so nothing in it is adopted.
      */
-    @Test fun nothingInTheSavesFolderIsAdopted() = runBlocking<Unit> {
+    @Test fun aPlatformRommKeepsInASavesFolderAdoptsNothingFromIt() = runBlocking<Unit> {
         val dao = db.catalogDao()
         dao.upsertPlatforms(listOf(PlatformEntity(5, "saves", "saves", "Saves", "Saves", 1, "t")))
         dao.writePage(listOf(rom(50, 5, "Eden", 0, folder = true)), listOf(

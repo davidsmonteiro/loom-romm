@@ -57,7 +57,7 @@ class SaveSyncWorker @AssistedInject constructor(
         return try {
             val report = engine.sync(request)
             notifications.after(report)
-            record(report.summary(), failed = report.unavailable != null)
+            record(report.summary(), failed = report.unavailable != null, needsPairing = report.needsPairing)
             if (report.unavailable != null) {
                 Result.failure(workDataOf(KEY_ERROR to report.unavailable))
             } else {
@@ -77,7 +77,7 @@ class SaveSyncWorker @AssistedInject constructor(
                 failure("Can't reach the RomM server")
             }
         } catch (e: RommException.Unauthorized) {
-            failure("RomM rejected Loom's token. Pair again in Settings.")
+            failure("RomM rejected Loom's token. Pair again in Settings.", needsPairing = true)
         } catch (e: RommException) {
             failure(e.message ?: "Save sync failed")
         }
@@ -93,12 +93,15 @@ class SaveSyncWorker @AssistedInject constructor(
         return SaveSyncRequest.PULL.copy(downloadsUntil = Instant.ofEpochMilli(queuedAt).plus(PULL_WINDOW))
     }
 
-    /** Settings shows how the last run ended, so a sync that keeps failing doesn't go unnoticed. */
-    private suspend fun record(summary: String, failed: Boolean) =
-        settings.setLastSaveSync(SaveSyncOutcome(System.currentTimeMillis(), summary, failed))
+    /**
+     * Settings shows how the last run ended, so a sync that keeps failing doesn't go unnoticed;
+     * with [needsPairing], beside a way to pair again.
+     */
+    private suspend fun record(summary: String, failed: Boolean, needsPairing: Boolean = false) =
+        settings.setLastSaveSync(SaveSyncOutcome(System.currentTimeMillis(), summary, failed, needsPairing))
 
-    private suspend fun failure(error: String): Result {
-        record(error, failed = true)
+    private suspend fun failure(error: String, needsPairing: Boolean = false): Result {
+        record(error, failed = true, needsPairing = needsPairing)
         return Result.failure(workDataOf(KEY_ERROR to error))
     }
 
@@ -177,5 +180,13 @@ class SaveSyncTriggers(private val settings: SettingsStore, private val schedule
     suspend fun setAutomaticUpload(on: Boolean) {
         settings.setAutoUploadSaves(on)
         scheduler.setPeriodic(on)
+    }
+
+    /**
+     * Loom paired again: a background sync that failed for want of pairing runs again, so Settings
+     * shows how it goes now rather than the old failure. The worker honours the setting.
+     */
+    suspend fun pairedAgain() {
+        if (settings.snapshot().lastSaveSync?.needsPairing == true) scheduler.runNow(SaveSyncKind.AUTO)
     }
 }

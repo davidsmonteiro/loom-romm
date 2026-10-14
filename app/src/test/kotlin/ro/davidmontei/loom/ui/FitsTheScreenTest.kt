@@ -128,15 +128,19 @@ class FitsTheScreenTest {
         assertThat(settingsOverflow()).isEqualTo(0f)
     }
 
-    /** Saves at its tallest: a chosen Azahar folder (with the button back to the 3DS one) and a failed last sync. */
+    /**
+     * Saves at its tallest: a chosen Azahar folder (with the button back to the 3DS one) and a failed
+     * last sync whose reason, the longest, sits beside Pair again.
+     */
     @Test fun theSavesSectionFits() {
         val settings = SettingsScreenTest.sample.settings!!.copy(
             azaharUserDir = "/storage/6365-3230/Emulation/Azahar/user",
-            lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true),
+            lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true),
         )
         rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample.copy(settings = settings), SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
+        rule.onNodeWithText("Pair again").assertExists()
         assertThat(cutShort("Saves from RomM always wait for you.")).isFalse() // the switch's explanation, in full
         rule.saveScreenshot("settings-saves-tallest")
     }
@@ -193,7 +197,8 @@ class FitsTheScreenTest {
         assertThat(overflow(title)).isEqualTo(0f)
         assertThat(cutShort(EdenSaves.WRONG_KEY)).isFalse()
         rule.saveScreenshot("library-details-switch-folder")
-        state = state.copy(games = listOf(game.copy(save = GameSave(true, SaveSyncState.SERVER_NEWER, null, "eden", folderChosen = true))))
+        // Missing on the Thor, with automatic upload off: Upload save, Restore server save and Change save folder.
+        state = state.copy(games = listOf(game.copy(save = GameSave(true, SaveSyncState.LOCAL_MISSING, null, "eden", autoUpload = false, folderChosen = true))))
         assertThat(overflow(title)).isEqualTo(0f)
         rule.saveScreenshot("library-details-switch-buttons")
     }

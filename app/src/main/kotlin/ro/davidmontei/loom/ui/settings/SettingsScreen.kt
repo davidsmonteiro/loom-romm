@@ -226,7 +226,7 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
                     SettingsSection.STORAGE -> StorageSection(state, actions, first)
                     SettingsSection.MAPPING -> MappingSection(state, actions, first)
                     SettingsSection.DOWNLOADS -> DownloadsSection(state, actions, first)
-                    SettingsSection.SAVES -> SaveSyncSection(state, actions, first)
+                    SettingsSection.SAVES -> SaveSyncSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
                     SettingsSection.CONTROLS -> Box(first) {
                         LoomSwitchRow("Swap A and B", state.settings?.swapConfirmBack == true, actions::setSwap,
                             subtitle = "For Nintendo-style pads: confirm with the right face button and go back with the bottom one.")
@@ -653,14 +653,41 @@ private fun DownloadsSection(state: SettingsUiState, actions: SettingsActions, m
 }
 
 /**
- * Save sync: automatic upload, how the last background sync went, and where Azahar keeps its data
- * (its folder browser opens in place, as the ROMs folder's does). No heading of its own above the
- * switch: the section list names it, and the section must fit the screen.
+ * Save sync: automatic upload, how the last background sync went (with Pair again beside it when
+ * that sync needs Loom to pair again), and where Azahar keeps its data (its folder browser opens in
+ * place, as the ROMs folder's does). No heading of its own above the switch: the section list names
+ * it, and the section must fit the screen.
  */
 @Composable
-private fun SaveSyncSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
+private fun SaveSyncSection(
+    state: SettingsUiState,
+    actions: SettingsActions,
+    modifier: Modifier = Modifier,
+    backFromPairing: Boolean = false,
+    onBackFromPairing: () -> Unit = {},
+) {
     val first = modifier
     val settings = state.settings
+    val last = settings?.lastSaveSync
+    val needsPairing = last?.failed == true && last.needsPairing
+    val switchFocus = remember { FocusRequester() }
+    val pairAgainFocus = remember { FocusRequester() }
+    // Back from pairing again, focus is where the user left, on Pair again. If the new pairing already
+    // works, the save sync it starts has replaced the failure and the button has gone: the switch instead.
+    LaunchedEffect(Unit) {
+        if (backFromPairing) {
+            delay(50) // as InitialFocus: the button has to be laid out first
+            if (!runCatching { pairAgainFocus.requestFocus() }.getOrDefault(false)) runCatching { switchFocus.requestFocus() }
+            onBackFromPairing()
+        }
+    }
+    // That sync can also end once Pair again has focus, taking the button away: focus stays in the section.
+    // (Read while composing: by the time the effect runs, the button has gone and reported losing focus.)
+    var pairAgainFocused by remember { mutableStateOf(false) }
+    val pairAgainHadFocus = pairAgainFocused
+    LaunchedEffect(needsPairing) {
+        if (!needsPairing && pairAgainHadFocus) { delay(50); runCatching { switchFocus.requestFocus() } }
+    }
     var picking by remember { mutableStateOf(false) }
     val changeFolder = remember { FocusRequester() }
     ReturnFocusOnClose(picking) { changeFolder }
@@ -669,18 +696,30 @@ private fun SaveSyncSection(state: SettingsUiState, actions: SettingsActions, mo
     var pickerFocused by remember { mutableStateOf(false) }
     BackHandler(enabled = picking && (toggleFocused || pickerFocused)) { picking = false }
     SectionTop {
-        Box(first) {
+        Box(first.focusRequester(switchFocus)) {
             LoomSwitchRow("Upload saves automatically", settings?.autoUploadSaves ?: true, actions::setAutoUploadSaves,
                 subtitle = "Every 15 minutes and when Loom opens: uploads 3DS saves untouched for a minute, tells you of " +
                     "conflicts and newer RomM saves. Off, Loom only looks when you press Upload save. Saves from RomM always wait for you.",
                 subtitleLines = 4)
         }
-        val last = settings?.lastSaveSync
-        Text(
-            if (last == null) "No save sync has run yet." else "Last sync ${ago(last.atEpochMs)}: ${last.summary}",
-            style = MaterialTheme.typography.bodyMedium, color = if (last?.failed == true) LoomColors.Error else LoomColors.TextMuted,
-            modifier = Modifier.testTag("last-save-sync"),
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                when {
+                    last == null -> "No save sync has run yet."
+                    // The sync's own text sends the user to Settings; here the way out is the button beside it.
+                    needsPairing -> "Last sync ${ago(last.atEpochMs)}: ${last.summary.substringBefore(" Pair again in Settings")}"
+                    else -> "Last sync ${ago(last.atEpochMs)}: ${last.summary}"
+                },
+                style = MaterialTheme.typography.bodyMedium, color = if (last?.failed == true) LoomColors.Error else LoomColors.TextMuted,
+                modifier = Modifier.weight(1f).testTag("last-save-sync"),
+            )
+            // RomM already rejects the token or has no device for Loom, so as in Library sync there is
+            // nothing to lose and nothing to confirm.
+            if (needsPairing) {
+                LoomButton("Pair again", onClick = actions::repair,
+                    modifier = Modifier.focusRequester(pairAgainFocus).onFocusChanged { pairAgainFocused = it.isFocused })
+            }
+        }
     }
     val chosen = settings?.azaharUserDir
     val current = (chosen ?: state.storage.azaharFound)?.let { java.io.File(it) }

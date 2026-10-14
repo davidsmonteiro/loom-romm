@@ -42,6 +42,7 @@ import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.data.download.VolumeInfo
+import ro.davidmontei.loom.data.saves.SaveSyncEngine
 import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.data.settings.ServerConfig
@@ -639,6 +640,68 @@ class SettingsScreenTest {
         rule.onNodeWithTag("last-save-sync").assertTextEquals("Last sync 5 min ago: 2 uploaded · 1 conflict")
         update { it.copy(settings = it.settings!!.copy(lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), "Can't reach the RomM server", true))) }
         rule.onNodeWithTag("last-save-sync").assertTextEquals("Last sync just now: Can't reach the RomM server")
+        rule.onNodeWithText("Pair again").assertDoesNotExist() // pairing again wouldn't help
+    }
+
+    /** The last save sync failed until Loom pairs again, as [summary] says. */
+    private fun needingPairing(summary: String) = sample.copy(settings = sample.settings!!.copy(
+        lastSaveSync = SaveSyncOutcome(System.currentTimeMillis() - 5 * 60_000, summary, failed = true, needsPairing = true)))
+
+    /**
+     * Found by review: a save sync that needed pairing again said "Pair again in Settings" in Settings,
+     * with nothing to press. Pair again is beside it now, and asks nothing first: pairing is already broken.
+     */
+    @Test fun aSaveSyncThatNeedsPairingLeadsToPairing() {
+        state = needingPairing(SaveSyncEngine.NO_DEVICE)
+        show()
+        toTheSaveSwitch()
+        rule.onNodeWithTag("last-save-sync").assertTextEquals("Last sync 5 min ago: RomM doesn't have Loom as a device, so saves can't sync.")
+        press(Key.DirectionDown)
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionDown)
+        rule.onNodeWithText("Change folder").assertIsFocused() // the rest of the section is still reachable
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("repair")
+
+        update { needingPairing("RomM rejected Loom's token. Pair again in Settings.") }
+        rule.onNodeWithTag("last-save-sync").assertTextEquals("Last sync 5 min ago: RomM rejected Loom's token.")
+        rule.onNodeWithText("Pair again").assertExists()
+    }
+
+    /** Pairing again from Saves comes back to its Pair again, and to the switch once the save sync it starts has run. */
+    @Test fun backFromPairingAgainInSavesFocusesItsPairAgain() {
+        state = needingPairing(SaveSyncEngine.NO_DEVICE)
+        val restore = StateRestorationTester(rule)
+        restore.setContent { LoomTestTheme { SettingsContent(state, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        toTheSaveSwitch()
+        press(Key.DirectionDown) // Pair again
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("repair")
+        // Pairing opens on top and Settings leaves composition; coming back recreates it from saved state.
+        restore.emulateSavedInstanceStateRestore()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        update { it.copy(settings = it.settings!!.copy(lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), "1 uploaded", false))) }
+        rule.onNodeWithText("Pair again").assertDoesNotExist()
+        rule.onNodeWithText("Upload saves automatically").assertIsFocused()
+    }
+
+    @Test fun backFromPairingAgainInSavesWithTheSyncAlreadyRunFocusesTheSwitch() {
+        state = needingPairing(SaveSyncEngine.NO_DEVICE)
+        val restore = StateRestorationTester(rule)
+        restore.setContent { LoomTestTheme { SettingsContent(state, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        toTheSaveSwitch()
+        press(Key.DirectionDown) // Pair again
+        press(Key.DirectionCenter)
+        // Paired while away: the save sync it started has run by the time Settings is back.
+        state = state.copy(settings = state.settings!!.copy(lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), "no changes", false)))
+        restore.emulateSavedInstanceStateRestore()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText("Upload saves automatically").assertIsFocused()
     }
 
     /** Azahar's folder browser opens beside the folder in use, and says whether the open folder holds Azahar's data. */

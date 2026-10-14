@@ -18,18 +18,8 @@ object EmulatorData {
         "nand", "screenshots", "sdmc", "shaders", "states", "sysdata",
     )
 
-    /**
-     * The folder in the ROMs root that holds emulators' saves moved to the card (Eden's in
-     * `saves/Eden` on the Thor). It is never a system folder: not detected, offered, adopted from,
-     * installed into or offloaded.
-     */
-    const val SAVES_FOLDER = "saves"
-
     /** Whether an entry named [name] at the top of a system folder is emulator data, not a game. */
     fun isEmulatorData(name: String): Boolean = name.lowercase(Locale.ROOT) in AZAHAR_FOLDERS
-
-    /** Whether a folder named [name] at the top of the ROMs root is [SAVES_FOLDER] (the card ignores case). */
-    fun isSavesFolder(name: String): Boolean = name.equals(SAVES_FOLDER, ignoreCase = true)
 
     /**
      * Whether [dir] is (or holds) an emulator's user directory: Azahar's `sdmc` or `nand` folder
@@ -37,4 +27,15 @@ object EmulatorData {
      */
     fun holdsEmulatorData(dir: Path): Boolean =
         listOf("sdmc", "nand").any { dir.resolve(it).isDirectory(LinkOption.NOFOLLOW_LINKS) }
+
+    /**
+     * The folder at the top of the ROMs root where emulators' saves can be kept, e.g. `ROMs/saves/Eden`.
+     * It holds no system's games, so it is never a system folder: Loom doesn't detect it as one, offer
+     * it, mark it as one when browsing, adopt games from it, accept it as a platform's folder, or
+     * offload anything in it.
+     */
+    const val SAVES_FOLDER = "saves"
+
+    /** Whether a folder named [name] at the top of the ROMs root is [SAVES_FOLDER], whatever its case. */
+    fun isSavesFolder(name: String): Boolean = name.lowercase(Locale.ROOT) == SAVES_FOLDER
 }

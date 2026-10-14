@@ -29,6 +29,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import ro.davidmontei.loom.data.download.VolumeInfo
+import ro.davidmontei.loom.storage.mapping.EmulatorData
 import ro.davidmontei.loom.ui.theme.LoomColors
 import java.io.File
 
@@ -83,7 +84,9 @@ fun FolderPicker(
     val children = remember(current) {
         current?.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }.orEmpty().sortedBy { it.name.lowercase() }
     }
-    val systems = children.count { it.name.lowercase() in knownSystemFolders }
+    // Emulators' saves (a ROMs folder's `saves`) are never a system's, whatever names the screen knows.
+    fun looksLikeSystem(dir: File) = dir.name.lowercase() in knownSystemFolders && !EmulatorData.isSavesFolder(dir.name)
+    val systems = children.count(::looksLikeSystem)
     // Focus lands on the row of the folder just left, if it is listed; otherwise on "Use this folder" (or the first volume).
     val focusIndex = left?.let { l -> if (current == null) volumes.indexOfFirst { it.root == l } else children.indexOf(l) }?.takeIf { it >= 0 }
     val list = rememberLazyListState()
@@ -94,7 +97,7 @@ fun FolderPicker(
         Text(current?.path ?: "Choose a storage", style = MaterialTheme.typography.titleSmall, color = LoomColors.TextMuted)
         if (current != null) {
             val said = note?.invoke(children) ?: FolderNote(
-                if (systems > 0) "$systems folders here look like Cocoon systems (${children.filter { it.name.lowercase() in knownSystemFolders }.take(6).joinToString { it.name }}…)"
+                if (systems > 0) "$systems folders here look like Cocoon systems (${children.filter(::looksLikeSystem).take(6).joinToString { it.name }}…)"
                 else "No system folders (snes, psx, gba…) here yet.",
                 looksRight = systems > 0,
             )
@@ -122,7 +125,7 @@ fun FolderPicker(
                     LoomRow(
                         title = dir.name,
                         onClick = { open(dir) },
-                        leading = { Icon(Icons.Outlined.Folder, null, tint = if (dir.name.lowercase() in knownSystemFolders) LoomColors.Installed else LoomColors.TextMuted) },
+                        leading = { Icon(Icons.Outlined.Folder, null, tint = if (looksLikeSystem(dir)) LoomColors.Installed else LoomColors.TextMuted) },
                         modifier = if (i == focusIndex) Modifier.focusRequester(firstFocus) else Modifier,
                     )
                 }

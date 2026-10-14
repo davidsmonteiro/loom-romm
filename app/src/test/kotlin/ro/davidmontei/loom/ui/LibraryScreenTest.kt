@@ -18,6 +18,7 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -26,6 +27,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.pressKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -584,6 +586,84 @@ class LibraryScreenTest {
         assertThat(calls).contains("upload:1")
     }
 
+    /**
+     * Upload save only where it could send the Thor's save: it's newer, or Loom hasn't looked yet or
+     * couldn't. With automatic upload off Loom only knows how a save stood when last asked, so Upload
+     * save, which looks again, stays, except where RomM's save is newer. Restore where RomM's is newer
+     * or the Thor's is gone; the queue for a conflict.
+     */
+    @Test fun eachSaveStateOffersOnlyWhatItCanDo() {
+        val upload = "Upload save"
+        val restore = "Restore server save"
+        val choose = "Choose which to keep"
+        val folder = "Choose save folder"
+        // The buttons with automatic upload on, then off.
+        val offered: Map<SaveSyncState?, Pair<List<String>, List<String>>> = mapOf(
+            null to (listOf(upload) to listOf(upload)),
+            SaveSyncState.IN_SYNC to (emptyList<String>() to listOf(upload)),
+            SaveSyncState.NO_SAVE to (emptyList<String>() to listOf(upload)),
+            SaveSyncState.LOCAL_NEWER to (listOf(upload) to listOf(upload)),
+            SaveSyncState.WRITING to (listOf(upload) to listOf(upload)),
+            SaveSyncState.SERVER_NEWER to (listOf(restore) to listOf(restore)),
+            SaveSyncState.LOCAL_MISSING to (listOf(restore) to listOf(upload, restore)),
+            SaveSyncState.CONFLICT to (listOf(choose) to listOf(choose)),
+            SaveSyncState.NEEDS_FOLDER to (listOf(folder) to listOf(folder)),
+            SaveSyncState.UNSUPPORTED to (emptyList<String>() to listOf(upload)),
+            SaveSyncState.ERROR to (listOf(upload) to listOf(upload)),
+        )
+        assertThat(offered.keys).containsExactlyElementsIn(SaveSyncState.entries + null)
+        state = withSave(1, azahar(SaveSyncState.IN_SYNC))
+        show()
+        press(Key.DirectionCenter) // Chrono Trigger's details, open while its save moves from state to state
+        for ((saveState, buttons) in offered) {
+            for (autoUpload in listOf(true, false)) {
+                changeGame(1, games.first { it.id == 1 }.copy(save = azahar(saveState).copy(autoUpload = autoUpload)))
+                val shown = listOf(upload, restore, choose, folder).filter { rule.onAllNodesWithText(it).fetchSemanticsNodes().isNotEmpty() }
+                assertWithMessage("$saveState, automatic upload ${if (autoUpload) "on" else "off"}").that(shown)
+                    .isEqualTo(if (autoUpload) buttons.first else buttons.second)
+            }
+        }
+        rule.onNodeWithText("Close").assertIsFocused() // still where the details opened
+    }
+
+    /** In sync, there's nothing to do with the save: Up from Close stays there, and Right still reaches Remove. */
+    @Test fun aSaveInSyncOffersNothingToDo() {
+        state = withSave(1, azahar(SaveSyncState.IN_SYNC))
+        show()
+        press(Key.DirectionCenter)
+        rule.onNodeWithTag("save-line", useUnmergedTree = true).assertTextEquals("Save: in sync with RomM")
+        rule.onNodeWithText("Close").assertIsFocused()
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Close").assertIsFocused()
+        press(Key.DirectionRight)
+        rule.onNodeWithText("Remove from device").assertIsFocused()
+    }
+
+    /** With two save buttons (automatic upload off, the Thor's save missing), the pad reaches both. */
+    @Test fun thePadReachesBothSaveButtons() {
+        state = withSave(1, azahar(SaveSyncState.LOCAL_MISSING).copy(autoUpload = false))
+        show()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Close").assertIsFocused()
+        press(Key.DirectionUp); press(Key.DirectionLeft)
+        rule.onNodeWithText("Upload save").assertIsFocused()
+        press(Key.DirectionRight)
+        rule.onNodeWithText("Restore server save").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Restore Chrono Trigger's save from RomM?").assertExists()
+    }
+
+    /** Loom uploaded the save by itself while Upload save had focus: the button goes, and focus stays in the details. */
+    @Test fun uploadSaveGoingOnceSentKeepsFocusInTheDetails() {
+        state = withSave(1, azahar(SaveSyncState.LOCAL_NEWER))
+        show()
+        press(Key.DirectionCenter); press(Key.DirectionUp)
+        rule.onNodeWithText("Upload save").assertIsFocused()
+        changeGame(1, state.games.first { it.id == 1 }.copy(save = azahar(SaveSyncState.IN_SYNC)))
+        rule.onNodeWithText("Upload save").assertDoesNotExist()
+        rule.onNodeWithText("Close").assertIsFocused()
+    }
+
     // --- a Switch game's save, in Eden ---
 
     private fun eden(state: SaveSyncState?, detail: String? = null, chosen: Boolean = false) =
@@ -606,7 +686,7 @@ class LibraryScreenTest {
 
     /** Once the owner chose a game's save folder, its details can change it. */
     @Test fun aChosenSaveFolderCanBeChangedFromTheDetails() {
-        state = withSave(1, eden(SaveSyncState.IN_SYNC, chosen = true))
+        state = withSave(1, eden(SaveSyncState.LOCAL_NEWER, chosen = true))
         show()
         press(Key.DirectionCenter); press(Key.DirectionUp) // into the save buttons, wherever Close lines up with them
         press(Key.DirectionLeft); press(Key.DirectionLeft)
@@ -618,7 +698,7 @@ class LibraryScreenTest {
     }
 
     @Test fun aSaveFolderLoomReadItselfCantBeChanged() {
-        state = withSave(1, eden(SaveSyncState.IN_SYNC))
+        state = withSave(1, eden(SaveSyncState.LOCAL_NEWER))
         show()
         press(Key.DirectionCenter)
         rule.onNodeWithText("Upload save").assertExists()

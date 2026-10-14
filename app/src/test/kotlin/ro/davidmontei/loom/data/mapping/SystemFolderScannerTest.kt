@@ -41,18 +41,6 @@ class SystemFolderScannerTest {
         assertThat(SystemFolderScanner.scan(tmp.root).single()).isEqualTo(SystemFolder("n3ds", 1, null))
     }
 
-    /**
-     * ROMs/saves holds emulators' saves (Eden's on the Thor): never a system folder Loom finds,
-     * offers in the folder question, or counts games in, whatever its case.
-     */
-    @Test fun theSavesFolderIsNoSystemFolder() {
-        system("snes", null, "Chrono Trigger.sfc")
-        File(tmp.root, "Saves/Eden/user/save/0000000000000000").mkdirs()
-        File(tmp.root, "Saves/Eden/prod.keys").writeText("not a game")
-        assertThat(SystemFolderScanner.scan(tmp.root)).containsExactly(SystemFolder("snes", 1, null))
-        assertThat(SystemFolderScanner.scan(tmp.root, listOf("saves", "snes"))).containsExactly(SystemFolder("snes", 1, null))
-    }
-
     @Test fun theChooserSaysWhichOfAPlatformsFoldersAreOnTheCard() = runBlocking<Unit> {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         try {
@@ -66,6 +54,29 @@ class SystemFolderScannerTest {
             File(roms, "snes").mkdirs()
             settings.setRomsRoot(roms.path)
             assertThat(chooser.onCard(listOf("mame", "fba"))).containsExactly(SystemFolder("MAME", 1, null))
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    /** ROMs/saves holds emulators' saves (ROMs/saves/Eden), not a system's games: no scan lists it, whatever its case. */
+    @Test fun theSavesFolderIsNoSystemFolder() {
+        system("snes", null, "Chrono Trigger (USA).sfc")
+        File(tmp.newFolder("Saves"), "Eden/nand").mkdirs()
+        assertThat(SystemFolderScanner.scan(tmp.root).map { it.name }).containsExactly("snes")
+        assertThat(SystemFolderScanner.scan(tmp.root, only = listOf("saves", "snes")).map { it.name }).containsExactly("snes")
+    }
+
+    /** "Another folder…" in the folder question lists every folder of the ROMs folder but that one. */
+    @Test fun anotherFolderDoesntOfferTheSavesFolder() = runBlocking<Unit> {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val prefs = PreferenceDataStoreFactory.create(scope = scope) { File(tmp.newFolder("prefs"), "p.preferences_pb") }
+            val settings = SettingsStore(prefs)
+            val roms = tmp.newFolder("ROMs")
+            listOf("switch", "saves/Eden", "mame").forEach { File(roms, it).mkdirs() }
+            settings.setRomsRoot(roms.path)
+            assertThat(FolderChooser(settings, MappingRepository(prefs)).allFolders().map { it.name }).containsExactly("mame", "switch").inOrder()
         } finally {
             scope.cancel()
         }

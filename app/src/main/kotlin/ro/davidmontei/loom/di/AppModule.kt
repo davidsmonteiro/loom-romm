@@ -21,6 +21,7 @@ import ro.davidmontei.loom.data.auth.KeystoreTokenCipher
 import ro.davidmontei.loom.data.auth.TokenCipher
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
+import ro.davidmontei.loom.data.settings.WriteThroughDataStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.romm.pairing.RommConnector
 import javax.inject.Qualifier
@@ -37,9 +38,14 @@ object AppModule {
     @Provides @Singleton @AppScope
     fun appScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /**
+     * The settings file, which SettingsStore and MappingRepository share: read once and then kept in
+     * memory, so a long-lived reader can't miss a change (see [WriteThroughDataStore]). Everything
+     * that writes the file goes through this one instance.
+     */
     @Provides @Singleton @SettingsPrefs
-    fun settingsPrefs(@ApplicationContext context: Context): DataStore<Preferences> =
-        PreferenceDataStoreFactory.create { context.preferencesDataStoreFile("settings") }
+    fun settingsPrefs(@ApplicationContext context: Context, @AppScope scope: CoroutineScope): DataStore<Preferences> =
+        WriteThroughDataStore(PreferenceDataStoreFactory.create { context.preferencesDataStoreFile("settings") }, scope)
 
     @Provides @Singleton @CredentialPrefs
     fun credentialPrefs(@ApplicationContext context: Context): DataStore<Preferences> =

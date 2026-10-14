@@ -41,7 +41,7 @@ The single directory on the Thor whose subfolders Cocoon scans, e.g. `/storage/9
 _Avoid_: library path, base dir
 
 **System folder**:
-The subfolder of the ROMs root holding one system's games, the one Cocoon is set up to read for it, e.g. `snes`, `gc`, `n3ds`.
+The subfolder of the ROMs root holding one system's games, the one Cocoon is set up to read for it, e.g. `snes`, `gc`, `n3ds`. The ROMs root's `saves` folder, where emulators' saves can be kept (`ROMs/saves/Eden`), is never one.
 _Avoid_: platform folder, rom dir
 
 **Candidate folder**:

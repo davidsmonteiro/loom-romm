@@ -262,8 +262,11 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         assertThat(romm.uploads()).isEmpty()
     }
 
-    /** When RomM can't be asked again, the message names the control that looks again. */
-    @Test fun aRefusedAnswerNamesUploadSaveWhenLoomCantLookAgain() = runBlocking<Unit> {
+    /**
+     * When RomM can't be asked again, the message says to ask again, which looks again first. Not
+     * Upload save: the details offer it only where it could send something, never for a conflict.
+     */
+    @Test fun aRefusedAnswerSaysToAskAgainWhenLoomCantLookAgain() = runBlocking<Unit> {
         install(pokemonX)
         writeSave(pokemonX, bytes(1))
         romm.addSave(7, archiveOf(bytes(2)))
@@ -272,7 +275,13 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         romm.negotiateAnswer = { json(500, "Internal error") }
 
         assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_SERVER)).isEqualTo(
-            "Nothing changed for Pokemon X: The save on the Thor changed since this choice was shown. Upload save in its details looks again",
+            "Nothing changed for Pokemon X: The save on the Thor changed since this choice was shown. " +
+                "Loom couldn't look at it again; try again in a moment",
+        )
+        romm.negotiateAnswer = null
+        assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_SERVER)).isEqualTo(
+            "Nothing changed for Pokemon X: The save on the Thor changed since this choice was shown. " +
+                "Loom looked again: choose which to keep in the queue",
         )
     }
 

@@ -11,6 +11,7 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import mockwebserver3.MockResponse
 import org.junit.Test
 import org.junit.runner.RunWith
 import ro.davidmontei.loom.data.db.SaveSyncState
@@ -559,7 +560,34 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         val report = engine().sync(SaveSyncRequest.PUSH)
 
         assertThat(report.unavailable).isEqualTo(SaveSyncEngine.NO_DEVICE)
+        assertThat(report.needsPairing).isTrue()
         assertThat(negotiations()).isEmpty()
+    }
+
+    /** What only pairing again fixes says so, for Settings to offer it: no RomM device for Loom (any more), or signed out. */
+    @Test fun aRunThatOnlyPairingFixesSaysSo() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        fun answer(code: Int, detail: String) = MockResponse.Builder().code(code).setHeader("Content-Type", "application/json")
+            .body("""{"detail":"$detail"}""").build()
+
+        romm.negotiateAnswer = { answer(404, "Device not found") } // deleted in RomM's web UI
+        engine().sync(SaveSyncRequest.PUSH).let {
+            assertThat(it.unavailable).isEqualTo(SaveSyncEngine.NO_DEVICE)
+            assertThat(it.needsPairing).isTrue()
+        }
+        romm.negotiateAnswer = { answer(400, "Invalid slot") }
+        engine().sync(SaveSyncRequest.PUSH).let {
+            assertThat(it.unavailable).isEqualTo("RomM won't sync saves with this device: Invalid slot")
+            assertThat(it.needsPairing).isFalse()
+        }
+        romm.negotiateAnswer = null
+        credentials.clear() // signed out in Settings
+        engine().sync(SaveSyncRequest.PUSH).let {
+            assertThat(it.unavailable).isEqualTo(SaveSyncEngine.NO_DEVICE)
+            assertThat(it.needsPairing).isTrue()
+        }
+        assertThat(romm.uploads()).isEmpty()
     }
 
     /** A pasted token isn't bound to a device; the device Loom paired as is found by its identifier. */

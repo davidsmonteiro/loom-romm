@@ -39,6 +39,11 @@ import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.TokenCipher
 import ro.davidmontei.loom.data.catalog.CatalogSyncScheduler
 import ro.davidmontei.loom.data.download.StorageVolumes
+import ro.davidmontei.loom.data.saves.SaveSyncEngine
+import ro.davidmontei.loom.data.saves.SaveSyncScheduler
+import ro.davidmontei.loom.data.saves.SaveSyncTriggers
+import ro.davidmontei.loom.data.saves.SaveSyncWorker
+import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.romm.pairing.PairedCredentials
@@ -124,7 +129,8 @@ class OnboardingViewModelTest {
         initializer {
             OnboardingViewModel(
                 RommConnector(OkHttpClient()), settings, credentials, StorageVolumes(context),
-                CatalogSyncScheduler(WorkManager.getInstance(context)), SavedStateHandle(mapOf("pairAgain" to pairAgain)),
+                CatalogSyncScheduler(WorkManager.getInstance(context)),
+                SaveSyncTriggers(settings, SaveSyncScheduler(WorkManager.getInstance(context))), SavedStateHandle(mapOf("pairAgain" to pairAgain)),
             )
         }
     })[OnboardingViewModel::class]
@@ -154,6 +160,20 @@ class OnboardingViewModelTest {
         vm.await { it.pairedAs == "david" }
         runBlocking { withTimeout(5_000) { credentials.current.first { it?.token == "rmm_new" } } }
         assertThat(vm.state.value.step).isEqualTo(OnboardingStep.PAIR) // the screen closes; no walk through setup
+    }
+
+    /** A background save sync that failed for want of pairing runs again once the new token works, so Settings stops asking. */
+    @Test fun pairingAgainRetriesASaveSyncThatNeededIt() {
+        runBlocking { settings.setLastSaveSync(SaveSyncOutcome(1, SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true)) }
+        serve(goodToken = "rmm_new")
+        val vm = viewModel(pairAgain = true)
+        vm.await { it.pairError != null }
+        val saveSyncs = WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(SaveSyncWorker.NOW_NAME)
+        assertThat(runBlocking { saveSyncs.first() }).isEmpty()
+
+        vm.pasteToken("rmm_new")
+        val queued = runBlocking { withTimeout(5_000) { saveSyncs.first { it.isNotEmpty() } } }
+        assertThat(queued.single().tags).contains("kind:AUTO")
     }
 
     /** Found by audit: with Pair kept enabled while checking, a second press (or Enter) must not send the code twice. */
