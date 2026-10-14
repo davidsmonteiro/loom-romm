@@ -697,6 +697,19 @@ class LibraryScreenTest {
         assertThat(calls).contains("askSaveFolder:1")
     }
 
+    /** A wrong pick often ends in a conflict: its details still offer to change the folder, beside the queue. */
+    @Test fun aChosenSaveFolderInConflictCanStillBeChanged() {
+        state = withSave(1, eden(SaveSyncState.CONFLICT, chosen = true))
+        show()
+        press(Key.DirectionCenter); press(Key.DirectionUp)
+        press(Key.DirectionLeft); press(Key.DirectionLeft)
+        rule.onNodeWithText("Choose which to keep").assertIsFocused()
+        press(Key.DirectionRight)
+        rule.onNodeWithText("Change save folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("askSaveFolder:1")
+    }
+
     @Test fun aSaveFolderLoomReadItselfCantBeChanged() {
         state = withSave(1, eden(SaveSyncState.LOCAL_NEWER))
         show()

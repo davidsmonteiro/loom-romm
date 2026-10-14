@@ -32,6 +32,7 @@ import ro.davidmontei.loom.romm.dto.SyncNegotiateRequest
 import ro.davidmontei.loom.romm.dto.SyncOperationDto
 import ro.davidmontei.loom.romm.rommCall
 import ro.davidmontei.loom.storage.engine.formatBytes
+import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import ro.davidmontei.loom.storage.saves.NegotiatedAction
 import ro.davidmontei.loom.storage.saves.SAVE_SLOT
 import ro.davidmontei.loom.storage.saves.SaveArchiveException
@@ -660,6 +661,8 @@ class SaveSyncEngine(
                 throw SaveArchiveException("The downloaded save doesn't match RomM's hash; nothing was replaced")
             }
             if (!SaveHasher.isZip(file.toPath())) throw SaveArchiveException("RomM's save for this game isn't a save archive Loom can restore")
+            val roots = SaveZipper.rootsIn(file.toPath())
+            if (save.roots.none { it.name in roots }) throw SaveArchiveException(otherSave(save, roots))
             val restored = restorer.restore(file.toPath(), save.roots, current, save.maxUnitBytes)
             rommCall { api.confirmSaveDownloaded(head.saveId, SaveDeviceRequest(deviceId)) }
             writeBaseline(save, restored, head.saveId, head.contentHash, head.updatedAt)
@@ -789,6 +792,20 @@ class SaveSyncEngine(
     /** Whether an upload's answer is a new slot head, not an older version RomM matched by hash. */
     private fun isNewHead(saved: SaveDto, head: ServerHead): Boolean =
         saved.id > head.saveId && !saved.updatedAtInstant().isBefore(head.updatedAt)
+
+    /**
+     * Why RomM's save can't go in place of the Thor's: it holds other folders. For a Switch game
+     * those name another title, often because the wrong save folder was picked for the game.
+     */
+    private fun otherSave(save: ResolvedSave.Ready, roots: Set<String>): String {
+        val ours = save.roots.joinToString { it.name }
+        return when {
+            roots.isEmpty() -> "RomM's save isn't laid out as ${emulatorName(save.emulator)} saves are; nothing was replaced"
+            save.emulator == EdenSaveLocator.EMULATOR_ID -> "RomM's save is for title ${roots.joinToString(" and ")}, not $ours, " +
+                "the save folder this game uses. If that folder is the wrong one, change it in the game's details; nothing was replaced"
+            else -> "RomM's save holds ${roots.joinToString()}, not this game's $ours; nothing was replaced"
+        }
+    }
 
     /** A save larger than Loom could restore isn't uploaded: it could never come back. */
     private fun checkRestorable(save: ResolvedSave.Ready, bytes: Long) {

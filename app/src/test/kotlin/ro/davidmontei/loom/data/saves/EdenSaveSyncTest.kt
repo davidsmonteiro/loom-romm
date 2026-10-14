@@ -233,6 +233,33 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         assertThat(romm.uploads()).hasSize(1)
     }
 
+    /**
+     * A wrong pick: RomM holds the game's save, the Thor's picked folder another game's. Keeping
+     * RomM's says the archive is for another title instead of failing obscurely, and picking the
+     * right folder clears the conflict.
+     */
+    @Test fun aConflictFromAWrongPickIsExplainedAndUndoneByPickingAgain() = runBlocking<Unit> {
+        installSwitch(wonder)
+        writeEdenSave(arceus, bytes(2))
+        romm.addSave(wonder.romId, edenArchiveOf(wonder, bytes(1)), emulator = "eden")
+        eden().chooseFolder(wonder.romId, SwitchTitleId.parse(arceus.titleId)!!)
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(saves.conflict(wonder.romId)!!.reason).isEqualTo(SyncDecision.FIRST_SYNC_DIFFERS.name)
+
+        val kept = engine().resolveConflict(wonder.romId, ConflictChoice.KEEP_SERVER)
+
+        assertThat(kept).isEqualTo(ResolveResult.Failed(
+            "RomM's save is for title 0100A0B00C0D0000, not 01002B300C1D2000, the save folder this game uses. " +
+                "If that folder is the wrong one, change it in the game's details; nothing was replaced",
+        ))
+        assertThat(File(edenFolder(arceus), "game_data.sav").readBytes()).isEqualTo(bytes(2))
+
+        val repository = SaveRepository(engine(), saves, eden(), scope)
+        repository.chooseSaveFolder(wonder.romId, wonder.title, SwitchTitleId.parse(wonder.titleId)!!)
+        assertThat(saves.conflict(wonder.romId)).isNull()
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.SERVER_NEWER) // RomM's save, for the Thor to take when asked
+    }
+
     /** Once another game has a folder, it isn't offered for this one. */
     @Test fun aFolderAnotherGameHasIsntOffered() = runBlocking<Unit> {
         putProdKeys()

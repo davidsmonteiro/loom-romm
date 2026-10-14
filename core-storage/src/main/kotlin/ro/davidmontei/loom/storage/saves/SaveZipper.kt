@@ -184,6 +184,11 @@ object SaveZipper {
         }
     }
 
+    /** The root folders [zip]'s files sit in: what a restore of it can put in place. */
+    fun rootsIn(zip: Path): Set<String> = ZipFile.builder().setPath(zip).get().use { archive ->
+        archive.entries.toList().filterNot { it.isDirectory }.mapNotNull { rootOf(it.name) }.toSortedSet()
+    }
+
     /** The root folder an entry sits in; null for a file at the top of the archive. */
     internal fun rootOf(name: String): String? = name.substringBefore('/', missingDelimiterValue = "").ifEmpty { null }
 

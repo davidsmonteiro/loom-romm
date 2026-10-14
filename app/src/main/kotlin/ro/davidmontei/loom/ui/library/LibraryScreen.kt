@@ -810,7 +810,11 @@ private fun saveButtons(
 ): List<DialogAction> = when {
     !save.supported -> emptyList()
     save.state == SaveSyncState.NEEDS_FOLDER -> listOf(DialogAction("Choose save folder") { chooseFolder(game) })
-    save.state == SaveSyncState.CONFLICT -> listOf(DialogAction("Choose which to keep") { choose() })
+    // A wrong pick of the save folder often shows up as a conflict: the pick can be changed from there too.
+    save.state == SaveSyncState.CONFLICT -> listOfNotNull(
+        DialogAction("Choose which to keep") { choose() },
+        DialogAction("Change save folder") { chooseFolder(game) }.takeIf { save.folderChosen },
+    )
     else -> listOfNotNull(
         DialogAction("Upload save") { upload(game) }.takeIf { uploadCouldSend(save) },
         DialogAction("Restore server save") { restore(game) }
