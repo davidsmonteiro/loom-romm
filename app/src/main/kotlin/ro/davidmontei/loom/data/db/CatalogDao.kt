@@ -41,6 +41,12 @@ data class GameRow(
     @ColumnInfo(name = "bytes_total") val bytesTotal: Long?,
 )
 
+/** A game's cover art on RomM: the small cover, which names it, and the large one its thumbnail is made from. */
+data class CoverPaths(
+    @ColumnInfo(name = "cover_small") val small: String,
+    @ColumnInfo(name = "cover_large") val large: String?,
+)
+
 @Dao
 interface CatalogDao {
 
@@ -71,8 +77,8 @@ interface CatalogDao {
     )
     fun observeGame(romId: Int): Flow<GameRow?>
 
-    @Query("SELECT cover_small FROM roms WHERE cover_small IS NOT NULL")
-    suspend fun smallCovers(): List<String>
+    @Query("SELECT cover_small, cover_large FROM roms WHERE cover_small IS NOT NULL")
+    suspend fun covers(): List<CoverPaths>
 
 
     // --- platforms ---

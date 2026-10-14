@@ -19,6 +19,12 @@ import java.io.File
  */
 const val THOR_TOP_SCREEN = "w840dp-h470dp-land-xhdpi"
 
+/**
+ * The Thor's top screen exactly, as `dumpsys display` reports it: 1920×1080 px at 369 dpi (2.30625×),
+ * so 832×468 dp. For measuring what is drawn in pixels.
+ */
+const val THOR_TOP_SCREEN_EXACT = "w832dp-h468dp-land-369dpi"
+
 @Composable
 fun LoomTestTheme(content: @Composable () -> Unit) = LoomTheme {
     CompositionLocalProvider(LocalIndication provides FocusRingIndication()) { DialogHost { content() } }

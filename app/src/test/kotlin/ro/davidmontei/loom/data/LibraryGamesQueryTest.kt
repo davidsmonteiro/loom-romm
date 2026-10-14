@@ -11,6 +11,7 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import ro.davidmontei.loom.data.db.CoverPaths
 import ro.davidmontei.loom.data.db.DownloadJobEntity
 import ro.davidmontei.loom.data.db.LoomDatabase
 import ro.davidmontei.loom.data.db.PlatformEntity
@@ -67,6 +68,16 @@ class LibraryGamesQueryTest {
         assertThat(game.state).isEqualTo(InstallState.DOWNLOADING)
         assertThat(game.finishing).isTrue()
         assertThat(game.stateDetail).isEqualTo("Finishing…")
+    }
+
+    /** Covers are made from RomM's large art, so the library and the prefetch get it with the small cover that names it. */
+    @Test fun aGameCarriesItsLargeCoverArt() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(1, "psx", "psx", "PlayStation", "PlayStation", 2, "t")))
+        fun rom(id: Int, small: String?, large: String?) = RomEntity(id, 1, "psx", "psx", "Game $id", "game $id", "game $id",
+            "G$id.chd", "G$id", "chd", 1, true, false, false, small, large, "USA", "t", false)
+        db.catalogDao().upsertRoms(listOf(rom(10, "/c/10/small.png", "/c/10/big.png"), rom(11, null, null)))
+        assertThat(db.catalogDao().observeGames(1, 0, "").first().first { it.id == 10 }.toItem().coverLarge).isEqualTo("/c/10/big.png")
+        assertThat(db.catalogDao().covers()).containsExactly(CoverPaths("/c/10/small.png", "/c/10/big.png"))
     }
 
     @Test fun aGameStillDownloadingIsNotFinishing() = runBlocking<Unit> {

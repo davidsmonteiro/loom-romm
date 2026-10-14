@@ -19,13 +19,19 @@ import coil3.fetch.FetchResult
 import coil3.fetch.Fetcher
 import coil3.fetch.SourceFetchResult
 import coil3.key.Keyer
+import coil3.memory.MemoryCache
 import coil3.request.Options
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
@@ -33,13 +39,16 @@ import okhttp3.Request
 import okio.FileSystem
 import okio.Path.Companion.toOkioPath
 import ro.davidmontei.loom.data.db.CatalogDao
+import ro.davidmontei.loom.data.db.CoverPaths
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.net.NotPairedException
 import ro.davidmontei.loom.romm.RommUrls
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -49,30 +58,37 @@ import kotlin.math.roundToInt
 fun coverCacheKey(path: String): String = path.substringBefore('?') + "#" + path.substringAfter("ts=", "")
 
 /**
- * Every game's cover, kept on the device at the size the library shows it.
+ * Every game's cover, kept on the device at the size the library draws it.
  *
- * RomM's "small" covers are full scans of about 100 KB, so a 23,000-game library's would need
- * over 2 GB. Shrunk to cover a 256×341 px card (the grid's cards on the Thor) and stored as WebP
- * they are about 15 KB, and every platform can be browsed offline. They live in the cache dir:
- * Android may trim them when storage runs low, and the next sync fetches them again.
+ * Thumbnails are made from RomM's large cover art. Its "small" covers are the large ones shrunk to
+ * 0.4 (0.2 for art 1,000 px tall or more): 162 to 264 px wide, narrower than a grid card on the Thor
+ * (285 px). Each is shrunk and cropped to [WIDTH]×[HEIGHT], the size a focused card draws its cover,
+ * and kept as WebP at quality 75: about 20 KB, so 20,000 covers take about 400 MB (at 80, a sixth
+ * more for no difference on the Thor's screen). They live in the cache dir: Android may trim them
+ * when storage runs low, and the next sync fetches them again.
+ *
+ * Thumbnails made before at another size (see [OLDER_SUFFIXES]) are drawn until replaced: one drawn
+ * is replaced in the background (a couple at a time), and each prefetch replaces [UPGRADES_PER_RUN]
+ * more, so they don't all come down at once.
  */
-class CoverStore(private val dir: File, private val http: OkHttpClient) {
+class CoverStore(private val dir: File, private val http: OkHttpClient, private val scope: CoroutineScope) {
 
-    fun file(path: String): File = File(dir, fileName(path))
+    /** Where [path]'s thumbnail at today's size is kept. */
+    fun file(path: String): File = File(dir, name(path))
 
-    /** The stored cover for [path], fetched and shrunk first if needed; null if it can't be had. */
-    suspend fun get(base: HttpUrl?, path: String): File? {
+    /** A thumbnail [path] has from before, at another size, if it still has one. */
+    fun older(path: String): File? = OLDER_SUFFIXES.map { File(dir, "${hash(path)}$it.webp") }.firstOrNull { it.exists() }
+
+    /** [path]'s thumbnail at today's size, made first if needed (from [large] when it has one); null if it can't be had. */
+    suspend fun get(base: HttpUrl?, path: String, large: String? = null): File? {
         val file = file(path)
         if (file.exists()) return file
-        val url = base?.let { RommUrls.coverUrl(it, path) } ?: return null
+        if (base == null) return null
         return withContext(Dispatchers.IO) {
-            val bytes = http.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                response.body.bytes()
-            }
-            val bitmap = shrink(bytes) ?: return@withContext null
+            // A cover without large art, or whose large art can't be read, makes do with the small one.
+            val bitmap = large?.let { fetch(base, it) } ?: fetch(base, path) ?: return@withContext null
             dir.mkdirs()
-            // The library and the prefetch can fetch one cover at once: each writes its own file.
+            // The library and the prefetch can make one cover at once: each writes its own file.
             val tmp = File.createTempFile(file.name, ".tmp", dir)
             try {
                 tmp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, QUALITY, it) }
@@ -81,68 +97,153 @@ class CoverStore(private val dir: File, private val http: OkHttpClient) {
                 bitmap.recycle()
                 tmp.delete()
             }
+            older(path)?.delete()
             file
         }
     }
 
-    /** Fetches every cover not stored yet, stopping early if [stopped]; then drops covers no game uses. */
-    suspend fun prefetch(base: HttpUrl, paths: Collection<String>, parallelism: Int = 4, stopped: () -> Boolean = { false }) {
-        val wanted = paths.associateBy(::fileName)
-        val missing = wanted.filterKeys { !File(dir, it).exists() }.values
-        for (batch in missing.chunked(parallelism)) {
-            if (stopped()) return
-            coroutineScope {
-                // Best effort: a cover that fails to load only costs a placeholder.
-                batch.map { path -> async { runCatching { get(base, path) } } }.awaitAll()
-            }
+    /**
+     * The thumbnail to draw for [ref] right away: today's; else one from before, while today's is made
+     * in the background ([onReplaced] once it is); else today's, made now.
+     */
+    suspend fun forDrawing(ref: CoverRef, onReplaced: () -> Unit = {}): File? {
+        file(ref.path).takeIf { it.exists() }?.let { return it }
+        older(ref.path)?.let { olderFile ->
+            replaceLater(ref, onReplaced)
+            return olderFile
         }
-        // Covers of games gone from RomM, and temp files a crash left behind; not ones being written now.
-        val stale = System.currentTimeMillis() - 60 * 60 * 1000L
-        dir.listFiles()?.forEach {
-            if (if (it.name.endsWith(".tmp")) it.lastModified() < stale else it.name !in wanted) it.delete()
+        return get(ref.base, ref.path, ref.large)
+    }
+
+    private val replacing: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val replaceSlots = Semaphore(REPLACING_AT_ONCE)
+
+    /**
+     * Makes [ref]'s thumbnail at today's size in the background, a couple at a time. At most
+     * [REPLACING_WAITING] wait: scrolling through a long list doesn't queue them all, and the ones
+     * left out are asked for again when drawn again, or by the next prefetch.
+     */
+    private fun replaceLater(ref: CoverRef, onReplaced: () -> Unit) {
+        if (ref.base == null || replacing.size >= REPLACING_WAITING || !replacing.add(ref.path)) return
+        scope.launch {
+            try {
+                replaceSlots.withPermit { if (get(ref.base, ref.path, ref.large) != null) onReplaced() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Best effort: the older thumbnail stays until the next try.
+            } finally {
+                replacing.remove(ref.path)
+            }
         }
     }
 
-    companion object {
-        const val CARD_WIDTH = 256
-        const val CARD_HEIGHT = 341
-        private const val QUALITY = 80
+    /**
+     * Makes every thumbnail not stored yet, then replaces up to [upgrades] from before, stopping early
+     * if [stopped]; then drops thumbnails no game uses.
+     */
+    suspend fun prefetch(
+        base: HttpUrl,
+        covers: Collection<CoverPaths>,
+        parallelism: Int = 4,
+        upgrades: Int = UPGRADES_PER_RUN,
+        stopped: () -> Boolean = { false },
+    ) {
+        val todo = covers.distinctBy { it.small }.filter { !file(it.small).exists() }
+        val (fromBefore, missing) = todo.partition { older(it.small) != null }
+        for (batch in (missing + fromBefore.take(upgrades)).chunked(parallelism)) {
+            if (stopped()) return
+            coroutineScope {
+                // Best effort: a cover that fails to load only costs a placeholder.
+                batch.map { cover -> async { runCatching { get(base, cover.small, cover.large) } } }.awaitAll()
+            }
+        }
+        // Thumbnails of games gone from RomM, ones from before that have been replaced, and temp files
+        // a crash left behind; not ones being written now.
+        val keep = HashSet<String>()
+        for (cover in covers) {
+            keep += name(cover.small)
+            if (!file(cover.small).exists()) older(cover.small)?.let { keep += it.name }
+        }
+        val stale = System.currentTimeMillis() - 60 * 60 * 1000L
+        dir.listFiles()?.forEach {
+            if (if (it.name.endsWith(".tmp")) it.lastModified() < stale else it.name !in keep) it.delete()
+        }
+    }
 
-        private fun fileName(path: String): String {
+    private fun fetch(base: HttpUrl, path: String): Bitmap? {
+        val url = RommUrls.coverUrl(base, path) ?: return null
+        val bytes = http.newCall(Request.Builder().url(url).build()).execute().use { response ->
+            if (!response.isSuccessful) return null
+            response.body.bytes()
+        }
+        return shrink(bytes)
+    }
+
+    companion object {
+        /**
+         * The size a focused grid card draws its cover on the Thor's top screen (1920×1080 at 369 dpi):
+         * four columns of 285×380 px, grown 4% by the focus. The list draws covers at 97×129 px.
+         * CoverSizeTest measures it. When it changes, add today's suffix ("-297x396") to
+         * [OLDER_SUFFIXES], so the thumbnails made until then are replaced gradually too.
+         */
+        const val WIDTH = 297
+        const val HEIGHT = 396
+        private const val QUALITY = 75
+
+        /** How thumbnails made at an earlier size were named after their hash ("": 256×341, from the small cover). */
+        private val OLDER_SUFFIXES = listOf("")
+
+        const val UPGRADES_PER_RUN = 1_000
+        private const val REPLACING_AT_ONCE = 2
+        private const val REPLACING_WAITING = 32
+
+        private fun hash(path: String): String {
             val digest = MessageDigest.getInstance("SHA-1").digest(coverCacheKey(path).toByteArray())
-            return digest.joinToString("") { "%02x".format(it) }.take(32) + ".webp"
+            return digest.joinToString("") { "%02x".format(it) }.take(32)
         }
 
-        /** Decodes [bytes] scaled so it still fills a card when cropped, never enlarged. */
+        private fun name(path: String) = "${hash(path)}-${WIDTH}x$HEIGHT.webp"
+
+        /**
+         * Decodes [bytes] shrunk to fill a [WIDTH]×[HEIGHT] card and cropped to it, centred as the
+         * library crops it; never enlarged.
+         */
         internal fun shrink(bytes: ByteArray): Bitmap? {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
             var sample = 1
-            while (bounds.outWidth / (sample * 2) >= CARD_WIDTH && bounds.outHeight / (sample * 2) >= CARD_HEIGHT) sample *= 2
+            while (bounds.outWidth / (sample * 2) >= WIDTH && bounds.outHeight / (sample * 2) >= HEIGHT) sample *= 2
             val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
                 ?: return null
-            val scale = max(CARD_WIDTH / decoded.width.toFloat(), CARD_HEIGHT / decoded.height.toFloat())
-            if (scale >= 1f) return decoded
-            val scaled = decoded.scale((decoded.width * scale).roundToInt(), (decoded.height * scale).roundToInt())
+            val scale = max(WIDTH / decoded.width.toFloat(), HEIGHT / decoded.height.toFloat())
+            val scaled = if (scale >= 1f) decoded else decoded.scale((decoded.width * scale).roundToInt(), (decoded.height * scale).roundToInt())
             if (scaled !== decoded) decoded.recycle()
-            return scaled
+            val width = min(WIDTH, scaled.width)
+            val height = min(HEIGHT, scaled.height)
+            if (width == scaled.width && height == scaled.height) return scaled
+            val cropped = Bitmap.createBitmap(scaled, (scaled.width - width) / 2, (scaled.height - height) / 2, width, height)
+            if (cropped !== scaled) scaled.recycle()
+            return cropped
         }
     }
 }
 
-/** What the library asks Coil for: a game's cover by its RomM path, and where to fetch it if it isn't stored. */
-data class CoverRef(val path: String, val base: HttpUrl?)
+/** What the library asks Coil for: a game's cover by its RomM path, its large art, and where to fetch them if needed. */
+data class CoverRef(val path: String, val base: HttpUrl?, val large: String? = null)
 
 /** Serves [CoverRef]s from the [CoverStore], fetching on first sight. */
-class CoverFetcher(private val ref: CoverRef, private val store: CoverStore) : Fetcher {
+class CoverFetcher(private val ref: CoverRef, private val store: CoverStore, private val imageLoader: ImageLoader) : Fetcher {
     override suspend fun fetch(): FetchResult {
-        val file = store.get(ref.base, ref.path) ?: throw IOException("No cover for ${ref.path}")
+        // A thumbnail from before is drawn now; once it is replaced, the next time the cover is drawn shows the new one.
+        val file = store.forDrawing(ref) { imageLoader.memoryCache?.remove(MemoryCache.Key(coverCacheKey(ref.path))) }
+            ?: throw IOException("No cover for ${ref.path}")
         return SourceFetchResult(ImageSource(file.toOkioPath(), FileSystem.SYSTEM), "image/webp", DataSource.DISK)
     }
 
     class Factory(private val store: CoverStore) : Fetcher.Factory<CoverRef> {
-        override fun create(data: CoverRef, options: Options, imageLoader: ImageLoader): Fetcher = CoverFetcher(data, store)
+        override fun create(data: CoverRef, options: Options, imageLoader: ImageLoader): Fetcher = CoverFetcher(data, store, imageLoader)
     }
 }
 
@@ -162,7 +263,7 @@ class CoverPrefetchWorker @AssistedInject constructor(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result = try {
-        store.prefetch(server.baseUrl(), catalog.smallCovers().distinct(), stopped = { isStopped })
+        store.prefetch(server.baseUrl(), catalog.covers(), stopped = { isStopped })
         Result.success()
     } catch (e: NotPairedException) {
         Result.failure()

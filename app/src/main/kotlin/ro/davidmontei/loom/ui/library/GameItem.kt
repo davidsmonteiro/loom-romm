@@ -34,6 +34,8 @@ data class GameItem(
     val matchedByName: Boolean = false,
     /** Being moved into its system folder, which can't be stopped half way: too late to cancel. */
     val finishing: Boolean = false,
+    /** RomM's large cover art, which the cover drawn is made from ([coverPath] names it). */
+    val coverLarge: String? = null,
 )
 
 /** Where an installed game's save stands, as its details show it. */
@@ -130,5 +132,6 @@ fun GameRow.toItem(liveBytes: Long? = null): GameItem {
         retryable = failureRetryable ?: true,
         matchedByName = installSource == "ADOPTED" && installVerifiedBy == "NAME",
         finishing = jobPhase == JobPhase.PROMOTING.name,
+        coverLarge = coverLarge,
     )
 }

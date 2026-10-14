@@ -22,6 +22,7 @@ import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
+import kotlinx.coroutines.CoroutineScope
 import okhttp3.OkHttpClient
 import java.io.File
 import javax.inject.Singleton
@@ -51,7 +52,8 @@ object DataModule {
     fun afterCatalogSync(installs: InstallManager): AfterCatalogSync = AfterCatalogSync { installs.reconcile() }
 
     @Provides @Singleton
-    fun coverStore(@ApplicationContext context: Context, @ApiHttp http: OkHttpClient) = CoverStore(File(context.cacheDir, "cover-thumbs"), http)
+    fun coverStore(@ApplicationContext context: Context, @ApiHttp http: OkHttpClient, @AppScope scope: CoroutineScope) =
+        CoverStore(File(context.cacheDir, "cover-thumbs"), http, scope)
 
     @Provides @Singleton
     fun catalogSyncScheduler(workManager: WorkManager) = CatalogSyncScheduler(workManager)

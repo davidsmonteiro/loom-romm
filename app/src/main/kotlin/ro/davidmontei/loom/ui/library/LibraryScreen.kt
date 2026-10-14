@@ -72,6 +72,7 @@ import kotlinx.coroutines.delay
 import okhttp3.HttpUrl
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.catalog.CoverRef
+import ro.davidmontei.loom.data.catalog.CoverStore
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.saves.emulatorName
@@ -639,7 +640,7 @@ private fun GameCard(game: GameItem, coverBase: HttpUrl?, modifier: Modifier, on
             .testTag("game-${game.id}"),
         verticalArrangement = Arrangement.spacedBy(Space.xs),
     ) {
-        Box(Modifier.fillMaxWidth().aspectRatio(3f / 4f).clip(RoundedCornerShape(12.dp)).background(LoomColors.SurfaceRaised)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(3f / 4f).clip(RoundedCornerShape(12.dp)).background(LoomColors.SurfaceRaised).testTag("cover-${game.id}")) {
             Cover(game, coverBase, Modifier.fillMaxSize())
             StateOverlay(game, Modifier.align(Alignment.BottomCenter))
         }
@@ -661,7 +662,7 @@ private fun GameRowItem(game: GameItem, coverBase: HttpUrl?, modifier: Modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Space.m),
     ) {
-        Box(Modifier.size(width = 42.dp, height = 56.dp).clip(RoundedCornerShape(6.dp)).background(LoomColors.SurfaceRaised)) {
+        Box(Modifier.size(width = 42.dp, height = 56.dp).clip(RoundedCornerShape(6.dp)).background(LoomColors.SurfaceRaised).testTag("cover-${game.id}")) {
             Cover(game, coverBase, Modifier.fillMaxSize())
         }
         Column(Modifier.weight(1f)) {
@@ -684,8 +685,10 @@ private fun Cover(game: GameItem, coverBase: HttpUrl?, modifier: Modifier) {
         return
     }
     AsyncImage(
-        // Stored covers show offline too; the address is only for ones not fetched yet.
-        model = ImageRequest.Builder(LocalContext.current).data(CoverRef(path, coverBase)).crossfade(true).build(),
+        // Stored covers show offline too; the address is only for ones not fetched yet. Decoded at the
+        // size they are stored, a focused card's: sized to the card, the focus would enlarge them again.
+        model = ImageRequest.Builder(LocalContext.current).data(CoverRef(path, coverBase, game.coverLarge))
+            .size(CoverStore.WIDTH, CoverStore.HEIGHT).crossfade(true).build(),
         contentDescription = null,
         contentScale = ContentScale.Crop,
         modifier = modifier,
