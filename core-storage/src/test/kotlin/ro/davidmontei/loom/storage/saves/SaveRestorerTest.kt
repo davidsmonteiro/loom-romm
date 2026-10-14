@@ -115,6 +115,69 @@ class SaveRestorerTest {
         }
     }
 
+    /**
+     * The card fails mid-swap and again while the old save is being put back (a flaky or pulled
+     * card): the restore gives up with the old files half back, and the next recover finishes
+     * putting them back without mistaking the ones already back for new files.
+     */
+    @Test fun aRollbackThatFailsMidwayIsFinishedByRecover() {
+        for (failAt in 1..6) for (failAgainAt in failAt + 1..failAt + 6) {
+            tmp.root.listFiles()!!.forEach { it.deleteRecursively() }
+            val unit = localSave()
+            val before = contents(unit)
+            var moves = 0
+            val flaky = SaveRestorer { from, to ->
+                if (++moves == failAt || moves == failAgainAt) throw IOException("card removed")
+                SaveRestorer.FileMover.Rename.move(from, to)
+            }
+            assertThrows("failing moves $failAt and $failAgainAt", IOException::class.java) {
+                flaky.restore(serverArchive(), unit, SaveHasher.hashUnit(unit))
+            }
+
+            SaveRestorer().recover(unit)
+            assertThat(contents(unit)).isEqualTo(before)
+            assertThat(workFolders()).isEmpty()
+        }
+    }
+
+    /** A move never replaces a file: a mistake fails instead of overwriting part of a save. */
+    @Test fun aMoveRefusesATargetThatExists() {
+        val from = folderOf(path("a"), "main" to byteArrayOf(1)).resolve("main")
+        val to = folderOf(path("b"), "main" to byteArrayOf(2)).resolve("main")
+        assertThrows(IOException::class.java) { SaveRestorer.FileMover.Rename.move(from, to) }
+        assertThat(Files.readAllBytes(from)).isEqualTo(byteArrayOf(1))
+        assertThat(Files.readAllBytes(to)).isEqualTo(byteArrayOf(2))
+    }
+
+    /**
+     * A work folder still holding old files is never just deleted: without a finished restore
+     * they are the save, so recover puts them back, and keeps them where it can't.
+     */
+    @Test fun recoverNeverDeletesOldFilesItCouldntPutBack() {
+        val unit = localSave()
+        val before = contents(unit)
+        Files.delete(title.resolve("data/00000002/main"))
+        folderOf(title.resolve(".loom-restore-x"), "old/data/00000002/main" to byteArrayOf(2, 2)) // its journal is gone
+        assertThat(SaveRestorer().recover(unit)).isTrue()
+        assertThat(contents(unit)).isEqualTo(before)
+        assertThat(workFolders()).isEmpty()
+
+        folderOf(title.resolve(".loom-restore-y"), "old/data/00000002/main" to byteArrayOf(7))
+        assertThrows(IOException::class.java) { SaveRestorer().recover(unit) }
+        assertThat(contents(unit)).isEqualTo(before)
+        assertThat(Files.readAllBytes(title.resolve(".loom-restore-y/old/data/00000002/main"))).isEqualTo(byteArrayOf(7))
+    }
+
+    /** The journal holds one name per line, so a name with a line break is refused before any move. */
+    @Test fun aNameTheJournalCantHoldIsRefused() {
+        val unit = localSave()
+        val before = contents(unit)
+        val odd = zipOf(path("odd.zip"), "data/00000001/ma\nin" to byteArrayOf(1))
+        assertThrows(SaveArchiveException::class.java) { SaveRestorer().restore(odd, unit, SaveHasher.hashUnit(unit)) }
+        assertThat(contents(unit)).isEqualTo(before)
+        assertThat(workFolders()).isEmpty()
+    }
+
     /** A swap that completes but doesn't hash as the archive says (a card that loses writes) is undone. */
     @Test fun aRestoreThatDoesntCheckOutIsUndone() {
         val unit = localSave()

@@ -2,6 +2,7 @@ package ro.davidmontei.loom.storage.saves
 
 import java.io.IOException
 import java.nio.channels.FileChannel
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -17,12 +18,13 @@ import kotlin.io.path.name
  *
  * 1. The archive is unpacked into a work folder beside the unit (same card, so moves are renames)
  *    and checked against the archive's hash. Nothing in the unit has been touched yet.
- * 2. A journal listing the new files is written. Every old file is moved aside into the work
- *    folder, then every new file is moved into place, one rename per file.
+ * 2. A journal listing the new files and the old ones is written. Every old file is moved aside
+ *    into the work folder, then every new file is moved into place, one rename per file.
  * 3. The unit is hashed again. Only when it matches the archive is the old copy dropped.
  *
  * Any failure in steps 2 and 3 moves the new files out and the old ones back. If Loom dies
- * midway, [recover] does the same from the journal the next time. The caller backs the unit up
+ * midway, or putting the old files back fails too, [recover] does the same from the journal the
+ * next time. No move ever replaces a file. The caller backs the unit up
  * with [SaveBackups] first; this is the second line of defence, not the only one.
  */
 class SaveRestorer(
@@ -36,7 +38,14 @@ class SaveRestorer(
         fun move(from: Path, to: Path)
 
         companion object {
-            val Rename = FileMover { from, to -> Files.move(from, to, StandardCopyOption.ATOMIC_MOVE) }
+            /**
+             * A rename that refuses a target that exists: rename(2) would silently replace it, so a
+             * mistake would overwrite part of a save instead of failing.
+             */
+            val Rename = FileMover { from, to ->
+                if (Files.exists(to, LinkOption.NOFOLLOW_LINKS)) throw FileAlreadyExistsException(to.toString())
+                Files.move(from, to, StandardCopyOption.ATOMIC_MOVE)
+            }
         }
     }
 
@@ -69,9 +78,14 @@ class SaveRestorer(
             throw e
         }
 
-        writeJournal(work, incoming)
+        val outgoing = try {
+            SaveZipper.entries(unit).also { writeJournal(work, Journal(incoming, it.map { e -> e.name }.toSet())) }
+        } catch (e: Exception) {
+            deleteTree(work)
+            throw e
+        }
         try {
-            for (old in SaveZipper.entries(unit)) moveInto(old.file, work.resolve(OLD).resolve(old.name))
+            for (old in outgoing) moveInto(old.file, work.resolve(OLD).resolve(old.name))
             for (name in incoming) moveInto(work.resolve(NEW).resolve(name), live(unit, name))
             if (SaveHasher.hashUnit(unit) != expected) throw SaveArchiveException("The restored save doesn't match the archive")
             Files.createFile(work.resolve(DONE))
@@ -88,8 +102,9 @@ class SaveRestorer(
     }
 
     /**
-     * Cleans up after a restore Loom didn't finish: a restore that died while swapping files is
-     * undone, so the old save is back; any other leftover work folder is removed. Returns whether
+     * Cleans up after a restore Loom didn't finish: a restore that died or failed while swapping
+     * files is undone, so the old save is back; any other leftover work folder is removed. Old
+     * files a work folder still holds are only dropped once their restore finished. Returns whether
      * there was anything to clean up.
      *
      * @throws IOException when the old files can't be put back; the work folder is then kept, so
@@ -102,18 +117,24 @@ class SaveRestorer(
             Files.list(parent).use { list -> list.iterator().asSequence().filter { it.name.startsWith(WORK_PREFIX) }.toList() }
         }
         for (work in leftovers) {
-            if (Files.exists(work.resolve(JOURNAL)) && !Files.exists(work.resolve(DONE))) rollBack(work, unit) else deleteTree(work)
+            val unfinished = !Files.exists(work.resolve(DONE)) && (Files.exists(work.resolve(JOURNAL)) || holdsFiles(work.resolve(OLD)))
+            if (unfinished) rollBack(work, unit) else deleteTree(work)
         }
         return leftovers.isNotEmpty()
     }
 
-    /** Takes the new files that made it into place back out, and moves every old file back. */
+    /**
+     * Takes the new files that made it into place back out, and moves every old file back. Safe to
+     * run again after it stopped midway: a live file whose new copy left `new/` is the new one only
+     * while its old namesake is still aside in `old/`; once that is gone, it was already put back.
+     */
     private fun rollBack(work: Path, unit: List<SaveRoot>) {
-        for (name in readJournal(work)) {
+        val journal = readJournal(work)
+        for (name in journal.incoming) {
             val live = live(unit, name)
-            if (!Files.exists(work.resolve(NEW).resolve(name), LinkOption.NOFOLLOW_LINKS) && Files.exists(live, LinkOption.NOFOLLOW_LINKS)) {
-                moveInto(live, work.resolve(ROLLED_BACK).resolve(name))
-            }
+            val putIn = !Files.exists(work.resolve(NEW).resolve(name), LinkOption.NOFOLLOW_LINKS) && Files.exists(live, LinkOption.NOFOLLOW_LINKS)
+            val isNew = name !in journal.outgoing || Files.exists(work.resolve(OLD).resolve(name), LinkOption.NOFOLLOW_LINKS)
+            if (putIn && isNew) moveInto(live, work.resolve(ROLLED_BACK).resolve(name))
         }
         val old = work.resolve(OLD)
         if (old.isDirectory(LinkOption.NOFOLLOW_LINKS)) {
@@ -134,18 +155,29 @@ class SaveRestorer(
         return root.folder.resolve(name.substringAfter('/'))
     }
 
-    private fun writeJournal(work: Path, incoming: List<String>) {
+    /** The files a restore puts in place and the ones it moves aside, by their names in the unit. */
+    private class Journal(val incoming: List<String>, val outgoing: Set<String>)
+
+    /** One name per line: the new files, an empty line, then the old files. */
+    private fun writeJournal(work: Path, journal: Journal) {
+        val names = journal.incoming + journal.outgoing
+        names.firstOrNull { '\n' in it }?.let { throw SaveArchiveException("A file name holds a line break: $it") }
         val part = work.resolve("$JOURNAL.part")
-        Files.write(part, incoming.joinToString("\n").toByteArray(Charsets.UTF_8))
+        Files.write(part, (journal.incoming + "" + journal.outgoing).joinToString("\n").toByteArray(Charsets.UTF_8))
         FileChannel.open(part, StandardOpenOption.WRITE).use { it.force(true) }
         Files.move(part, work.resolve(JOURNAL), StandardCopyOption.ATOMIC_MOVE)
     }
 
-    private fun readJournal(work: Path): List<String> {
+    private fun readJournal(work: Path): Journal {
         val journal = work.resolve(JOURNAL)
-        if (!Files.exists(journal)) return emptyList()
-        return String(Files.readAllBytes(journal), Charsets.UTF_8).split('\n').filter { it.isNotEmpty() }
+        if (!Files.exists(journal)) return Journal(emptyList(), emptySet())
+        val lines = String(Files.readAllBytes(journal), Charsets.UTF_8).split('\n')
+        val gap = lines.indexOf("").let { if (it < 0) lines.size else it }
+        return Journal(lines.subList(0, gap), lines.drop(gap + 1).filter { it.isNotEmpty() }.toSet())
     }
+
+    private fun holdsFiles(folder: Path): Boolean = folder.isDirectory(LinkOption.NOFOLLOW_LINKS) &&
+        checkedIo { Files.walk(folder).use { walk -> walk.anyMatch { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) } } }
 
     private fun parentOf(unit: List<SaveRoot>): Path {
         require(unit.isNotEmpty()) { "A save unit has at least one folder" }
