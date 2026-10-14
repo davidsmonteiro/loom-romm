@@ -58,6 +58,35 @@ class SaveBackupsTest {
         assertThat(Files.exists(other)).isTrue() // only Loom's own files are pruned
     }
 
+    /**
+     * The Thor's clock went back (a reset clock, automatic time turned off) behind the stamps of
+     * ten earlier backups: each new backup is still kept as the newest, and so is the one before.
+     */
+    @Test fun aClockThatWentBackNeverPrunesTheNewBackups() {
+        clock = Instant.parse("2027-10-10T00:00:00Z")
+        repeat(10) {
+            clock = clock.plus(Duration.ofDays(1))
+            backups().backUp("42", "Game", unit(), AZAHAR_UNIT_HASH)
+        }
+        clock = Instant.parse("2026-10-14T12:00:00Z")
+
+        val first = backups().backUp("42", "Game", unit(), AZAHAR_UNIT_HASH).file
+        val second = backups().backUp("42", "Game", unit(), AZAHAR_UNIT_HASH).file
+
+        assertThat(Files.exists(first)).isTrue()
+        assertThat(Files.exists(second)).isTrue()
+        assertThat(backups().list("42").take(2)).containsExactly(second, first).inOrder()
+        assertThat(backups().list("42")).hasSize(10)
+    }
+
+    /** A file named like a backup but with no real time, sorting after every backup, never pushes out the one just made. */
+    @Test fun theBackupJustMadeIsNeverPruned() {
+        path(".loom/save-backups/42/99999999-999999-999 Game.zip").also { Files.createDirectories(it.parent); Files.write(it, byteArrayOf(1)) }
+        val made = backups(keep = 1).backUp("42", "Game", unit(), AZAHAR_UNIT_HASH).file
+        assertThat(Files.exists(made)).isTrue()
+        assertThat(backups().list("42")).containsExactly(made)
+    }
+
     @Test fun twoBackupsInTheSameMillisecondBothSurvive() {
         val first = backups().backUp("42", "Game", unit(), AZAHAR_UNIT_HASH).file
         val second = backups().backUp("42", "Game", unit(), AZAHAR_UNIT_HASH).file

@@ -57,6 +57,22 @@ class SaveConflictsTest : SaveSyncTestBase() {
         assertThat(romm.uploads()).isEmpty()
     }
 
+    /**
+     * The Thor's clock went back behind the names of ten earlier backups: the backup Keep server
+     * makes of the Thor's save, never uploaded anywhere, must still be kept.
+     */
+    @Test fun keepServerKeepsTheThorsSaveBackedUpWhenTheClockWentBack() = runBlocking<Unit> {
+        val (local, _) = firstSyncConflict()
+        val folder = File(volume, ".loom/save-backups/7").apply { mkdirs() }
+        (10..19).forEach { File(folder, "202710$it-120000-000 Pokemon X.zip").writeBytes(archiveOf(bytes(it))) }
+
+        assertThat(engine().resolveConflict(7, ConflictChoice.KEEP_SERVER)).isEqualTo(ResolveResult.Done)
+
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(2))
+        assertThat(backups(pokemonX).map { SaveHasher.hashFile(it.toPath()) }).contains(local)
+        assertThat(backups(pokemonX)).hasSize(10)
+    }
+
     @Test fun keepBothParksTheThorsSaveOutsideTheSlotThenTakesTheServers() = runBlocking<Unit> {
         val (local, _) = firstSyncConflict()
         // An archival save of that name already exists: RomM would overwrite it.

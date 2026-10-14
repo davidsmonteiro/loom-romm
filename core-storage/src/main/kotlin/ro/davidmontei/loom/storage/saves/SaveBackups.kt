@@ -17,7 +17,8 @@ class SaveChangedException(message: String) : IOException(message)
 /**
  * Copies of local saves, taken before Loom overwrites one. Each game has a folder of zips named
  * by the time they were taken (UTC), e.g. `20261013-221507-123 Pokemon X.zip`, newest [keep]
- * kept. [dir] is a dot folder at the root of the card holding the saves, outside the ROMs root,
+ * kept. Names sort in the order the backups were taken even when the clock went back: a backup
+ * is then stamped just after the newest one. [dir] is a dot folder at the root of the card holding the saves, outside the ROMs root,
  * so Cocoon never sees it and it outlives a reinstall of Loom. Each zip is the save unit's archive,
  * the same shape Loom uploads, so it can be restored by hand or uploaded to RomM.
  */
@@ -36,7 +37,8 @@ class SaveBackups(
 
     /**
      * Archives [unit] under [key] (one folder per game) and returns the copy once it reads back
-     * as [expectedHash], the hash Loom decided on. Then prunes that game's oldest backups.
+     * as [expectedHash], the hash Loom decided on. Then prunes that game's oldest backups, never
+     * the one just made.
      *
      * @throws SaveChangedException when the unit no longer hashes to [expectedHash].
      * @throws IOException when the copy can't be written or doesn't read back intact. The unit
@@ -44,7 +46,7 @@ class SaveBackups(
      */
     fun backUp(key: String, label: String, unit: List<SaveRoot>, expectedHash: String): Backup {
         val folder = Files.createDirectories(dir.resolve(key))
-        val name = freeName(folder, "${STAMP.format(now())} ${NameSanitizer.sanitize(label, fallback = "save")}")
+        val name = freeName(folder, "${STAMP.format(stampFor(key))} ${NameSanitizer.sanitize(label, fallback = "save")}")
         val part = folder.resolve(".$name.part")
         try {
             val written = archive(unit, part)
@@ -53,7 +55,7 @@ class SaveBackups(
             if (SaveHasher.hashFile(part) != written) throw IOException("The backup didn't read back intact")
             val file = folder.resolve(name)
             Files.move(part, file, StandardCopyOption.ATOMIC_MOVE)
-            prune(folder)
+            prune(key, file)
             return Backup(file, written)
         } finally {
             Files.deleteIfExists(part)
@@ -68,9 +70,23 @@ class SaveBackups(
             .sortedByDescending { it.fileName.toString() }
     }
 
-    private fun prune(folder: Path) {
-        list(folder.fileName.toString()).drop(keep).forEach { Files.deleteIfExists(it) }
+    private fun prune(key: String, made: Path) {
+        list(key).filter { it != made }.drop(keep - 1).forEach { Files.deleteIfExists(it) }
     }
+
+    /**
+     * The time a new backup of [key] is named by: now, or just after the newest backup when the
+     * clock is behind it, so a new backup never sorts as an old one and gets pruned first.
+     */
+    private fun stampFor(key: String): Instant {
+        val at = now()
+        val newest = list(key).firstNotNullOfOrNull(::takenAt) ?: return at
+        return if (at.isAfter(newest)) at else newest.plusMillis(1)
+    }
+
+    /** The time in a backup's name; null when it holds no real time. */
+    private fun takenAt(file: Path): Instant? =
+        runCatching { STAMP.parse(file.fileName.toString().take(STAMP_LENGTH), Instant::from) }.getOrNull()
 
     private fun freeName(folder: Path, stem: String): String {
         var name = "$stem.zip"
@@ -91,6 +107,7 @@ class SaveBackups(
         const val BACKUP_DIR = ".loom/save-backups"
 
         private val STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS").withZone(ZoneOffset.UTC)
+        private const val STAMP_LENGTH = 19
         private val BACKUP_NAME = Regex("""\d{8}-\d{6}-\d{3} .*\.zip""")
     }
 }
