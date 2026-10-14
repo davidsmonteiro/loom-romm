@@ -725,8 +725,8 @@ private fun GameDialog(
 
 /**
  * What the details offer for an installed game's save: nothing where Loom doesn't sync the
- * platform's saves, the queue for a conflict, else an upload, and a restore when RomM's copy is
- * newer or the Thor's is gone.
+ * platform's saves, the queue for a conflict, else an upload when it could send something, and a
+ * restore when RomM's copy is newer or the Thor's is gone.
  */
 private fun saveButtons(
     game: GameItem,
@@ -738,10 +738,23 @@ private fun saveButtons(
     !save.supported -> emptyList()
     save.state == SaveSyncState.CONFLICT -> listOf(DialogAction("Choose which to keep") { choose() })
     else -> listOfNotNull(
-        DialogAction("Upload save") { upload(game) },
+        DialogAction("Upload save") { upload(game) }.takeIf { uploadCouldSend(save) },
         DialogAction("Restore server save") { restore(game) }
             .takeIf { save.state == SaveSyncState.SERVER_NEWER || save.state == SaveSyncState.LOCAL_MISSING },
     )
+}
+
+/**
+ * Whether Upload save could send the Thor's save (Loom uploads only a save that changed while RomM's
+ * didn't): it is newer, or Loom doesn't know, not having looked yet or having failed to. In sync,
+ * none yet, newer on RomM, missing on the Thor or not synced, an upload sends nothing. With automatic
+ * upload off, though, Loom only knows how a save stood when last asked, so Upload save, which looks
+ * again, stays; but not where RomM's save is newer, as a change on the Thor since makes a conflict.
+ */
+private fun uploadCouldSend(save: GameSave): Boolean = when (save.state) {
+    null, SaveSyncState.LOCAL_NEWER, SaveSyncState.WRITING, SaveSyncState.ERROR -> true
+    SaveSyncState.SERVER_NEWER, SaveSyncState.CONFLICT -> false
+    SaveSyncState.IN_SYNC, SaveSyncState.NO_SAVE, SaveSyncState.LOCAL_MISSING, SaveSyncState.UNSUPPORTED -> !save.autoUpload
 }
 
 private fun saveColor(save: GameSave) = when (save.state) {

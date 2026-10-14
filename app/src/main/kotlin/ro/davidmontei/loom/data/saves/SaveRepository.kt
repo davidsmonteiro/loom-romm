@@ -81,7 +81,8 @@ class SaveRepository(private val engine: SaveSyncEngine, private val saves: Save
     /**
      * After an answer refused because a side moved on, Loom looks at the game again, moving no
      * save either way, so the queue and the game's details show where it stands now; the message
-     * says what to do from there. When RomM can't be asked, Upload save in the details looks again.
+     * says what to do from there. When RomM can't be asked, it says to ask again, which looks again
+     * first (the details offer Upload save only where it could send something, never for a conflict).
      */
     private suspend fun lookAgain(romId: Int, result: ResolveResult.Failed): String {
         if (!result.stale) return ""
@@ -90,7 +91,7 @@ class SaveRepository(private val engine: SaveSyncEngine, private val saves: Save
         } catch (e: RommException) {
             null
         }
-        if (report == null || report.unavailable != null || romId in report.failed) return ". Upload save in its details looks again"
+        if (report == null || report.unavailable != null || romId in report.failed) return ". Loom couldn't look at it again; try again in a moment"
         return ". Loom looked again: " + when (engine.observeGame(romId).first()?.state) {
             SaveSyncState.CONFLICT -> "choose which to keep in the queue"
             SaveSyncState.SERVER_NEWER, SaveSyncState.LOCAL_MISSING -> "RomM's save can be restored from the queue"
