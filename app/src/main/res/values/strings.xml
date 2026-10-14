@@ -18,6 +18,19 @@
     <string name="action_pause_all">Pause all</string>
     <string name="action_cancel">Cancel</string>
 
+    <!-- Save sync -->
+    <string name="channel_saves">Save sync</string>
+    <plurals name="saves_conflicts_title">
+        <item quantity="one">A game\'s save needs you</item>
+        <item quantity="other">%1$d games\' saves need you</item>
+    </plurals>
+    <string name="saves_conflicts_text">The Thor and RomM have different saves. Open Loom to choose which to keep.</string>
+    <plurals name="saves_server_newer_title">
+        <item quantity="one">RomM has a newer save for a game</item>
+        <item quantity="other">RomM has newer saves for %1$d games</item>
+    </plurals>
+    <string name="saves_server_newer_text">Close the emulator, then sync those games in Loom to get them.</string>
+
     <!-- Launcher shortcuts -->
     <string name="shortcut_sync_short">Sync library</string>
     <string name="shortcut_sync_long">Sync the RomM library</string>

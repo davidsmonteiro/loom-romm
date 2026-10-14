@@ -36,6 +36,8 @@ data class Settings(
      * rows written by an older Loom lack the newer ones until a full sync.
      */
     val catalogFields: Int = 1,
+    /** Upload changed saves in the background (a periodic scan, and when Loom opens or the card mounts). */
+    val autoUploadSaves: Boolean = true,
     /**
      * Azahar's user directory when the user set one; null means the n3ds system folder, when it
      * holds Azahar's `sdmc/Nintendo 3DS` (as on the Thor).
@@ -64,6 +66,7 @@ class SettingsStore(
             catalogWatermark = p[WATERMARK],
             lastCatalogSyncEpochMs = p[LAST_SYNC]?.toLongOrNull(),
             catalogFields = p[CATALOG_FIELDS] ?: 1,
+            autoUploadSaves = p[AUTO_UPLOAD_SAVES] ?: true,
             azaharUserDir = p[AZAHAR_USER_DIR],
         )
     }
@@ -82,6 +85,8 @@ class SettingsStore(
         dataStore.edit { if (it[DEVICE_IDENTIFIER] == null) it[DEVICE_IDENTIFIER] = id }
         return dataStore.data.first()[DEVICE_IDENTIFIER]!!
     }
+
+    suspend fun setAutoUploadSaves(on: Boolean) = dataStore.edit { it[AUTO_UPLOAD_SAVES] = on }
 
     /** [path] null goes back to finding Azahar's folder in the n3ds system folder. */
     suspend fun setAzaharUserDir(path: String?) = dataStore.edit {
@@ -131,6 +136,7 @@ class SettingsStore(
         val LAST_SYNC = stringPreferencesKey("catalog_last_sync_ms")
         val DEVICE_IDENTIFIER = stringPreferencesKey("device_identifier")
         val CATALOG_FIELDS = intPreferencesKey("catalog_fields")
+        val AUTO_UPLOAD_SAVES = booleanPreferencesKey("auto_upload_saves")
         val AZAHAR_USER_DIR = stringPreferencesKey("azahar_user_dir")
     }
 }

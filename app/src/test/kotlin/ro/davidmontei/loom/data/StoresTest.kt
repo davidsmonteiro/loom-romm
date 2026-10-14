@@ -129,4 +129,11 @@ class StoresTest {
         store.setAzaharUserDir(null)
         assertThat(store.snapshot().azaharUserDir).isNull()
     }
+
+    @Test fun automaticSaveUploadIsOnUntilTurnedOff() = runBlocking<Unit> {
+        val store = SettingsStore(prefs("settings"))
+        assertThat(store.snapshot().autoUploadSaves).isTrue()
+        store.setAutoUploadSaves(false)
+        assertThat(store.snapshot().autoUploadSaves).isFalse()
+    }
 }

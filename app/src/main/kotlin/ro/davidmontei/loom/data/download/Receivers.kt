@@ -6,6 +6,7 @@ import android.content.Intent
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import ro.davidmontei.loom.data.saves.SaveSyncTriggers
 import ro.davidmontei.loom.di.AppScope
 import ro.davidmontei.loom.storage.engine.WaitReason
 import javax.inject.Inject
@@ -37,14 +38,16 @@ class DownloadActionReceiver : BroadcastReceiver() {
     }
 }
 
-/** The SD card came back: downloads waiting for storage rejoin the queue. */
+/** The SD card came back: downloads waiting for storage rejoin the queue, and its saves are checked. */
 @AndroidEntryPoint
 class MediaMountReceiver : BroadcastReceiver() {
     @Inject lateinit var repository: DownloadRepository
+    @Inject lateinit var saveSync: SaveSyncTriggers
     @Inject @AppScope lateinit var scope: CoroutineScope
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_MEDIA_MOUNTED) return
+        saveSync.cardMounted()
         val pending = goAsync()
         scope.launch {
             try { repository.resumeWaiting(WaitReason.STORAGE) } finally { pending.finish() }

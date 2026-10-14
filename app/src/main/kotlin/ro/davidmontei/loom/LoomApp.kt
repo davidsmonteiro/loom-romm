@@ -14,6 +14,7 @@ import ro.davidmontei.loom.data.catalog.CoverKeyer
 import ro.davidmontei.loom.data.catalog.CoverStore
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.install.InstallManager
+import ro.davidmontei.loom.data.saves.SaveSyncTriggers
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -29,6 +30,7 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     @Inject @AppScope lateinit var scope: CoroutineScope
     @Inject lateinit var installs: InstallManager
     @Inject lateinit var covers: CoverStore
+    @Inject lateinit var saveSync: SaveSyncTriggers
 
     /** Cover art comes only from the [CoverStore], which keeps its own files on disk. */
     override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
@@ -53,12 +55,14 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
             override fun onStart(owner: LifecycleOwner) {
                 scope.launch {
                     downloads.resumeWaiting(WaitReason.APP_OPEN)
-                    // Files may have been added or deleted in a file manager while Loom was away.
-                    // Listing every system folder isn't free, so at most once a minute.
+                    // Files may have been added or deleted in a file manager, and saves changed by
+                    // the emulators, while Loom was away. Listing every system folder isn't free,
+                    // so at most once a minute.
                     val now = System.currentTimeMillis()
                     if (now - lastReconcile > 60_000) {
                         lastReconcile = now
                         runCatching { installs.emptyTrash(); installs.reconcile() }
+                        runCatching { saveSync.appOpened() }
                     }
                 }
             }
