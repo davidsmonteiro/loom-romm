@@ -105,7 +105,7 @@ class SettingsScreenTest {
         override fun fontLicense() = "SIL OPEN FONT LICENSE"
     }
 
-    private fun show() {
+    private fun show(actions: SettingsActions = this.actions) {
         rule.setContent { LoomTestTheme { SettingsContent(state, actions) } }
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
     }
@@ -465,9 +465,18 @@ class SettingsScreenTest {
         assertThat(calls.filter { it.startsWith("azahar") }).isEmpty()
     }
 
+    /**
+     * The button goes once the 3DS folder is back in use. Found by review: focus went with it to the
+     * section list, so the next B left Settings; it moves to Change folder instead.
+     */
     @Test fun aChosenFolderCanGoBackToThe3dsFolder() {
         state = sample.copy(settings = sample.settings!!.copy(azaharUserDir = "/storage/6365-3230/Azahar"))
-        show()
+        show(object : SettingsActions by actions {
+            override fun setAzaharFolder(dir: File?) {
+                actions.setAzaharFolder(dir)
+                state = state.copy(settings = state.settings!!.copy(azaharUserDir = dir?.path))
+            }
+        })
         toTheSaveSwitch()
         rule.onNodeWithText("/storage/6365-3230/Azahar").assertExists()
         rule.onNodeWithText("Chosen here. Azahar keeps sdmc and nand in it.").assertExists()
@@ -475,6 +484,10 @@ class SettingsScreenTest {
         rule.onNodeWithText("Use the 3DS folder").assertIsFocused()
         press(Key.DirectionCenter)
         assertThat(calls).contains("azahar:null")
+        rule.onNodeWithText("Use the 3DS folder").assertDoesNotExist()
+        rule.onNodeWithText("Change folder").assertIsFocused()
+        back()
+        rule.onNodeWithTag("section-SAVES").assertIsFocused()
     }
 
     @Test fun withoutAzaharsFolderItSaysWhatToDo() {

@@ -548,6 +548,13 @@ private fun SaveSyncSection(state: SettingsUiState, actions: SettingsActions, mo
     }
     val chosen = settings?.azaharUserDir
     val current = (chosen ?: state.storage.azaharFound)?.let { java.io.File(it) }
+    // "Use the 3DS folder" goes once that folder is in use again, taking focus with it: Change folder takes over.
+    // (Read while composing: by the time the effect runs, the button has gone and reported losing focus.)
+    var useFocused by remember { mutableStateOf(false) }
+    val useHadFocus = useFocused
+    LaunchedEffect(chosen == null) {
+        if (chosen == null && useHadFocus) { delay(50); runCatching { changeFolder.requestFocus() } }
+    }
     SectionTop {
         SectionHeader("Azahar's folder")
         Text(current?.path ?: "Not found", style = MaterialTheme.typography.titleSmall)
@@ -562,7 +569,10 @@ private fun SaveSyncSection(state: SettingsUiState, actions: SettingsActions, mo
         Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
             LoomButton(if (picking) "Close folder browser" else "Change folder", onClick = { picking = !picking },
                 modifier = Modifier.focusRequester(changeFolder).onFocusChanged { toggleFocused = it.isFocused })
-            if (chosen != null) LoomButton("Use the 3DS folder", onClick = { actions.setAzaharFolder(null) })
+            if (chosen != null) {
+                LoomButton("Use the 3DS folder", onClick = { actions.setAzaharFolder(null) },
+                    modifier = Modifier.onFocusChanged { useFocused = it.isFocused })
+            }
         }
     }
     if (picking) {
