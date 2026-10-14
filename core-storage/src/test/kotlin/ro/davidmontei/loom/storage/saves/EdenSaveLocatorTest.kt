@@ -82,6 +82,24 @@ class EdenSaveLocatorTest {
         assertThat(mine.unit.folder).isEqualTo(users(eden).resolve("$profile/010015100B514000"))
     }
 
+    /** Profiles as the owner can tell them apart: how many saves each holds and when one last changed, the latest first. */
+    @Test fun profilesAreSummarisedLatestFirst() {
+        val eden = thorEden()
+        val other = "0123456789ABCDEF0123456789ABCDEF"
+        folderOf(users(eden).resolve("$other/$arceus"), "main" to ByteArray(10))
+        folderOf(users(eden).resolve("$other/0100AAAA0000B000"), "main" to ByteArray(10))
+        Files.createDirectories(users(eden).resolve("${"0".repeat(32)}/0100AAAA0000C000"))
+        fun touch(dir: Path, at: String) = Files.walk(dir).use { w ->
+            w.filter(Files::isRegularFile).forEach { Files.setLastModifiedTime(it, FileTime.from(Instant.parse(at))) }
+        }
+        touch(users(eden).resolve(profile), "2026-10-14T12:00:00Z")
+        touch(users(eden).resolve(other), "2026-09-01T12:00:00Z")
+        assertThat(EdenSaveLocator(eden).profileSummaries()).containsExactly(
+            EdenProfile(profile, 1, Instant.parse("2026-10-14T12:00:00Z")),
+            EdenProfile(other, 2, Instant.parse("2026-09-01T12:00:00Z")),
+        ).inOrder()
+    }
+
     /** Eden keeps saves made per console under an all-zeros user: that's no profile to choose. */
     @Test fun deviceSavesAreNotAProfile() {
         val eden = thorEden()

@@ -78,6 +78,7 @@ import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.ROM_FILE_CATEGORIES
 import ro.davidmontei.loom.storage.mapping.SystemFolder
+import ro.davidmontei.loom.storage.saves.EdenProfile
 import ro.davidmontei.loom.ui.components.ButtonHint
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.components.FolderNote
@@ -94,6 +95,7 @@ import ro.davidmontei.loom.ui.components.SectionHeader
 import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.StatusBadge
 import ro.davidmontei.loom.ui.components.ago
+import ro.davidmontei.loom.ui.components.dateTime
 import ro.davidmontei.loom.ui.components.gameCount
 import ro.davidmontei.loom.ui.components.padScroll
 import ro.davidmontei.loom.ui.theme.LoomColors
@@ -750,45 +752,46 @@ private fun SaveSyncSection(
         SaveFolderRow(
             heading = "Azahar's folder", folder = azahar,
             status = when {
-                azaharChosen != null -> "chosen here"
-                azahar != null -> "found in the 3DS folder"
-                else -> "not found"
+                azaharChosen != null -> "Chosen here."
+                azahar != null -> "Found in the 3DS folder."
+                else -> "Run a game in Azahar once, or choose the folder holding its sdmc and nand."
             },
-            missing = "Run a game in Azahar once, or choose the folder holding its sdmc and nand.",
-            picking = picking == SaveFolderFor.AZAHAR, useDefault = "Use the 3DS folder".takeIf { azaharChosen != null },
+            picking = picking == SaveFolderFor.AZAHAR, useDefault = "Use 3DS folder".takeIf { azaharChosen != null },
             toggleFocus = changeFolder.getValue(SaveFolderFor.AZAHAR),
             onToggle = { toggle(SaveFolderFor.AZAHAR) }, onUseDefault = { actions.setAzaharFolder(null) },
             onToggleFocused = { toggleFocused = it },
             onUseFocused = { useFocused = if (it) SaveFolderFor.AZAHAR else useFocused.takeIf { f -> f != SaveFolderFor.AZAHAR } },
             tag = "azahar",
         )
-        SaveFolderRow(
-            heading = "Eden's folder", folder = eden,
-            status = when {
-                edenChosen != null && eden != null && !java.io.File(eden, "user/save").isDirectory -> "chosen, but there's no user/save in it"
-                edenChosen != null -> "chosen here"
-                eden != null -> "found in ROMs/saves/Eden"
-                else -> "not found"
-            },
-            missing = "Move Eden's save folder to ROMs/saves/Eden, or choose the folder holding its user/save.",
-            picking = picking == SaveFolderFor.EDEN, useDefault = "Use saves/Eden".takeIf { edenChosen != null },
-            toggleFocus = changeFolder.getValue(SaveFolderFor.EDEN),
-            onToggle = { toggle(SaveFolderFor.EDEN) }, onUseDefault = { actions.setEdenFolder(null) },
-            onToggleFocused = { toggleFocused = it },
-            onUseFocused = { useFocused = if (it) SaveFolderFor.EDEN else useFocused.takeIf { f -> f != SaveFolderFor.EDEN } },
-            tag = "eden",
-        )
-        if (state.storage.edenProfiles.size > 1) {
-            EdenProfiles(state.storage.edenProfiles, settings?.edenProfile, actions)
-        } else {
-            Text(
-                when {
-                    state.storage.prodKeys != null -> "Switch title IDs are read with the header_key in your prod.keys, which never leaves the Thor."
-                    state.storage.prodKeysWithoutKey -> "Your prod.keys has no header_key: each Switch game asks which save folder is its."
-                    else -> "No prod.keys in the ROMs folder: each Switch game asks which save folder is its."
+        // Eden's row and its profile (or prod.keys) line belong together: no gap between them.
+        Column {
+            SaveFolderRow(
+                heading = "Eden's folder", folder = eden,
+                status = when {
+                    edenChosen != null && eden != null && !java.io.File(eden, "user/save").isDirectory -> "Chosen, but it has no user/save."
+                    edenChosen != null -> "Chosen here."
+                    eden != null -> "Found in ROMs/saves/Eden."
+                    else -> "Move Eden's save folder to ROMs/saves/Eden, or choose the folder holding its user/save."
                 },
-                style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, modifier = Modifier.testTag("prod-keys"),
+                picking = picking == SaveFolderFor.EDEN, useDefault = "Use saves/Eden".takeIf { edenChosen != null },
+                toggleFocus = changeFolder.getValue(SaveFolderFor.EDEN),
+                onToggle = { toggle(SaveFolderFor.EDEN) }, onUseDefault = { actions.setEdenFolder(null) },
+                onToggleFocused = { toggleFocused = it },
+                onUseFocused = { useFocused = if (it) SaveFolderFor.EDEN else useFocused.takeIf { f -> f != SaveFolderFor.EDEN } },
+                tag = "eden",
             )
+            if (state.storage.edenProfiles.size > 1) {
+                EdenProfiles(state.storage.edenProfiles, settings?.edenProfile, actions)
+            } else {
+                Text(
+                    when {
+                        state.storage.prodKeys != null -> "Switch title IDs are read with the header_key in your prod.keys, which never leaves the Thor."
+                        state.storage.prodKeysWithoutKey -> "Your prod.keys has no header_key: each Switch game asks which save folder is its."
+                        else -> "No prod.keys in the ROMs folder: each Switch game asks which save folder is its."
+                    },
+                    style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, modifier = Modifier.testTag("prod-keys"),
+                )
+            }
         }
     }
     picking?.let { which ->
@@ -810,16 +813,15 @@ private enum class SaveFolderFor(val highlighted: Set<String>, val note: (List<j
 }
 
 /**
- * One emulator's save folder in a row: its name and how Loom found it, where it is (shortened in
- * the middle when long) or what to do when there's none, and the buttons to change it or go back
- * to where Loom looks by itself. One button high, so both emulators fit under the switch.
+ * One emulator's save folder in a row: its name, where it is (shortened in the middle when long),
+ * how Loom found it or what to do when there's none, and the buttons to change it or go back to
+ * where Loom looks by itself. About one button high, so both emulators fit under the switch.
  */
 @Composable
 private fun SaveFolderRow(
     heading: String,
     folder: java.io.File?,
     status: String,
-    missing: String,
     picking: Boolean,
     useDefault: String?,
     toggleFocus: FocusRequester,
@@ -831,16 +833,14 @@ private fun SaveFolderRow(
 ) {
     Row(Modifier.fillMaxWidth().testTag("$tag-folder"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
         Column(Modifier.weight(1f)) {
-            Text("${heading.uppercase()} · $status", style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("$tag-folder-status"))
-            if (folder != null) {
-                Text(folder.path, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.MiddleEllipsis,
-                    modifier = Modifier.testTag("$tag-folder-path"))
-            } else {
-                Text(missing, style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = 2)
-            }
+            Text(heading.uppercase(), style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted)
+            Text(folder?.path ?: "Not found", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.MiddleEllipsis,
+                modifier = Modifier.testTag("$tag-folder-path"))
+            Text(status, style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = 2,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("$tag-folder-status"))
         }
-        LoomButton(if (picking) "Close folder browser" else "Change folder", onClick = onToggle,
+        // Short labels: the heading says which folder, and the path keeps the room.
+        LoomButton(if (picking) "Close browser" else "Change", onClick = onToggle,
             modifier = Modifier.focusRequester(toggleFocus).onFocusChanged { onToggleFocused(it.isFocused) }.testTag("$tag-change-folder"))
         useDefault?.let {
             LoomButton(it, onClick = onUseDefault, modifier = Modifier.onFocusChanged { f -> onUseFocused(f.isFocused) }.testTag("$tag-use-default"))
@@ -849,24 +849,55 @@ private fun SaveFolderRow(
 }
 
 /**
- * Whose saves Loom syncs, when Eden has several profiles: one chip each, the chosen one marked.
- * Until one is chosen, Switch saves wait.
+ * Whose saves Loom syncs, when Eden has several profiles. One chip, under Eden's buttons, opens
+ * the list of them (as many as there are, each with its saves' count and newest change), since
+ * a 32-digit ID alone tells the owner nothing. Until one is chosen, Switch saves wait.
  */
 @Composable
-private fun EdenProfiles(profiles: List<String>, chosen: String?, actions: SettingsActions) {
-    val picked = profiles.firstOrNull { it.equals(chosen, ignoreCase = true) }
-    // The chips line up under Eden's buttons, so Down from them lands on one.
+private fun EdenProfiles(profiles: List<EdenProfile>, chosen: String?, actions: SettingsActions) {
+    val picked = profiles.firstOrNull { it.id.equals(chosen, ignoreCase = true) }
+    var choosing by remember { mutableStateOf(false) }
+    val chip = remember { FocusRequester() }
+    ReturnFocusOnClose(choosing) { chip }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
         Text(
-            if (picked == null) "Eden has several profiles. Whose saves?" else "Eden profile synced:",
+            if (picked == null) "Eden has ${profiles.size} profiles. Whose saves does Loom sync?" else "Loom syncs this Eden profile's saves:",
             style = MaterialTheme.typography.bodySmall, color = if (picked == null) LoomColors.Error else LoomColors.TextMuted,
             modifier = Modifier.weight(1f),
         )
-        profiles.forEach { profile ->
-            LoomChip(shortProfile(profile), profile == picked, { actions.setEdenProfile(profile) }, Modifier.testTag("profile-$profile"))
-        }
+        LoomChip(picked?.let { "${shortProfile(it.id)} · ${saveCount(it.saveCount)}" } ?: "Choose profile", picked != null, { choosing = true },
+            Modifier.focusRequester(chip).testTag("eden-profile"))
+    }
+    if (choosing) {
+        LoomDialog(
+            title = "Whose Switch saves does Loom sync?",
+            onDismiss = { choosing = false },
+            body = {
+                Text("Eden keeps each user's saves in a profile folder named by a long ID. Yours is likely the one whose saves changed last.",
+                    style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
+                val focus = remember { FocusRequester() }
+                LaunchedEffect(Unit) { delay(50); runCatching { focus.requestFocus() } } // after the dialog's own first focus
+                val focused = picked ?: profiles.first()
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 196.dp).testTag("eden-profiles"), contentPadding = PaddingValues(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                    items(profiles, key = { it.id }) { profile ->
+                        LoomRow(
+                            title = profile.id,
+                            subtitle = listOfNotNull(saveCount(profile.saveCount), profile.newestModified?.let { "changed ${dateTime(it.toEpochMilli())}" })
+                                .joinToString(" · "),
+                            subtitleLines = 1, dense = true, selected = profile == picked,
+                            onClick = { actions.setEdenProfile(profile.id); choosing = false },
+                            modifier = (if (profile == focused) Modifier.focusRequester(focus) else Modifier).testTag("profile-${profile.id}"),
+                        )
+                    }
+                }
+            },
+            buttons = { first -> LoomButton("Cancel", { choosing = false }, Modifier.focusRequester(first)) },
+        )
     }
 }
+
+private fun saveCount(n: Int) = if (n == 1) "1 save" else "$n saves"
 
 /** The folders Azahar keeps in its user directory, highlighted in its folder browser. */
 private val AZAHAR_FOLDERS = setOf("sdmc", "nand")

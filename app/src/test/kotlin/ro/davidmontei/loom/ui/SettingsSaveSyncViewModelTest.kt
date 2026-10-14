@@ -135,7 +135,7 @@ class SettingsSaveSyncViewModelTest {
         val vm = viewModel()
         val storage = withTimeout(5_000) { vm.state.first { it.storage.edenFound != null } }.storage
         assertThat(storage.edenFound).isEqualTo(File(roms, "saves/Eden").path)
-        assertThat(storage.edenProfiles).containsExactly("4E431822D6DEFD527268BA35B5C09533")
+        assertThat(storage.edenProfiles.map { it.id }).containsExactly("4E431822D6DEFD527268BA35B5C09533")
         assertThat(storage.prodKeys).isEqualTo(File(roms, "prod.keys").path)
         assertThat(storage.prodKeysWithoutKey).isFalse()
         assertThat(storage.toString()).doesNotContain("abab") // where the keys are, never what they are
@@ -168,7 +168,7 @@ class SettingsSaveSyncViewModelTest {
         vm.setEdenFolder(chosen).join()
         assertThat(settings.snapshot().edenSaveDir).isEqualTo(chosen.path)
         assertThat(withTimeout(5_000) { message.await() }).isEqualTo("Saved. Loom finds Switch saves in ${chosen.path}")
-        assertThat(withTimeout(5_000) { vm.state.first { it.storage.edenProfiles.size == 2 } }.storage.edenProfiles)
+        assertThat(withTimeout(5_000) { vm.state.first { it.storage.edenProfiles.size == 2 } }.storage.edenProfiles.map { it.id })
             .containsExactly("0123456789ABCDEF0123456789ABCDEF", "4E431822D6DEFD527268BA35B5C09533").inOrder()
         val chose = async { vm.messages.first() }
         vm.setEdenProfile("4E431822D6DEFD527268BA35B5C09533").join()

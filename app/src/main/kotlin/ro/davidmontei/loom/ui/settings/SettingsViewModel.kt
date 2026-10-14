@@ -46,6 +46,7 @@ import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.ResolvedPlatform
 import ro.davidmontei.loom.storage.mapping.SystemFolder
+import ro.davidmontei.loom.storage.saves.EdenProfile
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import java.io.File
 import javax.inject.Inject
@@ -71,8 +72,8 @@ data class StorageInfo(
     val azaharFound: String? = null,
     /** Eden's save folder when Settings doesn't name one: the ROMs folder's saves/Eden, when it holds user/save. */
     val edenFound: String? = null,
-    /** The profiles in the Eden save folder in use: Settings asks whose saves to sync when there are several. */
-    val edenProfiles: List<String> = emptyList(),
+    /** The profiles in the Eden save folder in use, latest first: Settings asks whose saves to sync when there are several. */
+    val edenProfiles: List<EdenProfile> = emptyList(),
     /** The owner's prod.keys Loom would read Switch title IDs with: one holding a header_key. Only its place, never its keys. */
     val prodKeys: String? = null,
     /** There is a prod.keys where Loom looks, but none holds a header_key it can use. */
@@ -149,7 +150,7 @@ class SettingsViewModel @Inject constructor(
             val usable = EdenSaves.usableKeyFile(keyFiles)
             StorageInfo(root, volume?.label, volume?.let { volumes.freeBytes(it.root) }, volume?.let { volumes.totalBytes(it.root) },
                 findAzaharFolder(root, n3dsFolders)?.path, edenFound?.path,
-                edenDir?.let { runCatching { EdenSaveLocator(it.toPath()).profiles() }.getOrNull() }.orEmpty(),
+                edenDir?.let { runCatching { EdenSaveLocator(it.toPath()).profileSummaries() }.getOrNull() }.orEmpty(),
                 usable?.path, usable == null && keyFiles.isNotEmpty(),
             )
         }

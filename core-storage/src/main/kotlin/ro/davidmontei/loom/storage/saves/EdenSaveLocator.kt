@@ -32,6 +32,9 @@ sealed interface EdenSaveLocation {
     data class Moved(val synced: Path, val now: Path) : EdenSaveLocation
 }
 
+/** One Eden profile, as the owner can tell it from the others: how many saves it holds, and when one last changed. */
+data class EdenProfile(val id: String, val saveCount: Int, val newestModified: Instant?)
+
 /** One title's save folder in a profile, for the owner to tell games apart. */
 data class EdenTitleFolder(val titleId: SwitchTitleId, val fileCount: Int, val bytes: Long, val newestModified: Instant?)
 
@@ -51,6 +54,16 @@ class EdenSaveLocator(private val saveDir: Path) {
 
     /** The user profiles, sorted. @throws java.io.IOException when the folder can't be listed. */
     fun profiles(): List<String> = folders(usersDir, PROFILE).filterNot { it == DEVICE_PROFILE }.sorted()
+
+    /**
+     * The user profiles with their saves' count and newest change, the most recently used first:
+     * a 32-digit ID alone tells the owner nothing.
+     */
+    fun profileSummaries(): List<EdenProfile> = profiles().map { profile ->
+        val titles = folders(usersDir.resolve(profile), TITLE)
+        val newest = titles.mapNotNull { UnitSnapshot.of(listOf(SaveRoot(it, usersDir.resolve(profile).resolve(it)))).newestModified }.maxOrNull()
+        EdenProfile(profile, titles.size, newest)
+    }.sortedWith(compareByDescending<EdenProfile> { it.newestModified }.thenBy { it.id })
 
     /**
      * The save of [titleId] in [chosenProfile], the profile chosen in Settings, which only counts

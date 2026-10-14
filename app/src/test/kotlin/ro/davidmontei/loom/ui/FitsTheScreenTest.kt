@@ -23,6 +23,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.storage.mapping.SystemFolder
+import ro.davidmontei.loom.storage.saves.EdenProfile
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.saves.SaveSyncEngine
 import ro.davidmontei.loom.data.settings.SaveSyncOutcome
@@ -87,6 +88,14 @@ class FitsTheScreenTest {
         return rule.onNodeWithTag("settings-content").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].maxValue()
     }
 
+    /** How many lines the text holding [text] takes. */
+    private fun lineCount(text: String): Int {
+        val node = rule.onNode(hasText(text, substring = true), useUnmergedTree = true).fetchSemanticsNode()
+        val layouts = mutableListOf<TextLayoutResult>()
+        node.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+        return layouts.single().lineCount
+    }
+
     /** Whether the one-line text holding [text] ends in an ellipsis, wherever the ellipsis falls. */
     private fun ellipsized(text: String): Boolean {
         val node = rule.onNode(hasText(text, substring = true), useUnmergedTree = true).fetchSemanticsNode()
@@ -149,30 +158,53 @@ class FitsTheScreenTest {
             lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true),
         )
         val storage = SettingsScreenTest.sample.storage.copy(
-            edenProfiles = listOf("0123456789ABCDEF0123456789ABCDEF", "4E431822D6DEFD527268BA35B5C09533"),
+            edenProfiles = listOf(EdenProfile("0123456789ABCDEF0123456789ABCDEF", 12, null), EdenProfile("4E431822D6DEFD527268BA35B5C09533", 3, null)),
         )
         rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample.copy(settings = settings, storage = storage), SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
         rule.onNodeWithText("Pair again").assertExists()
-        rule.onNodeWithText("Use the 3DS folder").assertExists()
+        rule.onNodeWithText("Use 3DS folder").assertExists()
         rule.onNodeWithText("Use saves/Eden").assertExists()
-        rule.onNodeWithTag("profile-4E431822D6DEFD527268BA35B5C09533").assertExists()
+        rule.onNodeWithTag("eden-profile").assertExists()
+        // How Loom found each folder, in full, on one line. (Labels with letter spacing report a width
+        // overflow they don't have, so the ellipsis and the line count are what's checked.)
+        for (line in listOf("Chosen here.", "Chosen, but it has no user/save.")) {
+            assertWithMessage(line).that(ellipsized(line)).isFalse()
+            assertWithMessage(line).that(lineCount(line)).isEqualTo(1)
+        }
         assertThat(cutShort("Saves from RomM always wait for you.")).isFalse() // the switch's explanation, in full
         rule.saveScreenshot("settings-saves-tallest")
+    }
+
+    /** Eight Eden profiles: one chip in Saves, and a list of them all that fits beside its explanation. */
+    @Test fun manyEdenProfilesFit() {
+        val profiles = (1..8).map { i -> EdenProfile("4E431822D6DEFD527268BA35B5C095%02X".format(i), 40 + i, java.time.Instant.parse("2026-10-14T12:00:00Z").minusSeconds(86_400L * i)) }
+        val settings = SettingsScreenTest.sample.settings!!.copy(
+            azaharUserDir = "/storage/6365-3230/Emulation/Azahar/user", edenSaveDir = "/storage/6365-3230/Emulation/Eden/nand",
+            lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true),
+        )
+        val state = SettingsScreenTest.sample.copy(settings = settings, storage = SettingsScreenTest.sample.storage.copy(edenProfiles = profiles))
+        rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
+        rule.onNodeWithTag("section-SAVES").performClick()
+        assertThat(settingsOverflow()).isEqualTo(0f)
+        rule.onNodeWithTag("eden-profile").performClick()
+        assertThat(overflow("Whose Switch saves does Loom sync?")).isEqualTo(0f)
+        assertThat(cutShort("Yours is likely the one whose saves changed last.")).isFalse()
+        rule.saveScreenshot("settings-saves-eden-profiles")
     }
 
     /** Saves as on the Thor: both folders found where Loom looks, shown in full, and Loom able to read title IDs. */
     @Test fun theSavesSectionShowsTheThorsFoldersInFull() {
         val storage = SettingsScreenTest.sample.storage.copy(
             romsRoot = "/storage/6365-3230/ROMs", azaharFound = "/storage/6365-3230/ROMs/n3ds", edenFound = "/storage/6365-3230/ROMs/saves/Eden",
-            edenProfiles = listOf("4E431822D6DEFD527268BA35B5C09533"), prodKeys = "/storage/6365-3230/ROMs/prod.keys",
+            edenProfiles = listOf(EdenProfile("4E431822D6DEFD527268BA35B5C09533", 2, null)), prodKeys = "/storage/6365-3230/ROMs/prod.keys",
         )
         rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample.copy(storage = storage), SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
         rule.saveScreenshot("settings-saves-thor")
-        for (line in listOf("/storage/6365-3230/ROMs/n3ds", "/storage/6365-3230/ROMs/saves/Eden", "found in ROMs/saves/Eden")) {
+        for (line in listOf("/storage/6365-3230/ROMs/n3ds", "/storage/6365-3230/ROMs/saves/Eden", "Found in ROMs/saves/Eden.")) {
             assertWithMessage(line).that(ellipsized(line)).isFalse()
         }
     }
