@@ -109,6 +109,11 @@ data class InstallEntity(
 
 enum class InstallKind { FILE, DIRECTORY }
 
-enum class VerifiedBy { SHA1, MD5, CRC32, ARCHIVE_MEMBERS, ARCHIVE_CRC, SIZE, NONE }
+/**
+ * How an install was checked. [NAME]: an adopted entry matched by its name alone, because nothing
+ * said what size it should have (an unpacked set, or an archive RomM lists no contents for).
+ * Stored by name, so adding a value needs no migration.
+ */
+enum class VerifiedBy { SHA1, MD5, CRC32, ARCHIVE_MEMBERS, ARCHIVE_CRC, SIZE, NAME, NONE }
 
 enum class InstallSource { LOOM, ADOPTED }

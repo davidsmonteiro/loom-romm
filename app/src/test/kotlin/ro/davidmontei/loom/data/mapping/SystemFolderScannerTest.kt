@@ -1,9 +1,16 @@
 package ro.davidmontei.loom.data.mapping
 
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import java.io.File
 
@@ -32,6 +39,24 @@ class SystemFolderScannerTest {
         val n3ds = system("n3ds", null, "Pokemon X.3ds")
         listOf("sdmc", "nand", "config", "states", "sysdata", "log", "cheats", "shaders", "gpu_drivers").forEach { File(n3ds, it).mkdirs() }
         assertThat(SystemFolderScanner.scan(tmp.root).single()).isEqualTo(SystemFolder("n3ds", 1, null))
+    }
+
+    @Test fun theChooserSaysWhichOfAPlatformsFoldersAreOnTheCard() = runBlocking<Unit> {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val prefs = PreferenceDataStoreFactory.create(scope = scope) { File(tmp.newFolder("prefs"), "p.preferences_pb") }
+            val settings = SettingsStore(prefs)
+            val chooser = FolderChooser(settings, MappingRepository(prefs))
+            assertThat(chooser.onCard(listOf("mame"))).isNull() // no ROMs folder yet: Loom can't look
+            val roms = tmp.newFolder("ROMs")
+            File(roms, "MAME").mkdirs()
+            File(roms, "MAME/alleymas.zip").writeText("rom")
+            File(roms, "snes").mkdirs()
+            settings.setRomsRoot(roms.path)
+            assertThat(chooser.onCard(listOf("mame", "fba"))).containsExactly(SystemFolder("MAME", 1, null))
+        } finally {
+            scope.cancel()
+        }
     }
 
     @Test fun canLookAtJustSomeFoldersWhateverTheirCase() {

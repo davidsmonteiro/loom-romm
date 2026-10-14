@@ -75,6 +75,18 @@ class PlatformMappingTest {
         assertThat(mapper.resolve("arcade", "arcade").candidates).containsExactly("mame", "arcade", "fbneo", "fba").inOrder()
     }
 
+    /** Found on the Thor: with arcade/ chosen, the folder editor had none of arcade's own folders to suggest. */
+    @Test fun usualFoldersOutliveTheUsersChoice() {
+        val chosen = PlatformMappingEntry(PlatformMatch(fsSlug = "arcade"), folder = "arcade")
+        val arcade = PlatformMapper(shipped, listOf(chosen)).resolve("arcade", "arcade")
+        assertThat(arcade.candidates).containsExactly("arcade") // the choice is settled…
+        assertThat(arcade.usualFolders).containsExactly("arcade", "mame", "fbneo", "fba").inOrder() // …but the others are still known
+        val mapper = PlatformMapper(shipped)
+        assertThat(mapper.resolve("arcade", "arcade").usualFolders).containsExactly("mame", "arcade", "fbneo", "fba").inOrder()
+        assertThat(mapper.resolve("arcade", "mame").usualFolders).containsExactly("mame")
+        assertThat(mapper.resolve("hyperscan", "hyperscan").usualFolders).containsExactly("hyperscan")
+    }
+
     @Test fun aFolderLoomFoundIsSettledButNotTheUsersChange() {
         val found = PlatformMappingEntry(PlatformMatch(fsSlug = "genesis"), folder = "megadrive", detected = true)
         val genesis = PlatformMapper(shipped, listOf(found)).resolve("genesis", "genesis")

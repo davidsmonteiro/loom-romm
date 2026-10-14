@@ -35,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -47,6 +48,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -60,6 +66,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ro.davidmontei.loom.data.download.VolumeInfo
+import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.mapping.ArchivePolicy
 import ro.davidmontei.loom.storage.mapping.FolderNames
@@ -68,6 +75,7 @@ import ro.davidmontei.loom.storage.mapping.MultiDiscLayout
 import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.ROM_FILE_CATEGORIES
+import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.ui.components.ButtonHint
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.components.FolderNote
@@ -95,6 +103,8 @@ interface SettingsActions {
     fun repair()
     fun signOut()
     fun fullResync()
+    fun setCatalogRefresh(refresh: CatalogRefresh)
+    fun setRefreshOnWifiOnly(wifiOnly: Boolean)
     fun setRomsRoot(dir: java.io.File)
     fun volumes(): List<VolumeInfo>
     fun saveOverride(entry: PlatformMappingEntry)
@@ -103,6 +113,8 @@ interface SettingsActions {
     fun importMapping()
     val exportPath: String
     val cocoonFolders: List<String>
+    /** Which of [names] are folders on the card, with their game counts; null when Loom can't look. Off the main thread. */
+    suspend fun foldersOnCard(names: List<String>): List<SystemFolder>?
     fun setConcurrency(n: Int)
     /** The automatic upload switch; the periodic scan follows it. */
     fun setAutoUploadSaves(on: Boolean)
@@ -128,6 +140,8 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
             override fun repair() = onRepair()
             override fun signOut() { vm.signOut() }
             override fun fullResync() = vm.fullResync()
+            override fun setCatalogRefresh(refresh: CatalogRefresh) { vm.setCatalogRefresh(refresh) }
+            override fun setRefreshOnWifiOnly(wifiOnly: Boolean) { vm.setRefreshOnWifiOnly(wifiOnly) }
             override fun setRomsRoot(dir: java.io.File) { vm.setRomsRoot(dir) }
             override fun volumes() = vm.mountedVolumes()
             override fun saveOverride(entry: PlatformMappingEntry) { vm.saveOverride(entry) }
@@ -136,6 +150,7 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
             override fun importMapping() { vm.importMapping() }
             override val exportPath get() = vm.exportPath
             override val cocoonFolders get() = vm.cocoonFolders
+            override suspend fun foldersOnCard(names: List<String>) = vm.foldersOnCard(names)
             override fun setConcurrency(n: Int) { vm.setConcurrency(n) }
             override fun setAutoUploadSaves(on: Boolean) { vm.setAutoUploadSaves(on) }
             override fun setAzaharFolder(dir: java.io.File?) { vm.setAzaharFolder(dir) }
@@ -185,7 +200,8 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
                     .focusProperties { onEnter = { runCatching { sectionFocus.getValue(section).requestFocus() } } }
                     .testTag("settings-sections"),
                 contentPadding = PaddingValues(8.dp),
-                verticalArrangement = Arrangement.spacedBy(Space.s),
+                // Eight sections fit the Thor's screen only this close together.
+                verticalArrangement = Arrangement.spacedBy(Space.xs),
             ) {
                 items(SettingsSection.entries) { s ->
                     LoomRow(
@@ -206,6 +222,7 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
                 message?.let { Text(it, color = LoomColors.Accent, style = MaterialTheme.typography.bodyMedium) }
                 when (section) {
                     SettingsSection.SERVER -> ServerSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
+                    SettingsSection.LIBRARY -> LibrarySyncSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
                     SettingsSection.STORAGE -> StorageSection(state, actions, first)
                     SettingsSection.MAPPING -> MappingSection(state, actions, first)
                     SettingsSection.DOWNLOADS -> DownloadsSection(state, actions, first)
@@ -305,7 +322,6 @@ private fun ServerSection(
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
         LoomButton("Pair again", onClick = { if (creds != null) confirmPairAgain = true else actions.repair() },
             modifier = Modifier.focusRequester(pairAgainFocus))
-        LoomButton("Full resync", onClick = actions::fullResync)
         if (creds != null) {
             LoomButton("Sign out", onClick = { confirmSignOut = true }, destructive = true, modifier = Modifier.focusRequester(signOutFocus))
         }
@@ -326,6 +342,78 @@ private fun ServerSection(
                 LoomButton("Sign out", { actions.signOut(); signedOut = true; confirmSignOut = false }, primary = true, destructive = true)
             })
     }
+}
+
+@Composable
+private fun LibrarySyncSection(
+    state: SettingsUiState,
+    actions: SettingsActions,
+    modifier: Modifier = Modifier,
+    backFromPairing: Boolean = false,
+    onBackFromPairing: () -> Unit = {},
+) {
+    val first = modifier
+    val refresh = state.settings?.catalogRefresh ?: CatalogRefresh.DEFAULT
+    val sync = state.sync
+    val currentChip = remember { FocusRequester() }
+    val pairAgainFocus = remember { FocusRequester() }
+    // Back from pairing again, focus is where the user left, on Pair again. If the new token already works,
+    // its sync has replaced the failure and the button has gone: the interval instead.
+    LaunchedEffect(Unit) {
+        if (backFromPairing) {
+            delay(50) // as InitialFocus: the button has to be laid out first
+            if (!runCatching { pairAgainFocus.requestFocus() }.getOrDefault(false)) runCatching { currentChip.requestFocus() }
+            onBackFromPairing()
+        }
+    }
+    // That sync can also start once Pair again has focus, taking the button away: focus stays in the section.
+    // (Read while composing: by the time the effect runs, the button has gone and reported losing focus.)
+    var pairAgainFocused by remember { mutableStateOf(false) }
+    val pairAgainHadFocus = pairAgainFocused
+    LaunchedEffect(sync.needsPairing) {
+        if (!sync.needsPairing && pairAgainHadFocus) { delay(50); runCatching { currentChip.requestFocus() } }
+    }
+    SectionTop {
+        SectionHeader("Automatic refresh")
+        Text("Loom checks RomM for new, changed and removed games in the background, while online and the battery isn't low.",
+            color = LoomColors.TextMuted, style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+            CatalogRefresh.entries.forEach { r ->
+                // Focus arrives on the current choice, so a second A changes nothing.
+                LoomChip(r.label, r == refresh, { actions.setCatalogRefresh(r) }, if (r == refresh) first.focusRequester(currentChip) else Modifier)
+            }
+        }
+    }
+    LoomSwitchRow("Only on Wi-Fi", state.settings?.refreshOnWifiOnly == true, actions::setRefreshOnWifiOnly,
+        subtitle = "Not over mobile data or a phone's hotspot.")
+    SectionHeader("Last sync")
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                if (sync.running) sync.total?.let { "Syncing ${sync.fetched} of $it" } ?: "Syncing…"
+                else state.settings?.lastCatalogSyncEpochMs?.let { "Last synced ${ago(it)}" } ?: "Not synced yet",
+            )
+            if (!sync.running && sync.error != null) {
+                // The sync's own text sends the user to Settings; here the way out is the button beside it.
+                Text("The last sync failed: ${if (sync.needsPairing) "RomM rejected Loom's token." else sync.error}",
+                    color = LoomColors.Error, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        // Nearest the line it answers, so Down from Only on Wi-Fi lands on it. The token is already
+        // rejected, so unlike Server & pairing's Pair again there is nothing to lose and nothing to confirm.
+        if (sync.needsPairing) {
+            LoomButton("Pair again", onClick = actions::repair,
+                modifier = Modifier.focusRequester(pairAgainFocus).onFocusChanged { pairAgainFocused = it.isFocused })
+        }
+        LoomButton("Full resync", onClick = actions::fullResync)
+    }
+}
+
+private val CatalogRefresh.label get() = when (this) {
+    CatalogRefresh.OFF -> "Off"
+    CatalogRefresh.EVERY_6_HOURS -> "Every 6 h"
+    CatalogRefresh.EVERY_12_HOURS -> "Every 12 h"
+    CatalogRefresh.EVERY_24_HOURS -> "Every 24 h"
 }
 
 @Composable
@@ -429,6 +517,14 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
     var multiDisc by remember { mutableStateOf(r.multiDisc) }
     var include by remember { mutableStateOf(r.include) }
     val folderProblem = FolderNames.validate(folder)
+    // What the card holds of the platform's usual folders, looked up off the main thread: names alone until then.
+    val onCard by produceState<List<SystemFolder>?>(null, r.usualFolders) { value = actions.foldersOnCard(r.usualFolders) }
+    // The choices on the right reach lower than the folder field, so the pad's nearest-control rule
+    // skipped the field: Left from "Game.m3u folder" went down to the file chips, Up from those under
+    // the field went to the right column, and Down from the field went there too. Those moves are set here.
+    val folderFocus = remember { FocusRequester() }
+    val firstFile = remember { FocusRequester() }
+    val layout = remember { EditorLayout() }
     // As wide as the screen, with the choices beside the folder field and RomM's names beside the
     // buttons: stacked, the form was taller than the screen and its top scrolled out of the pad's reach.
     LoomDialog(
@@ -439,21 +535,22 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
             Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
                     LoomTextField(folder, { folder = it.trim() }, "Folder in your ROMs folder", isError = folderProblem != null,
-                        supporting = folderProblem ?: actions.cocoonFolders.filter { it.startsWith(folder.take(1)) && it != folder }.take(8)
-                            .takeIf { it.isNotEmpty() && folder.isNotEmpty() }?.joinToString(prefix = "Other Cocoon folders: "),
-                        modifier = Modifier.weight(1f))
-                    Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                        supporting = folderProblem ?: folderHint(row.platform.platform.displayName, folder, r.usualFolders, onCard, actions.cocoonFolders),
+                        modifier = Modifier.weight(1f).focusRequester(folderFocus).focusProperties { down = firstFile }, tag = "folder-field")
+                    Column(Modifier.onPlaced { layout.rightColumn = it }, verticalArrangement = Arrangement.spacedBy(Space.s)) {
                         Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
                             Text("Archives (.zip, .7z)", style = MaterialTheme.typography.labelLarge)
                             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                                LoomChip("Keep as is", archive == ArchivePolicy.KEEP, { archive = ArchivePolicy.KEEP })
+                                LoomChip("Keep as is", archive == ArchivePolicy.KEEP, { archive = ArchivePolicy.KEEP },
+                                    Modifier.focusProperties { left = folderFocus })
                                 LoomChip("Unpack", archive == ArchivePolicy.EXTRACT, { archive = ArchivePolicy.EXTRACT })
                             }
                         }
                         Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
                             Text("Multi-disc games", style = MaterialTheme.typography.labelLarge)
                             Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                                LoomChip("Game.m3u folder", multiDisc == MultiDiscLayout.M3U_DIR, { multiDisc = MultiDiscLayout.M3U_DIR })
+                                LoomChip("Game.m3u folder", multiDisc == MultiDiscLayout.M3U_DIR, { multiDisc = MultiDiscLayout.M3U_DIR },
+                                    Modifier.focusProperties { left = folderFocus })
                                 LoomChip("Plain folder", multiDisc == MultiDiscLayout.FOLDER, { multiDisc = MultiDiscLayout.FOLDER })
                             }
                         }
@@ -463,7 +560,9 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
                     Text("Files to download", style = MaterialTheme.typography.labelLarge)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalArrangement = Arrangement.spacedBy(Space.s)) {
                         ROM_FILE_CATEGORIES.forEach { c ->
-                            LoomChip(c, c in include, { include = if (c in include) include - c else include + c })
+                            LoomChip(c, c in include, { include = if (c in include) include - c else include + c },
+                                Modifier.onPlaced { layout.chips[c] = it }.focusProperties { if (layout.underField(c)) up = folderFocus }
+                                    .then(if (c == ROM_FILE_CATEGORIES.first()) Modifier.focusRequester(firstFile) else Modifier))
                         }
                     }
                 }
@@ -484,6 +583,42 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
             })
         },
     )
+}
+
+/**
+ * The hint under the folder field: the platform's other usual folders (arcade's mame, fbneo, fba…),
+ * with what the card holds of each once that's known. Only a platform without any gets Cocoon's
+ * folders that start like the one typed.
+ */
+private fun folderHint(platform: String, typed: String, usual: List<String>, onCard: List<SystemFolder>?, cocoonFolders: List<String>): String? {
+    val others = usual.filter { FolderNames.key(it) != FolderNames.key(typed) }
+    if (others.isEmpty()) {
+        return cocoonFolders.filter { it.startsWith(typed.take(1)) && it != typed }.take(8)
+            .takeIf { it.isNotEmpty() && typed.isNotEmpty() }?.joinToString(prefix = "Other Cocoon folders: ")
+    }
+    val found = onCard?.associateBy { FolderNames.key(it.name) }
+    return others.joinToString(prefix = "Other folders for $platform: ") { name ->
+        val folder = found?.get(FolderNames.key(name))
+        when {
+            found == null -> name
+            folder == null -> "$name (not on the card)"
+            folder.games == 0 -> "${folder.name} (no games)"
+            else -> "${folder.name} (${gameCount(folder.games)})"
+        }
+    }
+}
+
+/** Where the folder editor's right column and file chips were placed; read when the pad moves, not while drawing. */
+private class EditorLayout {
+    var rightColumn: LayoutCoordinates? = null
+    val chips = mutableMapOf<String, LayoutCoordinates>()
+
+    /** True for a file chip in the first row that sits under the folder field rather than under the right column. */
+    fun underField(category: String): Boolean {
+        val column = rightColumn?.takeIf { it.isAttached } ?: return false
+        val chip = chips[category]?.takeIf { it.isAttached } ?: return false
+        return chip.positionInParent().y == 0f && chip.boundsInRoot().center.x < column.positionInRoot().x
+    }
 }
 
 @Composable

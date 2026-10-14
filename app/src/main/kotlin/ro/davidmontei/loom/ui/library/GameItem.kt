@@ -30,6 +30,8 @@ data class GameItem(
     val platformId: Int = 0,
     /** Where the save stands, for an installed game; null otherwise. */
     val save: GameSave? = null,
+    /** Adopted by its name alone: nothing said what size the game should be, so it may be another copy. */
+    val matchedByName: Boolean = false,
 )
 
 /** Where an installed game's save stands, as its details show it. */
@@ -119,5 +121,6 @@ fun GameRow.toItem(liveBytes: Long? = null): GameItem {
         installPath = installPath,
         platformId = platformId,
         retryable = failureRetryable ?: true,
+        matchedByName = installSource == "ADOPTED" && installVerifiedBy == "NAME",
     )
 }

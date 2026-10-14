@@ -31,6 +31,7 @@ data class GameRow(
     @ColumnInfo(name = "install_path") val installPath: String?,
     @ColumnInfo(name = "install_source") val installSource: String?,
     @ColumnInfo(name = "install_bytes") val installBytes: Long?,
+    @ColumnInfo(name = "install_verified_by") val installVerifiedBy: String?,
     @ColumnInfo(name = "job_id") val jobId: Long?,
     @ColumnInfo(name = "job_phase") val jobPhase: String?,
     @ColumnInfo(name = "wait_reason") val waitReason: String?,
@@ -49,7 +50,7 @@ interface CatalogDao {
      */
     @Query(
         """SELECT r.id, r.platform_id, r.title, r.size_bytes, r.cover_small, r.cover_large, r.regions, r.removed_on_server,
-             i.rel_path AS install_path, i.source AS install_source, i.bytes AS install_bytes,
+             i.rel_path AS install_path, i.source AS install_source, i.bytes AS install_bytes, i.verified_by AS install_verified_by,
              j.id AS job_id, j.phase AS job_phase, j.wait_reason, j.failure_detail, j.failure_retryable, j.bytes_done, j.bytes_total
            FROM roms r
            LEFT JOIN installs i ON i.rom_id = r.id
@@ -63,7 +64,7 @@ interface CatalogDao {
 
     @Query(
         """SELECT r.id, r.platform_id, r.title, r.size_bytes, r.cover_small, r.cover_large, r.regions, r.removed_on_server,
-             i.rel_path AS install_path, i.source AS install_source, i.bytes AS install_bytes,
+             i.rel_path AS install_path, i.source AS install_source, i.bytes AS install_bytes, i.verified_by AS install_verified_by,
              j.id AS job_id, j.phase AS job_phase, j.wait_reason, j.failure_detail, j.failure_retryable, j.bytes_done, j.bytes_total
            FROM roms r LEFT JOIN installs i ON i.rom_id = r.id LEFT JOIN download_jobs j ON j.rom_id = r.id
            WHERE r.id = :romId""",

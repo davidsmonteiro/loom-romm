@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
@@ -30,6 +31,7 @@ import ro.davidmontei.loom.data.download.VolumeInfo
 import ro.davidmontei.loom.data.download.Volumes
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
+import ro.davidmontei.loom.ui.library.toItem
 import java.io.File
 
 @RunWith(AndroidJUnit4::class)
@@ -88,6 +90,15 @@ class InstallManagerTest {
 
     private fun put(rel: String, size: Int): File = File(romsRoot, rel).apply { parentFile!!.mkdirs(); writeBytes(ByteArray(size)) }
 
+    /** A ROM that is one archive, with the members RomM lists for it (null when it lists none). */
+    private suspend fun archiveRom(id: Int, platformId: Int, fileName: String, members: String?, size: Long = 900) = db.catalogDao().writePage(
+        listOf(rom(id, platformId, fileName, size)),
+        listOf(RomFileEntity(id * 10, id, fileName, "roms/x", size, true, null, null, null, null, members)),
+    )
+
+    private fun members(vararg named: Pair<String, Int>) =
+        named.joinToString(",", "[", "]") { (name, size) -> """{"name":"$name","size":$size,"crc_hash":"0","md5_hash":"0","sha1_hash":"0"}""" }
+
     @Test fun adoptsGamesAlreadyOnTheCard() = runBlocking<Unit> {
         put("snes/Chrono Trigger (USA).sfc", 4096)
         put("snes/Earthbound (USA).sfc", 1234) // same name, different dump: not adopted
@@ -103,7 +114,140 @@ class InstallManagerTest {
         assertThat(dao.install(11)).isNull()
         assertThat(dao.install(20)!!.relPath).isEqualTo("psx/Final Fantasy VII (USA).m3u")
         assertThat(dao.install(20)!!.kind).isEqualTo(InstallKind.DIRECTORY)
+        assertThat(dao.install(20)!!.verifiedBy).isEqualTo(VerifiedBy.NAME) // a folder: no size to compare
         assertThat(dao.install(30)!!.relPath).isEqualTo("nds/Mario Kart DS (USA).nds")
+    }
+
+    /**
+     * Found on the Thor: after Loom's data was lost, a game it had unpacked wasn't recognised. A lone
+     * file out of an archive is named after the game, not after the file inside.
+     */
+    @Test fun adoptsAGameLoomUnpackedUnderTheNameLoomGaveIt() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(4, "ps2", "ps2", "PS2", "PlayStation 2", 2, "t")))
+        archiveRom(40, 4, "Super Bust-A-Move (USA).7z", members("SLUS-20115 (1.00).bin" to 4096))
+        archiveRom(41, 4, "Ico (USA).7z", members("SCUS-97113.iso" to 8192))
+        put("ps2/Super Bust-A-Move (USA).bin", 4096)
+        put("ps2/Ico (USA).iso", 1000) // the right name, but not the size RomM gives: another dump
+
+        assertThat(manager.reconcile().adopted).isEqualTo(1)
+        val install = db.catalogDao().install(40)!!
+        assertThat(install.relPath).isEqualTo("ps2/Super Bust-A-Move (USA).bin")
+        assertThat(install.bytes).isEqualTo(4096)
+        assertThat(install.verifiedBy).isEqualTo(VerifiedBy.SIZE)
+        assertThat(db.catalogDao().install(41)).isNull()
+    }
+
+    /**
+     * Found on the Thor: RomM listed nothing inside "Pokemon X….zip", so after Loom's data was lost
+     * neither the name nor the size of the .3ds it had unpacked could be predicted. Only on platforms
+     * set to unpack, where Loom would have made it.
+     */
+    @Test fun adoptsByNameAGameUnpackedFromAnArchiveRommListsNothingIn() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(5, "3ds", "3ds", "3DS", "Nintendo 3DS", 1, "t")))
+        archiveRom(50, 5, "Pokemon X (Europe) (En,Ja,Fr,De,Es,It,Ko).zip", null)
+        archiveRom(51, 2, "Gran Turismo (USA).zip", "[]")
+        archiveRom(52, 1, "Super Mario World (USA).zip", null) // SNES keeps archives: Loom never made this .sfc
+        put("n3ds/Pokemon X (Europe) (En,Ja,Fr,De,Es,It,Ko).3ds", 2048)
+        put("psx/Gran Turismo (USA)/Gran Turismo (USA).cue", 10)
+        put("psx/Gran Turismo (USA)/Gran Turismo (USA).bin", 1024)
+        put("snes/Super Mario World (USA).sfc", 512)
+
+        assertThat(manager.reconcile().adopted).isEqualTo(2)
+        val dao = db.catalogDao()
+        val pokemon = dao.install(50)!!
+        assertThat(pokemon.relPath).isEqualTo("n3ds/Pokemon X (Europe) (En,Ja,Fr,De,Es,It,Ko).3ds")
+        assertThat(pokemon.bytes).isEqualTo(2048)
+        assertThat(pokemon.verifiedBy).isEqualTo(VerifiedBy.NAME)
+        assertThat(dao.observeGame(50).first()!!.toItem().matchedByName).isTrue()
+        assertThat(dao.install(51)!!.relPath).isEqualTo("psx/Gran Turismo (USA)")
+        assertThat(dao.install(51)!!.kind).isEqualTo(InstallKind.DIRECTORY)
+        assertThat(dao.install(52)).isNull()
+    }
+
+    @Test fun byNameNothingIsAdoptedWhenTwoEntriesFit() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(5, "3ds", "3ds", "3DS", "Nintendo 3DS", 2, "t")))
+        archiveRom(50, 5, "Pokemon X (Europe).zip", null)
+        archiveRom(53, 5, "Pokemon Y (Europe).zip", null)
+        put("n3ds/Pokemon X (Europe).3ds", 2048)
+        put("n3ds/Pokemon X (Europe).cia", 1024) // which one did Loom make?
+        put("n3ds/Pokemon Y (Europe).zip", 700) // the archive itself (another dump) isn't what it was unpacked to
+        put("n3ds/Pokemon Y (Europe).3ds", 2048)
+
+        assertThat(manager.reconcile().adopted).isEqualTo(1)
+        assertThat(db.catalogDao().install(50)).isNull()
+        assertThat(db.catalogDao().install(53)!!.relPath).isEqualTo("n3ds/Pokemon Y (Europe).3ds")
+    }
+
+    /** Both 3DS platforms go in n3ds, as the shipped mapping has it. */
+    private suspend fun twoPlatformsInOneFolder() = db.catalogDao().upsertPlatforms(listOf(
+        PlatformEntity(5, "3ds", "3ds", "3DS", "Nintendo 3DS", 2, "t"),
+        PlatformEntity(6, "new-nintendo-3ds", "new-nintendo-3ds", "New 3DS", "New Nintendo 3DS", 2, "t"),
+    ))
+
+    private suspend fun fileRom(id: Int, platformId: Int, fileName: String, size: Long) = db.catalogDao().writePage(
+        listOf(rom(id, platformId, fileName, size)),
+        listOf(RomFileEntity(id * 10, id, fileName, "roms/x", size, true, null, null, null, null, null)),
+    )
+
+    /**
+     * Matching by name alone waits for every platform's games matched by name and size, not just
+     * its own platform's: the .3ds is the New 3DS game, not what Loom unpacked from the 3DS zip.
+     */
+    @Test fun byNameAFileAGameOfAnotherPlatformMatchesExactlyIsNotTaken() = runBlocking<Unit> {
+        twoPlatformsInOneFolder()
+        archiveRom(50, 5, "Zelda (Europe).zip", null)
+        fileRom(60, 6, "Zelda (Europe).3ds", 2048)
+        put("n3ds/Zelda (Europe).3ds", 2048)
+
+        assertThat(manager.reconcile().adopted).isEqualTo(1)
+        assertThat(db.catalogDao().install(60)!!.relPath).isEqualTo("n3ds/Zelda (Europe).3ds")
+        assertThat(db.catalogDao().install(60)!!.verifiedBy).isEqualTo(VerifiedBy.SIZE)
+        assertThat(db.catalogDao().install(50)).isNull()
+    }
+
+    @Test fun byNameAFileAnotherGameHasDoesNotMakeTheMatchAmbiguous() = runBlocking<Unit> {
+        twoPlatformsInOneFolder()
+        archiveRom(51, 5, "Kirby (Europe).zip", null)
+        fileRom(61, 6, "Kirby (Europe).3ds", 2048)
+        put("n3ds/Kirby (Europe).3ds", 2048) // the New 3DS game
+        put("n3ds/Kirby (Europe).cia", 2048) // so the only one left for the 3DS zip
+
+        assertThat(manager.reconcile().adopted).isEqualTo(2)
+        assertThat(db.catalogDao().install(61)!!.relPath).isEqualTo("n3ds/Kirby (Europe).3ds")
+        assertThat(db.catalogDao().install(51)!!.relPath).isEqualTo("n3ds/Kirby (Europe).cia")
+    }
+
+    /**
+     * An emulator may keep saves, save states, cheats, patches and covers next to the game, named
+     * after it. None of them is what Loom unpacked: too small to be the game, or never a game.
+     */
+    @Test fun byNameTheGameIsAdoptedNotTheFilesBesideIt() = runBlocking<Unit> {
+        archiveRom(31, 3, "Pokemon White (Europe).zip", null, size = 4096)
+        put("nds/Pokemon White (Europe).nds", 8192)
+        put("nds/Pokemon White (Europe).sav", 512)
+        put("nds/Pokemon White (Europe).ips", 256) // a patch: no telling from its name, but far too small
+        put("nds/Pokemon White (Europe).ml1", 4096) // a save state the size of the game
+        put("nds/Pokemon White (Europe).png", 4096) // a cover
+
+        assertThat(manager.reconcile().adopted).isEqualTo(1)
+        assertThat(db.catalogDao().install(31)!!.relPath).isEqualTo("nds/Pokemon White (Europe).nds")
+    }
+
+    /**
+     * When the game is deleted outside Loom, its save stays. It mustn't be taken for the game, shown
+     * "On device", and deleted by Remove.
+     */
+    @Test fun byNameASaveLeftAloneIsNotAdopted() = runBlocking<Unit> {
+        archiveRom(32, 3, "Pokemon Black (Europe).zip", null, size = 4096)
+        val save = put("nds/Pokemon Black (Europe).sav", 512)
+        val dao = db.catalogDao()
+        dao.upsertInstall(InstallEntity(32, "9C33-6BBD", romsRoot.path, "nds/Pokemon Black (Europe).nds",
+            "nds/pokemon black (europe).nds", 3, InstallKind.FILE, 8192, VerifiedBy.SHA1, InstallSource.LOOM, null, 1))
+
+        assertThat(manager.reconcile()).isEqualTo(ReconcileResult(forgotten = 1, adopted = 0))
+        assertThat(dao.install(32)).isNull()
+        assertThat(manager.offload(32)).isEqualTo(OffloadResult.NotInstalled)
+        assertThat(save.exists()).isTrue()
     }
 
     @Test fun forgetsInstallsDeletedInAFileManagerButNotWhenTheCardIsOut() = runBlocking<Unit> {

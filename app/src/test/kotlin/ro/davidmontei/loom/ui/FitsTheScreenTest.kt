@@ -20,8 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
-import ro.davidmontei.loom.storage.mapping.PlatformMatch
+import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.saves.SaveSyncEngine
@@ -45,7 +44,8 @@ import ro.davidmontei.loom.ui.settings.SettingsSection
 
 /**
  * Screens that must fit the Thor's top screen without scrolling. Native graphics measure text with
- * the real font, so line wrapping (and so height) is as on the device; focus can't be tested here.
+ * the real font, so line wrapping (and so height) is as on the device. Focus isn't tested here: these
+ * windows start in touch mode (SettingsScreenTest's folder editor tests switch them to the pad's).
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -138,16 +138,19 @@ class FitsTheScreenTest {
         rule.saveScreenshot("settings-saves-tallest")
     }
 
-    /** Found by audit: the platform folder editor was taller than the screen. */
+    /**
+     * Found by audit: the platform folder editor was taller than the screen. With Reset, and the longest hint
+     * under the field for a platform without other folders of its own: eight Cocoon folders.
+     */
     @Test fun thePlatformFolderEditorFits() {
-        val psx = SettingsScreenTest.sample.mapping.first()
-        val state = SettingsScreenTest.sample.copy(mapping = listOf(psx.copy(override = PlatformMappingEntry(PlatformMatch(slug = "psx"), folder = "psx"))))
+        val state = SettingsScreenTest.sample.copy(mapping = listOf(SettingsScreenTest.chosenRow(1, "PlayStation 2", "ps2", "ps2", "ps2")))
         val cocoon = listOf("psx", "ps2", "ps3", "psp", "pspminis", "pico8", "pokemini", "pc88", "pc98", "pcfx")
         val actions = object : SettingsActions by SettingsScreenTest.noop { override val cocoonFolders = cocoon }
         rule.setContent { LoomTestTheme { SettingsContent(state, actions) } }
         rule.onNodeWithTag("section-MAPPING").performClick()
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
-        rule.onNodeWithText("PlayStation").performClick() // with Reset, and the other Cocoon folders under the field
+        rule.onNodeWithText("PlayStation 2").performClick()
+        rule.onNodeWithText("Other Cocoon folders: psx, ps3, psp, pspminis, pico8, pokemini, pc88, pc98", useUnmergedTree = true).assertExists()
         assertThat(overflow("Files to download")).isEqualTo(0f)
     }
 
@@ -181,6 +184,41 @@ class FitsTheScreenTest {
         rule.onNodeWithTag("conflict-7").performClick()
         assertThat(overflow("$title: which save to keep?")).isEqualTo(0f)
         rule.saveScreenshot("queue-conflict-choice")
+    }
+
+    /** The editor with arcade's other folders under the field, and what the card holds of each. */
+    @Test fun thePlatformFolderEditorFitsWithThePlatformsOwnFolders() {
+        val state = SettingsScreenTest.sample.copy(mapping = listOf(SettingsScreenTest.chosenRow(1, "Arcade", "arcade", "arcade", "arcade")))
+        val actions = object : SettingsActions by SettingsScreenTest.noop {
+            override suspend fun foldersOnCard(names: List<String>) = listOf(SystemFolder("mame", 1234), SystemFolder("fbneo", 0))
+        }
+        rule.setContent { LoomTestTheme { SettingsContent(state, actions) } }
+        rule.onNodeWithTag("section-MAPPING").performClick()
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithText("Arcade").performClick()
+        rule.onNodeWithText("Other folders for Arcade: mame (1234 games), fbneo (no games), fba (not on the card)", useUnmergedTree = true)
+            .assertExists()
+        assertThat(overflow("Files to download")).isEqualTo(0f)
+        rule.saveScreenshot("settings-mapping-editor-arcade")
+    }
+
+    /** How far the scrolling node tagged [tag] could scroll, in px: 0 when everything fits. */
+    private fun overflowOf(tag: String): Float {
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        return rule.onNodeWithTag(tag).fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].maxValue()
+    }
+
+    /** Library sync at its tallest: a failed sync's reason beside Full resync. */
+    @Test fun theLibrarySyncSectionFits() {
+        val state = SettingsScreenTest.sample.copy(
+            settings = SettingsScreenTest.sample.settings!!.copy(lastCatalogSyncEpochMs = System.currentTimeMillis() - 3 * 3_600_000L),
+            sync = CatalogSyncStatus(running = false, error = "RomM rejected Loom's token. Pair again in Settings.", needsPairing = true),
+        )
+        rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
+        rule.onNodeWithTag("section-LIBRARY").performClick()
+        val overflow = overflowOf("settings-content")
+        rule.saveScreenshot("settings-library-sync")
+        assertThat(overflow).isEqualTo(0f)
     }
 
     /** The question at a platform's first download, with its few options and with every folder of the Thor's ES-DE template. */

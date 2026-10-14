@@ -22,13 +22,16 @@ import ro.davidmontei.loom.BuildConfig
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.Credentials
 import ro.davidmontei.loom.data.catalog.CatalogSyncScheduler
+import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.db.CatalogDao
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.install.InstallManager
+import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.saves.SaveSyncTriggers
 import ro.davidmontei.loom.data.saves.SaveUnitResolver
+import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.Settings
 import ro.davidmontei.loom.data.settings.SettingsStore
@@ -41,6 +44,7 @@ import ro.davidmontei.loom.storage.mapping.MappingJson
 import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
 import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.ResolvedPlatform
+import ro.davidmontei.loom.storage.mapping.SystemFolder
 import java.io.File
 import javax.inject.Inject
 
@@ -49,7 +53,7 @@ import javax.inject.Inject
  * taller than the Thor's screen (FitsTheScreenTest.theSettingsSectionListFits).
  */
 enum class SettingsSection(val title: String) {
-    SERVER("Server & pairing"), STORAGE("Storage"), MAPPING("Platform folders"),
+    SERVER("Server & pairing"), LIBRARY("Library sync"), STORAGE("Storage"), MAPPING("Platform folders"),
     DOWNLOADS("Downloads"), SAVES("Saves"), CONTROLS("Controls"), ABOUT("About & licenses"),
 }
 
@@ -68,6 +72,7 @@ data class StorageInfo(
 data class SettingsUiState(
     val settings: Settings? = null,
     val credentials: Credentials? = null,
+    val sync: CatalogSyncStatus = CatalogSyncStatus(running = false),
     val mapping: List<MappingRow> = emptyList(),
     val storage: StorageInfo = StorageInfo(null, null, null, null),
     val batteryUnrestricted: Boolean = false,
@@ -83,6 +88,7 @@ class SettingsViewModel @Inject constructor(
     private val credentials: CredentialStore,
     private val catalog: CatalogDao,
     private val mapping: MappingRepository,
+    private val folders: FolderChooser,
     private val volumes: StorageVolumes,
     private val installs: InstallManager,
     private val sync: CatalogSyncScheduler,
@@ -108,6 +114,7 @@ class SettingsViewModel @Inject constructor(
             storage = storage,
         )
     }.combine(deviceState) { ui, (battery, files) -> ui.copy(batteryUnrestricted = battery, allFilesAccess = files) }
+        .combine(sync.status) { ui, status -> ui.copy(sync = status) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     private val _messages = Channel<String>(Channel.BUFFERED)
@@ -148,10 +155,16 @@ class SettingsViewModel @Inject constructor(
         _messages.send("Signed out. Your library and installed games stay on the device.")
     }
 
+    // --- library sync ---
+
     fun fullResync() {
         sync.enqueue(full = true)
         viewModelScope.launch { _messages.send("Full sync started") }
     }
+
+    /** The periodic refresh follows these settings by itself (see LoomApp). */
+    fun setCatalogRefresh(refresh: CatalogRefresh) = viewModelScope.launch { store.setCatalogRefresh(refresh) }
+    fun setRefreshOnWifiOnly(wifiOnly: Boolean) = viewModelScope.launch { store.setRefreshOnWifiOnly(wifiOnly) }
 
     // --- storage ---
 
@@ -198,6 +211,9 @@ class SettingsViewModel @Inject constructor(
     val cocoonFolders: List<String> by lazy {
         MappingJson.shippedDefaults().platforms.mapNotNull { it.folder }.distinct().sorted()
     }
+
+    /** Which of a platform's usual folders are on the card, and how many games each holds; null when Loom can't look. */
+    suspend fun foldersOnCard(names: List<String>): List<SystemFolder>? = folders.onCard(names)
 
     // --- downloads, saves & controls ---
 

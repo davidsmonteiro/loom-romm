@@ -58,9 +58,17 @@ class FolderChooser @Inject constructor(
     suspend fun decide(slug: String, fsSlug: String): FolderDecision? = withContext(Dispatchers.IO) {
         val platform = mapping.currentMapper().resolve(slug, fsSlug)
         if (platform.folderChosen) return@withContext FolderDetector.decide(platform, emptyList())
-        val root = settings.snapshot().romsRoot?.let(::File)?.takeIf { it.list() != null } ?: return@withContext null
+        val root = readableRoot() ?: return@withContext null
         FolderDetector.decide(platform, SystemFolderScanner.scan(root, platform.candidates))
     }
+
+    /** Which of [names] are folders in the ROMs root, with how many games each holds; null when Loom can't look. */
+    suspend fun onCard(names: Collection<String>): List<SystemFolder>? = withContext(Dispatchers.IO) {
+        readableRoot()?.let { SystemFolderScanner.scan(it, names) }
+    }
+
+    /** The ROMs root, when there is one and Loom may list it (it's mounted, with all-files access). */
+    private suspend fun readableRoot(): File? = settings.snapshot().romsRoot?.let(::File)?.takeIf { it.list() != null }
 
     /** Every folder in the ROMs root that can be a system folder, for one that isn't among a platform's usual names. */
     suspend fun allFolders(): List<SystemFolder> = withContext(Dispatchers.IO) {

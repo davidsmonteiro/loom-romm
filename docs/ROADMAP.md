@@ -1,13 +1,17 @@
 # Loom roadmap
 
-Phase 1 (the MVP: pairing, catalog sync, offline browsing, platform mapping, download queue with atomic installs and checksum verification, offload and storage view) is built, and so is Phase 2's save sync for 3DS games in Azahar. This file plans the rest of Phase 2 and Phase 3; everything below that isn't marked built is not implemented yet.
+Phase 1 (the MVP: pairing, catalog sync, offline browsing, platform mapping, download queue with atomic installs and checksum verification, offload and storage view) is built, and so are two parts of Phase 2: the scheduled catalog refresh and save sync for 3DS games in Azahar. This file plans the rest of Phase 2 and Phase 3; everything below that isn't marked built is not implemented yet.
 
 ## Phase 2: background refresh and save sync
 
-### Scheduled catalog refresh
-- A periodic `CatalogSyncWorker` (every 6–12 h, network required, battery not low) running the same incremental sync as the manual one: `updated_after` watermark plus the `/api/roms/identifiers` diff for deletions.
-- Settings: interval, Wi-Fi only.
-- Optional: RomM 5.4's install queue ("send to device" from the web UI), via `POST /api/devices/{id}/installs/claim` and the Socket.IO `/devices` namespace. Loom's token is already device-bound, which that feature requires.
+### Scheduled catalog refresh (built)
+- `CatalogRefreshWorker` is periodic work every 6, 12 (the default) or 24 h. It needs a network (an unmetered one with "Only on Wi-Fi") and a battery that isn't low.
+- It queues the manual sync's incremental `CatalogSyncWorker` (`updated_after` watermark plus the `/api/roms/identifiers` diff for deletions) as the same unique work, so a refresh never runs alongside a manual or headless sync.
+- It does nothing until setup is finished, or while Loom is signed out.
+- It first checks that RomM answers (the heartbeat). When RomM can't be reached it queues no sync: it retries three times over a few minutes, then waits for the next interval, so a refresh that finds RomM out of reach doesn't leave "Sync failed" in the library. Any other answer, a rejected token for one, queues the sync, which reports it.
+- From app start the schedule follows the settings (Settings → Library sync: Off / 6 / 12 / 24 h, Only on Wi-Fi). It is updated in place, so restarting the app never puts the next refresh off.
+
+Not built, as it needs RomM 5.4 and Loom's server runs 5.3.1: the install queue ("send to device" from the web UI), via `POST /api/devices/{id}/installs/claim` and the Socket.IO `/devices` namespace. Loom's token is already device-bound, which that feature requires.
 
 ### Save sync: 3DS games in Azahar (built)
 RomM ≥ 4.9 plans sync server-side with negotiate. On 5.3.1, though, negotiate compares timestamps whenever another device uploaded last, so Loom decides from its own baseline and treats any disagreement as a save conflict ([ADR 0010](adr/0010-decide-save-sync-from-a-local-baseline.md)). Before replacing a save it backs it up on the card and restores by rename ([ADR 0011](adr/0011-back-up-saves-on-the-card-and-restore-by-rename.md)).

@@ -23,6 +23,15 @@ data class ServerConfig(val url: HttpUrl)
 /** How the last background save sync ended: when, and what it did or why it couldn't run, in words. */
 data class SaveSyncOutcome(val atEpochMs: Long, val summary: String, val failed: Boolean)
 
+/** How often Loom refreshes the catalog in the background. */
+enum class CatalogRefresh(val hours: Int) {
+    OFF(0), EVERY_6_HOURS(6), EVERY_12_HOURS(12), EVERY_24_HOURS(24);
+
+    companion object {
+        val DEFAULT = EVERY_12_HOURS
+    }
+}
+
 data class Settings(
     val server: ServerConfig?,
     val serverVersion: String?,
@@ -49,6 +58,9 @@ data class Settings(
     val azaharUserDir: String? = null,
     /** Null until a background save sync has run. */
     val lastSaveSync: SaveSyncOutcome? = null,
+    val catalogRefresh: CatalogRefresh = CatalogRefresh.DEFAULT,
+    /** Background refreshes wait for an unmetered network. */
+    val refreshOnWifiOnly: Boolean = false,
 )
 
 /**
@@ -75,6 +87,8 @@ class SettingsStore(
             autoUploadSaves = p[AUTO_UPLOAD_SAVES] ?: true,
             azaharUserDir = p[AZAHAR_USER_DIR],
             lastSaveSync = p[SAVE_SYNC_AT]?.let { at -> SaveSyncOutcome(at, p[SAVE_SYNC_SUMMARY].orEmpty(), p[SAVE_SYNC_FAILED] ?: false) },
+            catalogRefresh = CatalogRefresh.entries.find { it.hours == p[REFRESH_HOURS] } ?: CatalogRefresh.DEFAULT,
+            refreshOnWifiOnly = p[REFRESH_WIFI_ONLY] ?: false,
         )
     }
 
@@ -128,6 +142,10 @@ class SettingsStore(
         it[CATALOG_FIELDS] = fields
     }
 
+    suspend fun setCatalogRefresh(refresh: CatalogRefresh) = dataStore.edit { it[REFRESH_HOURS] = refresh.hours }
+
+    suspend fun setRefreshOnWifiOnly(wifiOnly: Boolean) = dataStore.edit { it[REFRESH_WIFI_ONLY] = wifiOnly }
+
     /** Forget the sync watermark so the next sync is a full one. */
     suspend fun resetCatalogWatermark() = dataStore.edit { it.remove(WATERMARK) }
 
@@ -147,6 +165,8 @@ class SettingsStore(
         val CONCURRENCY = intPreferencesKey("max_concurrent_downloads")
         val WATERMARK = stringPreferencesKey("catalog_watermark")
         val LAST_SYNC = stringPreferencesKey("catalog_last_sync_ms")
+        val REFRESH_HOURS = intPreferencesKey("catalog_refresh_hours")
+        val REFRESH_WIFI_ONLY = booleanPreferencesKey("catalog_refresh_wifi_only")
         val DEVICE_IDENTIFIER = stringPreferencesKey("device_identifier")
         val CATALOG_FIELDS = intPreferencesKey("catalog_fields")
         val AUTO_UPLOAD_SAVES = booleanPreferencesKey("auto_upload_saves")

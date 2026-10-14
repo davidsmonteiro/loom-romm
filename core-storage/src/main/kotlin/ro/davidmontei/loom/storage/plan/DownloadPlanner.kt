@@ -114,16 +114,22 @@ object DownloadPlanner {
                 extract = extract,
             )
         }
-        val stem = if (rom.isFolder) rom.fsName else rom.fsNameNoExt.ifBlank { rom.fsName }
         return DownloadPlan(
             romId = rom.id,
             fingerprint = fingerprint(rom),
             systemFolder = platform.folder,
-            entryStem = NameSanitizer.sanitize(stem, fallback = "rom-${rom.id}"),
+            entryStem = entryStem(rom.id, rom.fsName, rom.fsNameNoExt, rom.isFolder),
             multiDisc = platform.multiDisc,
             parts = parts,
         )
     }
+
+    /**
+     * The name an install is given when its layout needs one (a folder, or an unpacked file): the ROM's
+     * folder name, or its file name without the extension. Sanitised.
+     */
+    fun entryStem(romId: Int, fsName: String, fsNameNoExt: String, isFolder: Boolean): String =
+        NameSanitizer.sanitize(if (isFolder) fsName else fsNameNoExt.ifBlank { fsName }, fallback = "rom-$romId")
 
     /** Path of [file] inside its ROM folder; just the file name for single-file ROMs. */
     fun relPath(rom: RomSnapshot, file: RomFileSnapshot): String {

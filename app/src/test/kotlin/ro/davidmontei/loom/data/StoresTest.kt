@@ -1,6 +1,8 @@
 package ro.davidmontei.loom.data
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +19,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.TokenCipher
+import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.romm.pairing.PairedCredentials
@@ -89,6 +92,26 @@ class StoresTest {
         assertThat(after.maxConcurrentDownloads).isEqualTo(3)
         assertThat(after.romsRoot).isEqualTo("/storage/9C33-6BBD/ROMs")
         assertThat(after.serverVersion).isEqualTo("5.3.1")
+    }
+
+    @Test fun catalogRefreshDefaultsAndUpdates() = runBlocking<Unit> {
+        val prefsStore = prefs("settings")
+        val store = SettingsStore(prefsStore)
+        val initial = store.snapshot()
+        assertThat(initial.catalogRefresh).isEqualTo(CatalogRefresh.EVERY_12_HOURS)
+        assertThat(initial.refreshOnWifiOnly).isFalse()
+
+        store.setCatalogRefresh(CatalogRefresh.EVERY_6_HOURS)
+        store.setRefreshOnWifiOnly(true)
+        val after = store.snapshot()
+        assertThat(after.catalogRefresh).isEqualTo(CatalogRefresh.EVERY_6_HOURS)
+        assertThat(after.refreshOnWifiOnly).isTrue()
+
+        store.setCatalogRefresh(CatalogRefresh.OFF)
+        assertThat(store.snapshot().catalogRefresh).isEqualTo(CatalogRefresh.OFF)
+        // An interval Loom doesn't offer (from a future or past version) reads as the default.
+        prefsStore.edit { it[intPreferencesKey("catalog_refresh_hours")] = 7 }
+        assertThat(store.snapshot().catalogRefresh).isEqualTo(CatalogRefresh.EVERY_12_HOURS)
     }
 
     @Test fun deviceIdentifierIsStable() = runBlocking<Unit> {
