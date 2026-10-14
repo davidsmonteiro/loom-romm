@@ -9,6 +9,7 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +25,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import ro.davidmontei.loom.data.db.TitledConflict
 import ro.davidmontei.loom.data.saves.ConflictChoice
@@ -63,6 +65,8 @@ data class ConflictItem(
     val skipped: Boolean = false,
     /** An answer is being carried out. */
     val busy: Boolean = false,
+    /** The user picked the game's save folder (Loom couldn't read its title ID): a wrong pick shows up as a conflict, so it can change it. */
+    val folderChosen: Boolean = false,
 ) {
     val thorHasSave get() = thorBytes != null
     val serverHasSave get() = serverUpdatedMs != null
@@ -74,8 +78,11 @@ data class RestorableSave(val romId: Int, val title: String, val missing: Boolea
 /** A game whose save was synced lately, and when. */
 data class RecentSave(val romId: Int, val title: String, val atMs: Long)
 
-/** [server]: what RomM said about conflicts' server saves, by save id. [busy]: games an answer is being carried out for. */
-fun TitledConflict.toItem(server: Map<Int, ServerSaveInfo>, busy: Set<Int>): ConflictItem {
+/**
+ * [server]: what RomM said about conflicts' server saves, by save id. [busy]: games an answer is
+ * being carried out for. [chosenFolders]: games whose save folder the user picked.
+ */
+fun TitledConflict.toItem(server: Map<Int, ServerSaveInfo>, busy: Set<Int>, chosenFolders: Set<Int> = emptySet()): ConflictItem {
     val info = conflict.serverSaveId?.let(server::get)
     return ConflictItem(
         romId = conflict.romId,
@@ -90,6 +97,7 @@ fun TitledConflict.toItem(server: Map<Int, ServerSaveInfo>, busy: Set<Int>): Con
         emulator = localEmulator,
         skipped = conflict.skipped,
         busy = conflict.romId in busy,
+        folderChosen = conflict.romId in chosenFolders,
     )
 }
 
@@ -191,23 +199,35 @@ internal fun RecentSaveRow(item: RecentSave, modifier: Modifier) {
 
 /**
  * Which save to keep: both sides as Loom found them, and the four answers. Skip has focus, and B
- * skips too: nothing changes on either side until the user picks one.
+ * skips too: nothing changes on either side until the user picks one. For a game whose save
+ * folder the user picked, Left reaches [onChangeFolder], away from the answers: a wrong pick shows
+ * up as a conflict, and neither side is the one to keep then. The dialog takes the screen's width
+ * for that fifth button.
  */
 @Composable
-internal fun ConflictDialog(item: ConflictItem, onAnswer: (ConflictChoice) -> Unit) {
+internal fun ConflictDialog(item: ConflictItem, onAnswer: (ConflictChoice) -> Unit, onChangeFolder: (() -> Unit)? = null) {
     LoomDialog(
         title = "${item.title}: which save to keep?",
         onDismiss = { onAnswer(ConflictChoice.SKIP) },
+        maxWidth = if (onChangeFolder != null) Dp.Unspecified else 680.dp,
         body = {
             Text(item.reason, style = MaterialTheme.typography.bodyLarge, color = LoomColors.TextMuted)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
                 SaveSide("On the Thor", thorSide(item), Modifier.weight(1f).testTag("thor-side"))
                 SaveSide("On RomM", serverSide(item), Modifier.weight(1f).testTag("server-side"))
             }
-            Text("Keep both uploads the Thor's save to RomM as a separate copy, then takes RomM's. Skip leaves both as they are.",
-                style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted)
+            Text(
+                "Keep both uploads the Thor's save to RomM as a separate copy, then takes RomM's. Skip leaves both as they are." +
+                    if (onChangeFolder != null) " You picked this game's ${emulatorName(item.emulator)} save folder: if the Thor's save " +
+                        "isn't its, Change save folder picks again." else "",
+                style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted,
+            )
         },
         buttons = { first ->
+            if (onChangeFolder != null) {
+                LoomButton("Change save folder", onChangeFolder)
+                Spacer(Modifier.weight(1f))
+            }
             LoomButton("Skip", { onAnswer(ConflictChoice.SKIP) }, Modifier.focusRequester(first))
             LoomButton("Keep Thor", { onAnswer(ConflictChoice.KEEP_THOR) }, enabled = item.thorHasSave)
             LoomButton("Keep server", { onAnswer(ConflictChoice.KEEP_SERVER) }, enabled = item.serverHasSave)

@@ -26,6 +26,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.shadows.ShadowEnvironment
+import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.download.QueueKicker
 import ro.davidmontei.loom.data.download.StorageVolumes
@@ -35,6 +36,7 @@ import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.SaveSyncRequest
 import ro.davidmontei.loom.data.saves.SaveSyncTestBase
 import ro.davidmontei.loom.net.ActiveServer
+import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import ro.davidmontei.loom.ui.queue.QueueViewModel
 import ro.davidmontei.loom.ui.queue.RestorableSave
 import java.io.File
@@ -131,6 +133,36 @@ class QueueViewModelTest : SaveSyncTestBase() {
         val after = withTimeout(5_000) { vm.state.first { s -> s.conflicts.none { it.busy } } }
         assertThat(after.conflicts.map { it.romId }).containsExactly(7)
         assertThat(localMain(pokemonX)).isEqualTo(bytes(3))
+    }
+
+    /**
+     * A wrong pick of a Switch game's save folder ends in a conflict: the queue asks for the folder
+     * again, as the game's details do, and the right pick settles it.
+     */
+    @Test fun aConflictsSaveFolderCanBeChosenAgainFromTheQueue() = runBlocking<Unit> {
+        installSwitch(wonder) // no prod.keys: the owner picks its folder
+        writeEdenSave(wonder, bytes(1))
+        writeEdenSave(arceus, bytes(2), minutesAgo = 5) // another game's folder, changed later
+        romm.addSave(wonder.romId, edenArchiveOf(wonder, bytes(1)), emulator = "eden")
+        eden().chooseFolder(wonder.romId, SwitchTitleId.parse(arceus.titleId)!!) // the wrong one
+        engine().sync(SaveSyncRequest.PUSH)
+        val conflict = withTimeout(5_000) { vm.state.first { s -> s.conflicts.any { it.folderChosen } } }.conflicts.single()
+        assertThat(conflict.romId).isEqualTo(wonder.romId)
+
+        vm.askSaveFolder(wonder.romId, wonder.title, conflict.emulator)
+        val question = withTimeout(5_000) { vm.state.first { it.saveFolderQuestion != null } }.saveFolderQuestion!!
+        assertThat(question.options.map { it.id }).containsExactly(arceus.titleId, wonder.titleId).inOrder()
+        assertThat(question.current).isEqualTo(arceus.titleId)
+
+        val message = async { vm.messages.first() }
+        vm.chooseSaveFolder(wonder.titleId)
+
+        assertThat(withTimeout(10_000) { message.await() }).isEqualTo("Super Mario Bros Wonder's save is Eden's ${wonder.titleId} folder")
+        val after = withTimeout(5_000) { vm.state.first { it.conflicts.isEmpty() } }
+        assertThat(after.saveFolderQuestion).isNull()
+        assertThat(db.saveDao().switchTitle(wonder.romId)!!.titleId).isEqualTo(wonder.titleId)
+        assertThat(db.saveDao().unit(wonder.romId)!!.state).isEqualTo(SaveSyncState.IN_SYNC) // the same save as RomM's
+        assertThat(romm.uploads()).isEmpty()
     }
 
     @Test fun aNewerSaveOnRommIsListedAndRestored() = runBlocking<Unit> {

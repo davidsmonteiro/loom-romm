@@ -136,4 +136,7 @@ object NoopQueueActions : ro.davidmontei.loom.ui.queue.QueueActions {
     override fun cancel(jobId: Long) = Unit
     override fun resolveConflict(romId: Int, title: String, choice: ro.davidmontei.loom.data.saves.ConflictChoice) = Unit
     override fun restoreSave(romId: Int, title: String) = Unit
+    override fun askSaveFolder(romId: Int, title: String, emulator: String?) = Unit
+    override fun chooseSaveFolder(id: String) = Unit
+    override fun dismissSaveFolderQuestion() = Unit
 }

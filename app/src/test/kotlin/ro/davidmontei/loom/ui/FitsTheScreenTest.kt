@@ -326,6 +326,20 @@ class FitsTheScreenTest {
         rule.saveScreenshot("queue-conflict-choice")
     }
 
+    /** The same, for a Switch game whose save folder the user picked: Change save folder fits beside the answers. */
+    @Test fun theSaveConflictChoiceWithChangeSaveFolderFits() {
+        val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"
+        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = conflictReason(SyncDecision.SERVER_WENT_BACK.name),
+            serverEmulator = "eden", emulator = "eden", serverDevice = "AYN Odin 2 Portal (Argosy)", folderChosen = true)
+        rule.setContent { LoomTestTheme { QueueContent(QueueScreenTest.sample.copy(conflicts = listOf(conflict)), NoopQueueActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("conflict-7").performClick()
+        rule.onNodeWithText("Change save folder").assertExists()
+        assertThat(overflow("$title: which save to keep?")).isEqualTo(0f)
+        assertThat(cutShort("Change save folder picks again.")).isFalse()
+        rule.saveScreenshot("queue-conflict-choice-change-folder")
+    }
+
     /** The editor with arcade's other folders under the field, and what the card holds of each. */
     @Test fun thePlatformFolderEditorFitsWithThePlatformsOwnFolders() {
         val state = SettingsScreenTest.sample.copy(mapping = listOf(SettingsScreenTest.chosenRow(1, "Arcade", "arcade", "arcade", "arcade")))

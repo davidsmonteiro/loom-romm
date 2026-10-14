@@ -78,6 +78,11 @@ import ro.davidmontei.loom.ui.components.StatusBadge
 import ro.davidmontei.loom.ui.input.PadAction
 import ro.davidmontei.loom.ui.input.onPadAction
 import ro.davidmontei.loom.ui.saves.ReplaceSaveDialog
+import ro.davidmontei.loom.ui.saves.SaveFolderDialog
+import ro.davidmontei.loom.ui.saves.SaveFolderOption
+import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
+import ro.davidmontei.loom.ui.saves.answer
+import ro.davidmontei.loom.ui.saves.toQuestion
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 import javax.inject.Inject
@@ -108,6 +113,8 @@ data class QueueUiState(
     val conflicts: List<ConflictItem> = emptyList(),
     val restorable: List<RestorableSave> = emptyList(),
     val recentSaves: List<RecentSave> = emptyList(),
+    /** Which save folder is a conflicting game's, asked from its conflict ([QueueActions.askSaveFolder]). */
+    val saveFolderQuestion: SaveFolderQuestion? = null,
 )
 
 /** A row of the queue: a section header, a save to settle or restore, or a job. */
@@ -129,6 +136,11 @@ interface QueueActions {
     fun resolveConflict(romId: Int, title: String, choice: ConflictChoice)
     /** Puts RomM's save on the Thor, once the user said the emulator is closed. */
     fun restoreSave(romId: Int, title: String)
+    /** Asks again which save folder is the conflicting game [romId]'s ([QueueUiState.saveFolderQuestion]), as its details do. */
+    fun askSaveFolder(romId: Int, title: String, emulator: String?)
+    /** The answer to [QueueUiState.saveFolderQuestion]: a [SaveFolderOption.id]. The game's save is looked at again. */
+    fun chooseSaveFolder(id: String)
+    fun dismissSaveFolderQuestion()
 }
 
 @HiltViewModel
@@ -137,6 +149,10 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
     private val serverSaves = MutableStateFlow<Map<Int, ServerSaveInfo>>(emptyMap())
     /** Games an answer or a restore is being carried out for. */
     private val busy = MutableStateFlow<Set<Int>>(emptySet())
+    private val saveFolderQuestion = MutableStateFlow<SaveFolderQuestion?>(null)
+
+    /** What the queue's saves need besides the rows themselves. */
+    private class SaveExtras(val server: Map<Int, ServerSaveInfo>, val busy: Set<Int>, val chosen: Set<Int>, val question: SaveFolderQuestion?)
 
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages: Flow<String> = _messages.receiveAsFlow()
@@ -171,12 +187,16 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
     }
 
     val state: StateFlow<QueueUiState> = combine(
-        jobRows, saves.observeConflicts(), saves.observeRestorable(), saves.observeRecentSyncs(), combine(serverSaves, busy, ::Pair),
-    ) { jobs, conflicts, restorable, recent, (server, working) ->
+        jobRows, saves.observeConflicts(), saves.observeRestorable(), saves.observeRecentSyncs(),
+        combine(serverSaves, busy, saves.observeChosenFolders(), saveFolderQuestion, ::SaveExtras),
+    ) { jobs, conflicts, restorable, recent, extras ->
         jobs.copy(
-            conflicts = conflicts.map { it.toItem(server, working) },
-            restorable = restorable.map { RestorableSave(it.romId, it.title, it.state == SaveSyncState.LOCAL_MISSING, it.emulator, it.romId in working) },
+            conflicts = conflicts.map { it.toItem(extras.server, extras.busy, extras.chosen) },
+            restorable = restorable.map {
+                RestorableSave(it.romId, it.title, it.state == SaveSyncState.LOCAL_MISSING, it.emulator, it.romId in extras.busy)
+            },
             recentSaves = recent.map { RecentSave(it.romId, it.title, it.syncedAtMs) },
+            saveFolderQuestion = extras.question,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), QueueUiState(emptyList(), emptyList(), emptyList()))
 
@@ -202,6 +222,19 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
     override fun resolveConflict(romId: Int, title: String, choice: ConflictChoice) = carryOut(romId) { saves.resolve(romId, title, choice) }
 
     override fun restoreSave(romId: Int, title: String) = carryOut(romId) { saves.restore(romId, title) }
+
+    override fun askSaveFolder(romId: Int, title: String, emulator: String?) {
+        viewModelScope.launch { saveFolderQuestion.value = saves.saveFolderChoice(romId).toQuestion(romId, title, emulator) }
+    }
+
+    /** Remembered, then the game's save is looked at again: a right pick usually settles its conflict. */
+    override fun chooseSaveFolder(id: String) {
+        val q = saveFolderQuestion.value ?: return
+        saveFolderQuestion.value = null
+        carryOut(q.romId) { saves.answer(q, id) ?: "Nothing changed for ${q.title}" }
+    }
+
+    override fun dismissSaveFolderQuestion() { saveFolderQuestion.value = null }
 
     /** One request per game at a time: a second press while it runs does nothing. */
     private fun carryOut(romId: Int, request: suspend () -> String) {
@@ -384,14 +417,19 @@ fun QueueContent(
             val item = state.conflicts.firstOrNull { it.romId == romId }
             LaunchedEffect(item == null) { if (item == null) choosing = null }
             if (item != null) {
-                ConflictDialog(item) { choice ->
-                    choosing = null
-                    when (choice) {
-                        // These replace the Thor's save: asked again, with the emulator to close first.
-                        ConflictChoice.KEEP_SERVER, ConflictChoice.KEEP_BOTH -> replacing = item to choice
-                        else -> actions.resolveConflict(item.romId, item.title, choice)
-                    }
-                }
+                ConflictDialog(
+                    item,
+                    onAnswer = { choice ->
+                        choosing = null
+                        when (choice) {
+                            // These replace the Thor's save: asked again, with the emulator to close first.
+                            ConflictChoice.KEEP_SERVER, ConflictChoice.KEEP_BOTH -> replacing = item to choice
+                            else -> actions.resolveConflict(item.romId, item.title, choice)
+                        }
+                    },
+                    // Not an answer: the conflict stays as it is (not skipped) until the folder question is.
+                    onChangeFolder = { choosing = null; actions.askSaveFolder(item.romId, item.title, item.emulator) }.takeIf { item.folderChosen },
+                )
             }
         }
         replacing?.let { (item, choice) ->
@@ -414,6 +452,8 @@ fun QueueContent(
                 onDismiss = { restoring = null },
             )
         }
+        // B or Cancel closes it, back on the conflict's row.
+        state.saveFolderQuestion?.let { SaveFolderDialog(it, actions::chooseSaveFolder, actions::dismissSaveFolderQuestion) }
     }
 }
 
