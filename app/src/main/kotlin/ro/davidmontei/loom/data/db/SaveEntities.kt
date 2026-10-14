@@ -6,7 +6,8 @@ import androidx.room.PrimaryKey
 
 /**
  * What Loom recorded the last time a game's slot was in sync on the Thor (see CONTEXT.md,
- * "Baseline"). Written only after an upload, download or adopt fully succeeded.
+ * "Baseline"). Written only after an upload, download or adopt fully succeeded. It holds only for
+ * the save folder it was recorded from.
  */
 @Entity(tableName = "save_baselines", primaryKeys = ["rom_id", "slot"])
 data class SaveBaselineEntity(
@@ -20,6 +21,12 @@ data class SaveBaselineEntity(
     /** The head's `updated_at`, as an ISO-8601 instant, to the precision RomM sent. */
     @ColumnInfo(name = "server_updated_at") val serverUpdatedAt: String,
     @ColumnInfo(name = "synced_at") val syncedAtMs: Long,
+    /**
+     * The save unit's folder then. A save found in another folder (Azahar's folder changed, the
+     * game reinstalled on another card) is compared as if never synced. Null for a baseline
+     * recorded before Loom kept it, which counts as another folder.
+     */
+    @ColumnInfo(name = "unit_path") val unitPath: String? = null,
 )
 
 /**

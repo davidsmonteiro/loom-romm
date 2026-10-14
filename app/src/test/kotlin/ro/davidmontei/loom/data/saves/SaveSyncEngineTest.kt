@@ -501,6 +501,54 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(saves.unit(7)!!.unitPath).startsWith(elsewhere.path)
     }
 
+    /** Azahar's data in [folder], holding Pokémon X's save as [copyOf] if given, else this `main`; last written long ago. */
+    private fun azaharIn(folder: File, main: ByteArray? = null, copyOf: File? = null) {
+        val data = File(folder, "sdmc/Nintendo 3DS/$ZEROS/$ZEROS/title/00040000/00055d00/data")
+        if (copyOf != null) copyOf.copyRecursively(data) else {
+            File(data, "00000001").mkdirs()
+            File(data, "00000001/main").writeBytes(main!!)
+        }
+        File(folder, "sdmc").walkTopDown().forEach { it.setLastModified(clock.minus(Duration.ofDays(300)).toEpochMilli()) }
+    }
+
+    /**
+     * The baseline belongs to the folder the save was synced from. Azahar's folder set to another
+     * one holding an old save of the same game (or the game reinstalled on another card with its
+     * own Azahar data) isn't "changed on the Thor": Loom asks rather than uploading it over the
+     * synced save.
+     */
+    @Test fun aSaveInAnotherAzaharFolderIsAConflictNotAnUpload() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(7)
+        val head = romm.head(7)!!.id
+        val elsewhere = File(volume, "Azahar").also { azaharIn(it, main = bytes(5)) }
+        settings.setAzaharUserDir(elsewhere.path)
+
+        val report = engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(report.uploaded).isEmpty()
+        assertThat(report.conflicts).containsExactly(7)
+        assertThat(saves.conflict(7)!!.reason).isEqualTo(SyncDecision.FIRST_SYNC_DIFFERS.name)
+        assertThat(romm.head(7)!!.id).isEqualTo(head)
+    }
+
+    /** The same save in the other folder is simply recorded as in sync there. */
+    @Test fun theSameSaveInAnotherAzaharFolderIsAdopted() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        val elsewhere = File(volume, "Azahar").also { azaharIn(it, copyOf = saveFolder(pokemonX)) }
+        settings.setAzaharUserDir(elsewhere.path)
+
+        val report = engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(report.adopted).containsExactly(7)
+        assertThat(romm.uploads()).hasSize(1)
+        assertThat(saves.baseline(7, "autosave")!!.unitPath).startsWith(elsewhere.path)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
     // --- the device ---
 
     @Test fun withoutARommDeviceSavesWaitForPairing() = runBlocking<Unit> {

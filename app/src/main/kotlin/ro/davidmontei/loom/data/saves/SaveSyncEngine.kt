@@ -305,19 +305,21 @@ class SaveSyncEngine(
         /**
          * Reads the local save: finishes any restore Loom died in, then hashes the unit unless its
          * files look exactly as at the last scan. Null (left out of the run) when it can't be read.
+         * A baseline recorded for another folder doesn't count: that save was never synced from here.
          */
         private suspend fun prepare(save: ResolvedSave.Ready): Prepared? {
             try {
                 restorer.recover(save.roots)
                 val before = UnitSnapshot.of(save.roots)
                 val cached = saves.unit(save.romId)
-                val path = save.roots.first().folder.toString()
+                val path = save.unitPath
                 val hash = when {
                     before.isEmpty -> null
                     cached != null && cached.unitPath == path && cached.fingerprint == before.fingerprint && cached.localHash != null -> cached.localHash
                     else -> SaveHasher.hashUnit(save.roots)
                 }
-                val prepared = Prepared(save, before, hash, saves.baseline(save.romId, SAVE_SLOT)?.toBaseline())
+                val baseline = saves.baseline(save.romId, SAVE_SLOT)?.takeIf { it.unitPath == path }
+                val prepared = Prepared(save, before, hash, baseline?.toBaseline())
                 setState(save.romId, cached?.state ?: SaveSyncState.NO_SAVE, cached?.detail, save, before, hash)
                 return prepared
             } catch (e: IOException) {
@@ -387,7 +389,7 @@ class SaveSyncEngine(
                     Acted.NOTHING
                 }
                 SyncOutcome.ADOPT -> {
-                    adopt(api, deviceId, game.romId, game.localHash!!, head!!)
+                    adopt(api, deviceId, game.save, game.localHash!!, head!!)
                     adopted += game.romId
                     Acted.DONE
                 }
@@ -571,10 +573,10 @@ class SaveSyncEngine(
     // --- the operations ---
 
     /** Both sides hold the same bytes: tell RomM this device has that version, and record it. */
-    private suspend fun adopt(api: RommApi, deviceId: String, romId: Int, localHash: String, head: ServerHead) {
+    private suspend fun adopt(api: RommApi, deviceId: String, save: ResolvedSave.Ready, localHash: String, head: ServerHead) {
         rommCall { api.confirmSaveDownloaded(head.saveId, SaveDeviceRequest(deviceId)) }
-        writeBaseline(romId, localHash, head.saveId, head.contentHash, head.updatedAt)
-        setState(romId, SaveSyncState.IN_SYNC, null)
+        writeBaseline(save, localHash, head.saveId, head.contentHash, head.updatedAt)
+        setState(save.romId, SaveSyncState.IN_SYNC, null)
     }
 
     /**
@@ -599,7 +601,7 @@ class SaveSyncEngine(
         } else if (!overwrite && head != null && !isNewHead(saved, head)) {
             saved = send(overwrite = true)
         }
-        writeBaseline(save.romId, hash, saved.id, saved.contentHash, saved.updatedAtInstant())
+        writeBaseline(save, hash, saved.id, saved.contentHash, saved.updatedAtInstant())
         setState(save.romId, SaveSyncState.IN_SYNC, null)
     }
 
@@ -642,7 +644,7 @@ class SaveSyncEngine(
             if (!SaveHasher.isZip(file.toPath())) throw SaveArchiveException("RomM's save for this game isn't a save archive Loom can restore")
             val restored = restorer.restore(file.toPath(), save.roots, current)
             rommCall { api.confirmSaveDownloaded(head.saveId, SaveDeviceRequest(deviceId)) }
-            writeBaseline(romId, restored, head.saveId, head.contentHash, head.updatedAt)
+            writeBaseline(save, restored, head.saveId, head.contentHash, head.updatedAt)
             setState(romId, SaveSyncState.IN_SYNC, null)
         } finally {
             file.delete()
@@ -719,9 +721,11 @@ class SaveSyncEngine(
         }
     }
 
-    private suspend fun writeBaseline(romId: Int, localHash: String, saveId: Int, serverHash: String?, serverUpdatedAt: Instant) =
+    private suspend fun writeBaseline(save: ResolvedSave.Ready, localHash: String, saveId: Int, serverHash: String?, serverUpdatedAt: Instant) =
         saves.upsertBaseline(
-            SaveBaselineEntity(romId, SAVE_SLOT, localHash, saveId, serverHash, serverUpdatedAt.toString(), now().toEpochMilli()),
+            SaveBaselineEntity(
+                save.romId, SAVE_SLOT, localHash, saveId, serverHash, serverUpdatedAt.toString(), now().toEpochMilli(), save.unitPath,
+            ),
         )
 
     /** Records a game's state; with [save], also what its files looked like for the next scan. */
@@ -734,7 +738,7 @@ class SaveSyncEngine(
         saves.upsertUnit(
             if (save != null && snapshot != null) {
                 SaveUnitEntity(
-                    romId, emulator, save.roots.first().folder.toString(), snapshot.fingerprint, snapshot.fileCount,
+                    romId, emulator, save.unitPath, snapshot.fingerprint, snapshot.fileCount,
                     snapshot.totalBytes, snapshot.newestModified?.toEpochMilli(), hash, state, detail, now().toEpochMilli(),
                 )
             } else {

@@ -28,7 +28,10 @@ sealed interface ResolvedSave {
         val fileName: String,
         /** The game's title, for backups and archival copies. */
         val title: String,
-    ) : ResolvedSave
+    ) : ResolvedSave {
+        /** Where the save is, as Loom records it with the save's scan and baseline. */
+        val unitPath: String get() = roots.first().folder.toString()
+    }
 
     /** Loom can't sync this game until something changes (another emulator, a missing title ID). */
     data class Unsupported(override val romId: Int, val reason: String) : ResolvedSave

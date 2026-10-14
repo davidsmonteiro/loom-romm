@@ -17,14 +17,14 @@ import java.io.File
 
 /**
  * Upgrading Loom keeps the catalog and installs, and adds what save sync needs. The old database is
- * built from the exported version-1 schema; Room then migrates it and checks every table against
- * what version 2 expects, as it does on the Thor.
+ * built from an exported schema; Room then migrates it and checks every table against what the
+ * current version expects, as it does on the Thor.
  */
 @RunWith(AndroidJUnit4::class)
 class MigrationTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
 
-    @Test fun version1BecomesVersion2KeepingEverything() = runBlocking<Unit> {
+    @Test fun version1BecomesTheCurrentVersionKeepingEverything() = runBlocking<Unit> {
         val file = context.getDatabasePath(DB).apply { parentFile!!.mkdirs(); delete() }
         SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
             createFromSchema(db, version = 1)
@@ -57,6 +57,26 @@ class MigrationTest {
             assertThat(saves.conflict(7)!!.skipped).isFalse()
             saves.upsertUnit(SaveUnitEntity(7, "azahar", "/x/data", "f", 2, 3, 4, "l", SaveSyncState.CONFLICT, null, 5))
             assertThat(saves.unit(7)!!.state).isEqualTo(SaveSyncState.CONFLICT)
+        } finally {
+            room.close()
+        }
+    }
+
+    /** A baseline from before Loom recorded its folder stays, with no folder: the next sync compares as a first one. */
+    @Test fun version2BaselinesStayWithoutAFolder() = runBlocking<Unit> {
+        val file = context.getDatabasePath(DB).apply { parentFile!!.mkdirs(); delete() }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            createFromSchema(db, version = 2)
+            db.execSQL("INSERT INTO save_baselines VALUES (7, 'autosave', 'abc', 12, 'abc', '2026-10-13T17:49:45Z', 1)")
+        }
+
+        val room = DataModule.database(context)
+        try {
+            val baseline = room.saveDao().baseline(7, "autosave")!!
+            assertThat(baseline.serverSaveId).isEqualTo(12)
+            assertThat(baseline.unitPath).isNull()
+            room.saveDao().upsertBaseline(baseline.copy(unitPath = "/x/data"))
+            assertThat(room.saveDao().baseline(7, "autosave")!!.unitPath).isEqualTo("/x/data")
         } finally {
             room.close()
         }

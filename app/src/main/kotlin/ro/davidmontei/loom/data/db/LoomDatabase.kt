@@ -17,7 +17,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SaveConflictEntity::class,
         SaveUnitEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class LoomDatabase : RoomDatabase() {
@@ -53,5 +53,16 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
                 "`newest_modified_ms` INTEGER, `local_hash` TEXT, `state` TEXT NOT NULL, `detail` TEXT, " +
                 "`checked_at` INTEGER NOT NULL, PRIMARY KEY(`rom_id`))",
         )
+    }
+}
+
+/**
+ * Version 3: a save baseline records the folder it was synced from. Baselines already there get
+ * none, so each game's next sync compares its save with RomM's as a first sync would: identical
+ * saves are adopted, different ones become conflicts, and nothing is uploaded over RomM's.
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `save_baselines` ADD COLUMN `unit_path` TEXT")
     }
 }

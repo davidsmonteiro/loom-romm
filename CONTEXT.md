@@ -100,7 +100,7 @@ RomM's name for one line of save versions per ROM; device and server saves pair 
 _Avoid_: channel
 
 **Baseline**:
-What Loom recorded the last time a game's slot was in sync on the Thor: its own hash of the save unit, and the slot head's id, hash and time. Comparing each side with it tells which one changed.
+What Loom recorded the last time a game's slot was in sync on the Thor: its own hash of the save unit, the slot head's id, hash and time, and the save's folder. Comparing each side with it tells which one changed. A save found in another folder (Azahar's folder changed, the game moved to another card) is compared as if it had never synced.
 _Avoid_: last sync, sync row (that is RomM's record of the device's last download or upload)
 
 **Save backup**:
