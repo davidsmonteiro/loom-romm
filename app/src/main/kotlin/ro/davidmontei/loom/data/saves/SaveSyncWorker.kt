@@ -14,6 +14,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.romm.RommException
 import java.util.concurrent.TimeUnit
@@ -50,6 +51,7 @@ class SaveSyncWorker @AssistedInject constructor(
         return try {
             val report = engine.sync(request)
             notifications.after(report)
+            record(report.summary(), failed = report.unavailable != null)
             if (report.unavailable != null) {
                 Result.failure(workDataOf(KEY_ERROR to report.unavailable))
             } else {
@@ -61,12 +63,26 @@ class SaveSyncWorker @AssistedInject constructor(
                 )
             }
         } catch (e: RommException.Unreachable) {
-            if (runAttemptCount < 3) Result.retry() else Result.failure(workDataOf(KEY_ERROR to "Can't reach the RomM server"))
+            if (runAttemptCount < 3) {
+                record("Can't reach the RomM server; Loom tries again soon", failed = true)
+                Result.retry()
+            } else {
+                failure("Can't reach the RomM server")
+            }
         } catch (e: RommException.Unauthorized) {
-            Result.failure(workDataOf(KEY_ERROR to "RomM rejected Loom's token. Pair again in Settings."))
+            failure("RomM rejected Loom's token. Pair again in Settings.")
         } catch (e: RommException) {
-            Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Save sync failed")))
+            failure(e.message ?: "Save sync failed")
         }
+    }
+
+    /** Settings shows how the last run ended, so a sync that keeps failing doesn't go unnoticed. */
+    private suspend fun record(summary: String, failed: Boolean) =
+        settings.setLastSaveSync(SaveSyncOutcome(System.currentTimeMillis(), summary, failed))
+
+    private suspend fun failure(error: String): Result {
+        record(error, failed = true)
+        return Result.failure(workDataOf(KEY_ERROR to error))
     }
 
     companion object {

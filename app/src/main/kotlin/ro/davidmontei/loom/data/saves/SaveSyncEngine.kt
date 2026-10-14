@@ -97,7 +97,21 @@ data class SaveSyncReport(
     val unsupported: Map<Int, String> = emptyMap(),
     /** Why the run couldn't start at all (not paired, no RomM device); null when it ran. */
     val unavailable: String? = null,
-)
+) {
+    /** What the run did, in a few words for Settings ("2 uploaded · 1 conflict"), or why it couldn't run. */
+    fun summary(): String {
+        unavailable?.let { return it }
+        val parts = buildList {
+            if (uploaded.isNotEmpty()) add("${uploaded.size} uploaded")
+            if (downloaded.isNotEmpty()) add("${downloaded.size} restored from RomM")
+            if (conflicts.isNotEmpty()) add(if (conflicts.size == 1) "1 conflict" else "${conflicts.size} conflicts")
+            if (serverNewer.isNotEmpty()) add("${serverNewer.size} newer on RomM")
+            if (waiting.isNotEmpty()) add("${waiting.size} waiting to upload")
+            if (failed.isNotEmpty()) add("${failed.size} failed")
+        }
+        return parts.joinToString(" · ").ifEmpty { "no changes" }
+    }
+}
 
 /** The user's answer to a save conflict. */
 enum class ConflictChoice {

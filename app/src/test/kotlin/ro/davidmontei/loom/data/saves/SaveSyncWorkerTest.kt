@@ -15,6 +15,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
+import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.settings.ServerConfig
 
 /** What each kind of background run may do, and what it tells the user. */
@@ -89,5 +90,42 @@ class SaveSyncWorkerTest : SaveSyncTestBase() {
         install(pokemonX)
         writeSave(pokemonX, bytes(1))
         assertThat(run(SaveSyncKind.AUTO)).isEqualTo(ListenableWorker.Result.retry())
+        assertThat(settings.snapshot().lastSaveSync!!.copy(atEpochMs = 0))
+            .isEqualTo(SaveSyncOutcome(0, "Can't reach the RomM server; Loom tries again soon", failed = true))
+    }
+
+    /** Settings shows how the last background run went, so one that keeps failing doesn't go unnoticed. */
+    @Test fun eachRunIsRecordedForSettings() = runBlocking<Unit> {
+        install(pokemonX)
+        install(omegaRuby)
+        writeSave(pokemonX, bytes(1))
+        romm.addSave(8, archiveOf(bytes(3))) // newer on the server
+        val before = System.currentTimeMillis()
+
+        run(SaveSyncKind.AUTO)
+
+        val last = settings.snapshot().lastSaveSync!!
+        assertThat(last.summary).isEqualTo("1 uploaded · 1 newer on RomM")
+        assertThat(last.failed).isFalse()
+        assertThat(last.atEpochMs).isAtLeast(before)
+    }
+
+    @Test fun aRunThatCouldntStartIsRecordedWithTheReason() = runBlocking<Unit> {
+        pair(deviceId = null)
+        run(SaveSyncKind.PUSH)
+        assertThat(settings.snapshot().lastSaveSync!!.copy(atEpochMs = 0)).isEqualTo(SaveSyncOutcome(0, SaveSyncEngine.NO_DEVICE, failed = true))
+    }
+
+    @Test fun aRunThatDidNothingIsNotRecorded() = runBlocking<Unit> {
+        settings.setAutoUploadSaves(false)
+        run(SaveSyncKind.AUTO)
+        assertThat(settings.snapshot().lastSaveSync).isNull()
+    }
+
+    @Test fun theSummaryCountsWhatARunDid() {
+        assertThat(SaveSyncReport().summary()).isEqualTo("no changes")
+        assertThat(SaveSyncReport(downloaded = setOf(1), conflicts = setOf(2, 3), waiting = setOf(4), failed = mapOf(5 to "x")).summary())
+            .isEqualTo("1 restored from RomM · 2 conflicts · 1 waiting to upload · 1 failed")
+        assertThat(SaveSyncReport(conflicts = setOf(2), unavailable = "Not paired").summary()).isEqualTo("Not paired")
     }
 }

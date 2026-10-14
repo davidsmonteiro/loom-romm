@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -18,6 +19,9 @@ import java.util.UUID
  * a Tailscale IP or MagicDNS name, or a public domain). Changed in Settings when that changes.
  */
 data class ServerConfig(val url: HttpUrl)
+
+/** How the last background save sync ended: when, and what it did or why it couldn't run, in words. */
+data class SaveSyncOutcome(val atEpochMs: Long, val summary: String, val failed: Boolean)
 
 data class Settings(
     val server: ServerConfig?,
@@ -43,6 +47,8 @@ data class Settings(
      * holds Azahar's `sdmc/Nintendo 3DS` (as on the Thor).
      */
     val azaharUserDir: String? = null,
+    /** Null until a background save sync has run. */
+    val lastSaveSync: SaveSyncOutcome? = null,
 )
 
 /**
@@ -68,6 +74,7 @@ class SettingsStore(
             catalogFields = p[CATALOG_FIELDS] ?: 1,
             autoUploadSaves = p[AUTO_UPLOAD_SAVES] ?: true,
             azaharUserDir = p[AZAHAR_USER_DIR],
+            lastSaveSync = p[SAVE_SYNC_AT]?.let { at -> SaveSyncOutcome(at, p[SAVE_SYNC_SUMMARY].orEmpty(), p[SAVE_SYNC_FAILED] ?: false) },
         )
     }
 
@@ -91,6 +98,12 @@ class SettingsStore(
     /** [path] null goes back to finding Azahar's folder in the n3ds system folder. */
     suspend fun setAzaharUserDir(path: String?) = dataStore.edit {
         if (path.isNullOrBlank()) it.remove(AZAHAR_USER_DIR) else it[AZAHAR_USER_DIR] = path
+    }
+
+    suspend fun setLastSaveSync(outcome: SaveSyncOutcome) = dataStore.edit {
+        it[SAVE_SYNC_AT] = outcome.atEpochMs
+        it[SAVE_SYNC_SUMMARY] = outcome.summary
+        it[SAVE_SYNC_FAILED] = outcome.failed
     }
 
     suspend fun setServer(config: ServerConfig, version: String?) = dataStore.edit {
@@ -138,5 +151,8 @@ class SettingsStore(
         val CATALOG_FIELDS = intPreferencesKey("catalog_fields")
         val AUTO_UPLOAD_SAVES = booleanPreferencesKey("auto_upload_saves")
         val AZAHAR_USER_DIR = stringPreferencesKey("azahar_user_dir")
+        val SAVE_SYNC_AT = longPreferencesKey("save_sync_last_ms")
+        val SAVE_SYNC_SUMMARY = stringPreferencesKey("save_sync_last_summary")
+        val SAVE_SYNC_FAILED = booleanPreferencesKey("save_sync_last_failed")
     }
 }
