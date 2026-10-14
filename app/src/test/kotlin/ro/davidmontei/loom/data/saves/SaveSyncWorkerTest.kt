@@ -16,6 +16,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
+import ro.davidmontei.loom.MainActivity
 import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.settings.ServerConfig
 
@@ -78,6 +79,14 @@ class SaveSyncWorkerTest : SaveSyncTestBase() {
         val posted = shadowOf(context.getSystemService(NotificationManager::class.java)).allNotifications
         val titles = posted.map { it.extras.getString("android.title") }
         assertThat(titles).containsExactly("A game's save needs you", "RomM has a newer save for a game")
+        val newer = posted.single { it.extras.getString("android.title") == "RomM has a newer save for a game" }
+        assertThat(newer.extras.getString("android.text")).isEqualTo("Close the emulator, then restore them from Loom's queue.")
+        // A tap opens Loom on the queue, where both are settled.
+        posted.forEach { notification ->
+            val tap = shadowOf(notification.contentIntent).savedIntent
+            assertThat(tap.component?.className).isEqualTo(MainActivity::class.java.name)
+            assertThat(tap.action).isEqualTo(MainActivity.ACTION_OPEN_QUEUE)
+        }
     }
 
     @Test fun withoutARommDeviceTheRunFailsSayingWhy() = runBlocking<Unit> {
