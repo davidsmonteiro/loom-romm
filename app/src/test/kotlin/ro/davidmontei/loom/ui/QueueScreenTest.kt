@@ -409,6 +409,17 @@ class QueueScreenTest {
         rule.onNodeWithTag("job-3").assertIsFocused()
     }
 
+    /**
+     * Found by review: a game in conflict was also listed as "in sync, 3 min ago". The list says when
+     * each save last synced, an event, not where it stands now.
+     */
+    @Test fun aSaveSyncedLatelySaysWhenNotThatItIsInSync() {
+        show(QueueUiState(emptyList(), emptyList(), emptyList(), conflicts = listOf(pokemonX),
+            recentSaves = listOf(RecentSave(7, "Pokemon X", System.currentTimeMillis() - 3 * 60_000))))
+        rule.onNode(hasText("synced 3 min ago") and hasAnyAncestor(hasTestTag("synced-7")), useUnmergedTree = true).assertExists()
+        rule.onNode(hasText("in sync", substring = true), useUnmergedTree = true).assertDoesNotExist()
+    }
+
     @Test fun savesSyncedLatelyCanBeScrolledWithThePad() {
         val now = System.currentTimeMillis()
         show(QueueUiState(emptyList(), emptyList(), emptyList(), recentSaves = (1..10).map { RecentSave(it, "Game $it", now - it * 60_000L) }))

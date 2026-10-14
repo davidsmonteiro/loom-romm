@@ -168,7 +168,10 @@ internal fun RestorableRow(item: RestorableSave, modifier: Modifier, onFocus: (B
     }
 }
 
-/** Focusable only so the pad can scroll through them; there is nothing to press. */
+/**
+ * When a game's save last synced: a past event, since the save may have changed or be in conflict
+ * by now. Focusable only so the pad can scroll through them; there is nothing to press.
+ */
 @Composable
 internal fun RecentSaveRow(item: RecentSave, modifier: Modifier) {
     val interaction = remember { MutableInteractionSource() }
@@ -182,7 +185,7 @@ internal fun RecentSaveRow(item: RecentSave, modifier: Modifier) {
         horizontalArrangement = Arrangement.spacedBy(Space.m),
     ) {
         Text(item.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text("in sync, ${ago(item.atMs)}", style = MaterialTheme.typography.labelMedium.tabular(), color = LoomColors.Installed)
+        Text("synced ${ago(item.atMs)}", style = MaterialTheme.typography.labelMedium.tabular(), color = LoomColors.TextMuted)
     }
 }
 
