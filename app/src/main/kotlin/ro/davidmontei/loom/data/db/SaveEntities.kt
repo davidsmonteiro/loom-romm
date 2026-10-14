@@ -97,6 +97,12 @@ enum class SaveSyncState {
     /** Needs the user: see `save_conflicts`. */
     CONFLICT,
 
+    /**
+     * Loom can't tell which of the emulator's save folders is the game's (it can't read a Switch
+     * game's title ID): the user picks the folder. The detail says why.
+     */
+    NEEDS_FOLDER,
+
     /** The emulator wrote to it moments ago: Loom waits until it has been quiet for a minute. */
     WRITING,
 
@@ -105,4 +111,30 @@ enum class SaveSyncState {
 
     /** The last attempt failed; the detail says why. Tried again next time. */
     ERROR,
+}
+
+/**
+ * A Switch game's title ID, which names its save folder in Eden: read from the game's image with
+ * the owner's header key, or the folder the owner chose when Loom couldn't read it. Never the key.
+ */
+@Entity(tableName = "switch_titles")
+data class SwitchTitleEntity(
+    @PrimaryKey @ColumnInfo(name = "rom_id") val romId: Int,
+    /** 16 uppercase hex digits, e.g. 010015100B514000. */
+    @ColumnInfo(name = "title_id") val titleId: String,
+    val source: SwitchTitleSource,
+    /**
+     * For [SwitchTitleSource.IMAGE], the image files' paths, sizes and times when they were read:
+     * while they match, a scan doesn't read the images again. Null for the owner's choice.
+     */
+    @ColumnInfo(name = "image_fingerprint") val imageFingerprint: String?,
+    @ColumnInfo(name = "recorded_at") val recordedAtMs: Long,
+)
+
+enum class SwitchTitleSource {
+    /** Read from the game's XCI or NSP. */
+    IMAGE,
+
+    /** The save folder the owner chose for the game. It stands until they choose another. */
+    OWNER,
 }

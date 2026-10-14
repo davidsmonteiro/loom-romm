@@ -46,18 +46,22 @@ data class GameSave(
     val emulator: String?,
     /** Whether Loom uploads a changed save by itself (automatic upload); off, only Upload save does. */
     val autoUpload: Boolean = true,
+    /** The user chose the game's save folder (Loom couldn't read its title ID): they can choose another. */
+    val folderChosen: Boolean = false,
 )
 
 /**
  * Adds where the game's save stands, once it's installed: [unit] (null before Loom first looked)
- * on a platform Loom syncs saves for, else why it doesn't. [autoUpload]: the automatic upload setting.
+ * on a platform Loom syncs saves for, else why it doesn't. [autoUpload]: the automatic upload
+ * setting; [folderChosen]: the user chose the game's save folder.
  */
-fun GameItem.withSave(platformSlug: String, unit: SaveUnitEntity?, autoUpload: Boolean = true): GameItem = copy(
+fun GameItem.withSave(platformSlug: String, unit: SaveUnitEntity?, autoUpload: Boolean = true, folderChosen: Boolean = false): GameItem = copy(
     save = when {
         state != InstallState.INSTALLED -> null
         !SaveUnitResolver.supportsPlatform(platformSlug) ->
             GameSave(supported = false, SaveSyncState.UNSUPPORTED, SaveUnitResolver.unsupportedReason(platformSlug), emulator = null)
-        else -> GameSave(supported = true, unit?.state, unit?.detail, unit?.emulator, autoUpload)
+        else -> GameSave(supported = true, unit?.state, unit?.detail, unit?.emulator ?: SaveUnitResolver.emulatorForPlatform(platformSlug),
+            autoUpload, folderChosen)
     },
 )
 
@@ -72,6 +76,7 @@ fun saveLine(save: GameSave): String = "Save: " + when (save.state) {
     SaveSyncState.SERVER_NEWER -> "newer on RomM"
     SaveSyncState.LOCAL_MISSING -> "missing on the Thor; RomM has a copy"
     SaveSyncState.CONFLICT -> "changed on the Thor and on RomM. Choose which to keep."
+    SaveSyncState.NEEDS_FOLDER -> "choose its ${emulatorName(save.emulator)} save folder. " + save.detail.orEmpty()
     SaveSyncState.UNSUPPORTED -> "not synced. " + save.detail.orEmpty()
     SaveSyncState.ERROR -> "the last sync failed. " + save.detail.orEmpty()
 }

@@ -54,7 +54,7 @@ class QueueViewModelTest : SaveSyncTestBase() {
         val mapping = MappingRepository(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "m.preferences_pb") })
         val downloads = DownloadRepository(db.downloadDao(), db.catalogDao(), server, mapping, settings, StorageVolumes(context),
             QueueKicker(WorkManager.getInstance(context)))
-        vm = QueueViewModel(downloads, SaveRepository(engine(), db.saveDao(), scope))
+        vm = QueueViewModel(downloads, SaveRepository(engine(), db.saveDao(), eden(), scope))
     }
 
     @After fun tearDownQueue() {

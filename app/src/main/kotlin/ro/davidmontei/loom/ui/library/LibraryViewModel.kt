@@ -32,12 +32,14 @@ import ro.davidmontei.loom.data.download.EnqueueResult
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.install.OffloadResult
 import ro.davidmontei.loom.data.mapping.FolderChooser
+import ro.davidmontei.loom.data.saves.EdenFolderChoice
 import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.mapping.FolderDecision
 import ro.davidmontei.loom.storage.mapping.SystemFolder
+import ro.davidmontei.loom.storage.saves.SwitchTitleId
 
 enum class LibraryFilter(val label: String) { ALL("All"), ON_DEVICE("On device"), NOT_ON_DEVICE("Not on device") }
 
@@ -72,6 +74,21 @@ data class FolderQuestion(
     val allFolders: List<SystemFolder>? = null,
 )
 
+/** One of the emulator's save folders a game's save can be, as the question lists it. */
+data class SaveFolderOption(val titleId: String, val fileCount: Int, val bytes: Long, val changedAtMs: Long?)
+
+/**
+ * Asked from a Switch game's details when Loom can't read its title ID: which of Eden's save
+ * folders is the game's. [unavailable] says why there's nothing to choose from.
+ */
+data class SaveFolderQuestion(
+    val game: GameItem,
+    val options: List<SaveFolderOption>,
+    /** The folder the user chose before, when choosing again. */
+    val current: String?,
+    val unavailable: String? = null,
+)
+
 @OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
@@ -102,10 +119,10 @@ class LibraryViewModel @Inject constructor(
             if (platform == null) flowOf(emptyList())
             else combine(
                 catalog.observeGames(platform.platform.id, f.ordinal, CatalogSyncer.fold(q)), downloads.progress, saves.observeGames(),
-                settings.settings.map { it.autoUploadSaves }.distinctUntilChanged(),
-            ) { rows, live, units, autoUpload ->
+                settings.settings.map { it.autoUploadSaves }.distinctUntilChanged(), saves.observeChosenFolders(),
+            ) { rows, live, units, autoUpload, chosen ->
                 rows.map { row ->
-                    row.toItem(row.jobId?.let { live[it]?.bytesDone }).withSave(platform.platform.slug, units[row.id], autoUpload)
+                    row.toItem(row.jobId?.let { live[it]?.bytesDone }).withSave(platform.platform.slug, units[row.id], autoUpload, row.id in chosen)
                 }
             }
         }
@@ -121,6 +138,9 @@ class LibraryViewModel @Inject constructor(
 
     private val _folderQuestion = MutableStateFlow<FolderQuestion?>(null)
     val folderQuestion: StateFlow<FolderQuestion?> = _folderQuestion
+
+    private val _saveFolderQuestion = MutableStateFlow<SaveFolderQuestion?>(null)
+    val saveFolderQuestion: StateFlow<SaveFolderQuestion?> = _saveFolderQuestion
 
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages: Flow<String> = _messages.receiveAsFlow()
@@ -210,6 +230,27 @@ class LibraryViewModel @Inject constructor(
         _messages.send("Restoring ${game.title}'s save from RomM…")
         _messages.send(saves.restore(game.id, game.title))
     }
+
+    /** "Choose save folder" in a Switch game's details: the Eden save folders it can be. */
+    fun askSaveFolder(game: GameItem) = viewModelScope.launch {
+        _saveFolderQuestion.value = when (val choice = saves.saveFolderChoice(game.id)) {
+            is EdenFolderChoice.Options -> SaveFolderQuestion(
+                game, choice.folders.map { SaveFolderOption(it.titleId.toString(), it.fileCount, it.bytes, it.newestModified?.toEpochMilli()) },
+                choice.current?.toString(),
+            )
+            is EdenFolderChoice.Unavailable -> SaveFolderQuestion(game, emptyList(), null, unavailable = choice.reason)
+        }
+    }
+
+    /** The answer to [saveFolderQuestion]: remembered, and the game's save looked at again. */
+    fun chooseSaveFolder(titleId: String) = viewModelScope.launch {
+        val q = _saveFolderQuestion.value ?: return@launch
+        _saveFolderQuestion.value = null
+        val id = SwitchTitleId.parse(titleId) ?: return@launch
+        _messages.send(saves.chooseSaveFolder(q.game.id, q.game.title, id))
+    }
+
+    fun dismissSaveFolderQuestion() { _saveFolderQuestion.value = null }
 
     fun retry(game: GameItem) = viewModelScope.launch { game.jobId?.let { downloads.retry(it) } }
     fun cancel(game: GameItem) = viewModelScope.launch { game.jobId?.let { downloads.cancel(it) } }

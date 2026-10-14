@@ -82,6 +82,25 @@ class MigrationTest {
         }
     }
 
+    /** Version 3 (Loom 0.2.0) keeps its baselines and gains the table of Switch games' title IDs. */
+    @Test fun version3GainsSwitchTitleIdsKeepingBaselines() = runBlocking<Unit> {
+        val file = context.getDatabasePath(DB).apply { parentFile!!.mkdirs(); delete() }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            createFromSchema(db, version = 3)
+            db.execSQL("INSERT INTO save_baselines VALUES (7, 'autosave', 'abc', 12, 'abc', '2026-10-13T17:49:45Z', 1, '/x/data')")
+        }
+
+        val room = DataModule.database(context)
+        try {
+            val saves = room.saveDao()
+            assertThat(saves.baseline(7, "autosave")!!.unitPath).isEqualTo("/x/data")
+            saves.upsertSwitchTitle(SwitchTitleEntity(30, "010015100B514000", SwitchTitleSource.OWNER, null, 1))
+            assertThat(saves.switchTitle(30)!!.source).isEqualTo(SwitchTitleSource.OWNER)
+        } finally {
+            room.close()
+        }
+    }
+
     /** Creates the tables, indices and Room's identity row of an exported schema version. */
     private fun createFromSchema(db: SQLiteDatabase, version: Int) {
         val name = "ro.davidmontei.loom.data.db.LoomDatabase/$version.json"

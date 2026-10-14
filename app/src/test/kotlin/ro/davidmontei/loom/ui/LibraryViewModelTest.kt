@@ -52,6 +52,7 @@ import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.mapping.MappingRepository
+import ro.davidmontei.loom.data.saves.EdenSaves
 import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.SaveSyncEngine
 import ro.davidmontei.loom.data.saves.SaveUnitResolver
@@ -61,6 +62,7 @@ import ro.davidmontei.loom.storage.mapping.MappingSource
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.LibraryViewModel
+import ro.davidmontei.loom.ui.library.saveLine
 import ro.davidmontei.loom.ui.library.toItem
 import java.io.File
 
@@ -104,14 +106,15 @@ class LibraryViewModelTest {
             rom(10, 1, "arcade", "Alley Master", "alleymas.zip"),
             rom(20, 2, "genesis", "Sonic the Hedgehog", "Sonic the Hedgehog (USA, Europe).zip"),
         ))
-        val engine = SaveSyncEngine(db.catalogDao(), db.saveDao(), server, credentials, settings, SaveUnitResolver(settings, volumes), volumes,
+        val eden = EdenSaves(settings, db.catalogDao(), db.saveDao())
+        val engine = SaveSyncEngine(db.catalogDao(), db.saveDao(), server, credentials, settings, SaveUnitResolver(settings, volumes, eden), volumes,
             File(tmp.root, "cache"))
         vm = LibraryViewModel(
             db.catalogDao(),
             DownloadRepository(db.downloadDao(), db.catalogDao(), server, mapping, settings, volumes, QueueKicker(workManager)),
             InstallManager(db.catalogDao(), settings, mapping, volumes),
             CatalogSyncScheduler(workManager), server, settings, FolderChooser(settings, mapping),
-            SaveRepository(engine, db.saveDao(), scope),
+            SaveRepository(engine, db.saveDao(), eden, scope),
         )
     }
 
@@ -202,7 +205,38 @@ class LibraryViewModelTest {
         vm.selectPlatform(2)
         val genesis = gamesOnScreen { games -> games.any { it.id == 20 && it.save != null } }
         assertThat(genesis.single().save)
-            .isEqualTo(GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Loom syncs 3DS saves (Azahar) only, for now", null))
+            .isEqualTo(GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Loom syncs 3DS (Azahar) and Switch (Eden) saves only, for now", null))
+    }
+
+    /**
+     * A Switch game whose title ID Loom can't read: its details ask which of Eden's save folders is
+     * its, and the answer is remembered and can be changed from the details afterwards.
+     */
+    @Test fun theSaveFolderQuestionListsEdensFoldersAndRemembersTheAnswer() = runBlocking<Unit> {
+        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(4, "switch", "switch", "Nintendo Switch", "Nintendo Switch", 1, "t")))
+        db.catalogDao().upsertRoms(listOf(rom(40, 4, "switch", "Wonder", "Wonder.xci")))
+        installed(40, 4, "switch/Wonder.xci")
+        File(roms, "saves/Eden/user/save/0000000000000000/4E431822D6DEFD527268BA35B5C09533/0100AAAA00000000").apply { mkdirs() }
+            .resolve("game_data.sav").writeBytes(ByteArray(64))
+        db.saveDao().upsertUnit(SaveUnitEntity(40, "eden", null, null, 0, 0, null, null, SaveSyncState.NEEDS_FOLDER, EdenSaves.NO_KEYS, 0))
+
+        vm.selectPlatform(4)
+        val game = gamesOnScreen { games -> games.any { it.save != null } }.single()
+        assertThat(game.save).isEqualTo(GameSave(supported = true, SaveSyncState.NEEDS_FOLDER, EdenSaves.NO_KEYS, "eden"))
+        assertThat(saveLine(game.save!!)).isEqualTo("Save: choose its Eden save folder. ${EdenSaves.NO_KEYS}")
+
+        vm.askSaveFolder(game).join()
+        val question = vm.saveFolderQuestion.value!!
+        assertThat(question.options.map { it.titleId }).containsExactly("0100AAAA00000000")
+        assertThat(question.options.single().fileCount).isEqualTo(1)
+        assertThat(question.current).isNull()
+
+        val message = async { vm.messages.first() }
+        vm.chooseSaveFolder("0100AAAA00000000").join()
+        assertThat(vm.saveFolderQuestion.value).isNull()
+        assertThat(db.saveDao().switchTitle(40)!!.titleId).isEqualTo("0100AAAA00000000")
+        assertThat(withTimeout(5_000) { message.await() }).startsWith("Wonder's save is Eden's 0100AAAA00000000 folder")
+        assertThat(gamesOnScreen { games -> games.single().save?.folderChosen == true }.single().save!!.folderChosen).isTrue()
     }
 
     /** The details' words for a save depend on whether Loom uploads it by itself. */

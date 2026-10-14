@@ -122,6 +122,9 @@ object NoopLibraryActions : ro.davidmontei.loom.ui.library.LibraryActions {
     override fun showAllFolders() = Unit
     override fun showSuggestedFolders() = Unit
     override fun dismissFolderQuestion() = Unit
+    override fun askSaveFolder(game: ro.davidmontei.loom.ui.library.GameItem) = Unit
+    override fun chooseSaveFolder(titleId: String) = Unit
+    override fun dismissSaveFolderQuestion() = Unit
 }
 
 object NoopQueueActions : ro.davidmontei.loom.ui.queue.QueueActions {

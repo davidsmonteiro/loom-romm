@@ -8,6 +8,7 @@ import ro.davidmontei.loom.data.download.Volumes
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.storage.saves.AzaharSaveLocation
 import ro.davidmontei.loom.storage.saves.AzaharSaveLocator
+import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import ro.davidmontei.loom.storage.saves.NcsdReader
 import ro.davidmontei.loom.storage.saves.SaveRoot
 import ro.davidmontei.loom.storage.saves.ThreeDsTitleId
@@ -37,6 +38,12 @@ sealed interface ResolvedSave {
     data class Unsupported(override val romId: Int, val reason: String) : ResolvedSave
 
     /**
+     * Loom can't tell which of the emulator's save folders is the game's until the user says
+     * (a Switch game whose title ID Loom can't read): [reason] says why it can't tell.
+     */
+    data class NeedsFolder(override val romId: Int, val reason: String) : ResolvedSave
+
+    /**
      * Loom can't look right now (the card is out, a folder can't be read): the game sits this run
      * out. Never read as "no save", which could let a download through.
      */
@@ -44,42 +51,49 @@ sealed interface ResolvedSave {
 }
 
 /**
- * Maps an installed game to its save unit. Only 3DS games played in Azahar are synced for now
- * (the owner's choice; other emulators keep their saves where Loom can't reach them, or aren't
- * set up yet). A game's title ID comes from RomM when it read one, else from the cartridge image's
- * header; when both are known and differ, Loom doesn't guess.
+ * Maps an installed game to its save unit: 3DS games played in Azahar, and Switch games played in
+ * Eden ([EdenSaves]). Other emulators keep their saves where Loom can't reach them, or aren't set
+ * up yet (the owner's choice). A 3DS game's title ID comes from RomM when it read one, else from
+ * the cartridge image's header; when both are known and differ, Loom doesn't guess.
  */
-class SaveUnitResolver(private val settings: SettingsStore, private val volumes: Volumes) {
+class SaveUnitResolver(private val settings: SettingsStore, private val volumes: Volumes, private val eden: EdenSaves) {
 
     /** Whether Loom syncs saves for games of this ROM's platform at all. */
     fun supports(rom: RomEntity): Boolean = supportsPlatform(rom.platformSlug)
 
     /** The emulator id Loom syncs this ROM's saves as; null when it doesn't sync them. */
-    fun emulatorFor(rom: RomEntity): String? = AzaharSaveLocator.EMULATOR_ID.takeIf { supports(rom) }
+    fun emulatorFor(rom: RomEntity): String? = emulatorForPlatform(rom.platformSlug)
 
     suspend fun resolve(rom: RomEntity, install: InstallEntity): ResolvedSave = withContext(Dispatchers.IO) {
-        if (!supports(rom)) return@withContext ResolvedSave.Unsupported(rom.id, unsupportedReason(rom.platformSlug))
+        val emulator = emulatorFor(rom) ?: return@withContext ResolvedSave.Unsupported(rom.id, unsupportedReason(rom.platformSlug))
         if (!volumes.isMounted(install.volumeUuid)) {
             return@withContext ResolvedSave.Unavailable(rom.id, "The card holding this game isn't mounted")
         }
-        val userDir = azaharUserDir(install) ?: return@withContext ResolvedSave.Unsupported(
+        when (emulator) {
+            EdenSaveLocator.EMULATOR_ID -> eden.resolve(rom, install)
+            else -> resolveAzahar(rom, install)
+        }
+    }
+
+    private suspend fun resolveAzahar(rom: RomEntity, install: InstallEntity): ResolvedSave {
+        val userDir = azaharUserDir(install) ?: return ResolvedSave.Unsupported(
             rom.id, "Azahar's folder isn't in ${install.relPath.substringBefore('/')} yet: run the game in Azahar once, or set the folder in Settings",
         )
         val titleId = when (val id = titleIdOf(rom, File(install.romsRoot, install.relPath))) {
             is TitleIdResult.Found -> id.titleId
-            is TitleIdResult.None -> return@withContext ResolvedSave.Unsupported(rom.id, id.reason)
+            is TitleIdResult.None -> return ResolvedSave.Unsupported(rom.id, id.reason)
         }
         val location = try {
             AzaharSaveLocator(userDir.toPath()).locate(titleId)
         } catch (e: IOException) {
-            return@withContext ResolvedSave.Unavailable(rom.id, "Couldn't read Azahar's folder: ${e.message}")
+            return ResolvedSave.Unavailable(rom.id, "Couldn't read Azahar's folder: ${e.message}")
         }
-        when (location) {
+        return when (location) {
             is AzaharSaveLocation.Found -> ResolvedSave.Ready(
                 romId = rom.id,
                 emulator = AzaharSaveLocator.EMULATOR_ID,
                 roots = listOf(location.unit),
-                fileName = "${rom.fsNameNoExt.ifBlank { rom.title }}.zip",
+                fileName = archiveName(rom),
                 title = rom.title,
             )
             AzaharSaveLocation.NoSdCard -> ResolvedSave.Unsupported(rom.id, "Azahar hasn't set up its SD card in $userDir yet")
@@ -130,12 +144,22 @@ class SaveUnitResolver(private val settings: SettingsStore, private val volumes:
         /** RomM's slugs for the platforms whose saves Loom syncs through Azahar. */
         val AZAHAR_PLATFORMS = setOf("3ds", "new-nintendo-3ds")
 
+        /** RomM's slug for the platform whose saves Loom syncs through Eden. */
+        val EDEN_PLATFORMS = setOf("switch")
+
         private val CARTRIDGE_EXTENSIONS = setOf("3ds", "cci")
 
         /** Android/data, where these emulators keep their saves: other apps can't read it on Android 11+. */
         private const val ANDROID_DATA = "in Android/data, where Loom can't reach them"
 
-        fun supportsPlatform(slug: String): Boolean = slug in AZAHAR_PLATFORMS
+        /** The emulator id Loom syncs a platform's saves as; null for a platform it doesn't sync. */
+        fun emulatorForPlatform(slug: String): String? = when (slug) {
+            in AZAHAR_PLATFORMS -> AzaharSaveLocator.EMULATOR_ID
+            in EDEN_PLATFORMS -> EdenSaveLocator.EMULATOR_ID
+            else -> null
+        }
+
+        fun supportsPlatform(slug: String): Boolean = emulatorForPlatform(slug) != null
 
         /**
          * Why Loom doesn't sync a platform's saves, naming the emulator Cocoon uses for it on the
@@ -143,16 +167,18 @@ class SaveUnitResolver(private val settings: SettingsStore, private val volumes:
          * supported yet (docs/ROADMAP.md).
          */
         fun unsupportedReason(slug: String): String = when (slug) {
-            "switch" -> "Eden keeps its saves $ANDROID_DATA"
             "psx" -> "DuckStation keeps its memory cards $ANDROID_DATA"
             "ngc", "wii" -> "Dolphin keeps its saves $ANDROID_DATA"
             "wiiu" -> "Cemu keeps its saves $ANDROID_DATA"
             "nds" -> "Loom doesn't sync melonDS saves yet"
             "psp" -> "Loom doesn't sync PPSSPP saves yet"
-            else -> "Loom syncs 3DS saves (Azahar) only, for now"
+            else -> "Loom syncs 3DS (Azahar) and Switch (Eden) saves only, for now"
         }
 
         /** Whether [folder] is Azahar's user directory: it holds Azahar's `sdmc/Nintendo 3DS`. */
         fun holdsAzaharData(folder: File): Boolean = File(folder, "sdmc/Nintendo 3DS").isDirectory
+
+        /** The name RomM stores a game's save archive under (it adds a timestamp), e.g. "Pokemon X.zip". */
+        fun archiveName(rom: RomEntity): String = "${rom.fsNameNoExt.ifBlank { rom.title }}.zip"
     }
 }

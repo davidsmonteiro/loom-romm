@@ -60,6 +60,8 @@ abstract class SaveSyncTestBase {
     protected lateinit var credentials: CredentialStore
     protected lateinit var volume: File
     protected lateinit var n3ds: File
+    /** Eden's save folder, moved to the card: `ROMs/saves/Eden`, with one profile. */
+    protected lateinit var eden: File
 
     /** The Thor's clock. Save files are dated [settle] minutes before it. */
     protected var clock: Instant = Instant.parse("2026-10-14T12:00:00Z")
@@ -94,7 +96,13 @@ abstract class SaveSyncTestBase {
         n3ds = File(volume, "ROMs/n3ds")
         listOf("config", "log", "nand", "states", "sysdata").forEach { File(n3ds, it).mkdirs() }
         File(n3ds, "sdmc/Nintendo 3DS/$ZEROS/$ZEROS/title").mkdirs()
-        db.catalogDao().upsertPlatforms(listOf(PlatformEntity(1, "3ds", "3ds", "Nintendo 3DS", "Nintendo 3DS", 2, "t")))
+        eden = File(volume, "ROMs/saves/Eden")
+        File(eden, "user/save/0000000000000000/$PROFILE").mkdirs()
+        File(eden, "system/save/8000000000000010").mkdirs()
+        db.catalogDao().upsertPlatforms(listOf(
+            PlatformEntity(1, "3ds", "3ds", "Nintendo 3DS", "Nintendo 3DS", 2, "t"),
+            PlatformEntity(2, "switch", "switch", "Nintendo Switch", "Nintendo Switch", 2, "t"),
+        ))
     }
 
     @After fun tearDownThor() {
@@ -108,9 +116,11 @@ abstract class SaveSyncTestBase {
         credentials.current.filterNotNull().first { it.deviceId == deviceId }
     }
 
+    protected fun eden() = EdenSaves(settings, db.catalogDao(), db.saveDao(), now = { clock.toEpochMilli() })
+
     protected fun engine(chunkSize: Int = 500, maxDownloadBytes: Long = SaveSyncEngine.MAX_DOWNLOAD_BYTES) = SaveSyncEngine(
         db.catalogDao(), db.saveDao(), ActiveServer(settings, credentials, OkHttpClient(), scope), credentials, settings,
-        SaveUnitResolver(settings, volumes), volumes, File(tmp.root, "cache"),
+        SaveUnitResolver(settings, volumes, eden()), volumes, File(tmp.root, "cache"),
         now = { clock }, pause = { onPause() }, restorer = SaveRestorer(mover = mover), chunkSize = chunkSize,
         maxDownloadBytes = maxDownloadBytes, lock = lock,
     )
@@ -185,7 +195,73 @@ abstract class SaveSyncTestBase {
 
     protected fun bytes(seed: Int, size: Int = 4096) = ByteArray(size) { ((it * 31 + seed) % 251).toByte() }
 
+    // --- Switch games in Eden ---
+
+    /** A Switch game installed from one of core-storage's synthetic images, whose made-up title ID it holds. */
+    protected class SwitchGame(val romId: Int, val title: String, val titleId: String, val fixture: String)
+
+    protected val wonder = SwitchGame(30, "Super Mario Bros Wonder", "0100A0B00C0D0000", "game.xci")
+    protected val arceus = SwitchGame(31, "Pokemon Legends Arceus", "01002B300C1D2000", "game.nsp")
+
+    /** The synthetic images and their made-up header key, from core-storage's test resources: no console's key. */
+    protected fun switchFixture(name: String): File =
+        listOf(File("../core-storage/src/test/resources/switch/$name"), File("core-storage/src/test/resources/switch/$name")).first { it.isFile }
+
+    protected val testKey: String get() = switchFixture("test-header-key.txt").readText().trim()
+
+    /** Puts the owner's prod.keys at the root of the ROMs folder, with [headerKey] among other (made-up) keys. */
+    protected fun putProdKeys(headerKey: String = testKey, at: File = File(volume, "ROMs/prod.keys")) {
+        at.parentFile!!.mkdirs()
+        at.writeText("header_kek_source = ${"ab".repeat(16)}\nheader_key = $headerKey\nkey_area_key_application_00 = ${"cd".repeat(16)}\n")
+    }
+
+    /** Installs [game] in ROMs/switch from its fixture image, as Loom would after a download. */
+    protected suspend fun installSwitch(game: SwitchGame, file: String = "${game.title}.${game.fixture.substringAfterLast('.')}",
+                                        fixture: String = game.fixture) {
+        val rom = File(volume, "ROMs/switch/$file")
+        rom.parentFile!!.mkdirs()
+        switchFixture(fixture).copyTo(rom, overwrite = true)
+        val dao = db.catalogDao()
+        dao.upsertRoms(listOf(RomEntity(
+            id = game.romId, platformId = 2, platformSlug = "switch", platformFsSlug = "switch", title = game.title,
+            searchKey = game.title.lowercase(), sortKey = game.title.lowercase(), fsName = file, fsNameNoExt = file.substringBeforeLast('.'),
+            fsExtension = file.substringAfterLast('.'), sizeBytes = rom.length(), hasSimpleSingleFile = true, hasNestedSingleFile = false,
+            hasMultipleFiles = false, coverSmall = null, coverLarge = null, regions = "", updatedAt = "t", missingFromFs = false,
+        )))
+        dao.upsertInstall(InstallEntity(game.romId, "6365-3230", File(volume, "ROMs").path, "switch/$file", "switch/${file.lowercase()}", 2,
+            InstallKind.FILE, rom.length(), VerifiedBy.SIZE, InstallSource.ADOPTED, null, 0))
+    }
+
+    protected fun edenFolder(game: SwitchGame, profile: String = PROFILE): File = File(eden, "user/save/0000000000000000/$profile/${game.titleId}")
+
+    protected fun edenUnit(game: SwitchGame) = listOf(SaveRoot(game.titleId, edenFolder(game).toPath()))
+
+    /** Eden's save of [game] as it writes it, last touched [minutesAgo] before [clock]. */
+    protected fun writeEdenSave(game: SwitchGame, data: ByteArray, minutesAgo: Long = 10): String {
+        val folder = edenFolder(game)
+        folder.mkdirs()
+        File(folder, "game_data.sav").writeBytes(data)
+        File(folder, "option_data.sav").writeBytes("OPTIONS".toByteArray())
+        folder.walkTopDown().filter { it.isFile }.forEach {
+            Files.setLastModifiedTime(it.toPath(), FileTime.from(clock.minus(Duration.ofMinutes(minutesAgo))))
+        }
+        return SaveHasher.hashUnit(edenUnit(game))!!
+    }
+
+    /** A Switch save archive as Loom (or Argosy) uploads it: the title folder under its own name. */
+    protected fun edenArchiveOf(game: SwitchGame, data: ByteArray): ByteArray {
+        val dir = Files.createTempDirectory(tmp.root.toPath(), "archive")
+        File(dir.toFile(), "${game.titleId}/game_data.sav").apply { parentFile!!.mkdirs() }.writeBytes(data)
+        File(dir.toFile(), "${game.titleId}/option_data.sav").writeBytes("OPTIONS".toByteArray())
+        val zip = dir.resolve("unit.zip")
+        SaveZipper.zip(listOf(SaveRoot(game.titleId, dir.resolve(game.titleId))), zip)
+        return Files.readAllBytes(zip)
+    }
+
     companion object {
         const val ZEROS = "00000000000000000000000000000000"
+
+        /** The Eden profile on the Thor. */
+        const val PROFILE = "4E431822D6DEFD527268BA35B5C09533"
     }
 }

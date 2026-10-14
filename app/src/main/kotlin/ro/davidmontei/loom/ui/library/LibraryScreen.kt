@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -88,6 +89,7 @@ import ro.davidmontei.loom.ui.components.ScreenScaffold
 import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.StatusBadge
 import ro.davidmontei.loom.ui.components.ago
+import ro.davidmontei.loom.ui.components.dateTime
 import ro.davidmontei.loom.ui.components.gameCount
 import ro.davidmontei.loom.ui.input.PadAction
 import ro.davidmontei.loom.ui.input.onPadAction
@@ -107,6 +109,7 @@ data class LibraryUiState(
     val coverBase: HttpUrl?,
     val message: String? = null,
     val folderQuestion: FolderQuestion? = null,
+    val saveFolderQuestion: SaveFolderQuestion? = null,
 )
 
 interface LibraryActions {
@@ -134,6 +137,11 @@ interface LibraryActions {
     fun showAllFolders()
     fun showSuggestedFolders()
     fun dismissFolderQuestion()
+    /** Asks which of the emulator's save folders is [game]'s ([LibraryUiState.saveFolderQuestion]). */
+    fun askSaveFolder(game: GameItem)
+    /** The answer to [LibraryUiState.saveFolderQuestion]. */
+    fun chooseSaveFolder(titleId: String)
+    fun dismissSaveFolderQuestion()
 }
 
 @Composable
@@ -152,6 +160,7 @@ fun LibraryScreen(
     val header by vm.header.collectAsStateWithLifecycle()
     val coverBase by vm.coverBase.collectAsStateWithLifecycle()
     val folderQuestion by vm.folderQuestion.collectAsStateWithLifecycle()
+    val saveFolderQuestion by vm.saveFolderQuestion.collectAsStateWithLifecycle()
     var message by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { vm.messages.collect { message = it; delay(3500); message = null } }
 
@@ -176,9 +185,14 @@ fun LibraryScreen(
             override fun showAllFolders() { vm.showAllFolders() }
             override fun showSuggestedFolders() = vm.showSuggestedFolders()
             override fun dismissFolderQuestion() = vm.dismissFolderQuestion()
+            override fun askSaveFolder(game: GameItem) { vm.askSaveFolder(game) }
+            override fun chooseSaveFolder(titleId: String) { vm.chooseSaveFolder(titleId) }
+            override fun dismissSaveFolderQuestion() = vm.dismissSaveFolderQuestion()
         }
     }
-    LibraryContent(LibraryUiState(platforms, selected, games, filter, query, grid, header, coverBase, message, folderQuestion), actions)
+    LibraryContent(
+        LibraryUiState(platforms, selected, games, filter, query, grid, header, coverBase, message, folderQuestion, saveFolderQuestion), actions,
+    )
 }
 
 private val libraryHints = listOf(
@@ -284,6 +298,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                 onUploadSave = { actions.uploadSave(it); detailsFor = null },
                 onRestoreSave = { confirmRestore = it; detailsFor = null },
                 onChooseSave = { actions.openQueue(focusConflictRomId = game.id); detailsFor = null },
+                onChooseSaveFolder = { actions.askSaveFolder(it); detailsFor = null },
             )
         }
         confirmRestore?.let { game ->
@@ -324,7 +339,62 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
             if (state.folderQuestion != null) { detailsFor = null; confirmOffload = null; confirmRestore = null }
         }
         state.folderQuestion?.let { FolderQuestionDialog(it, actions) }
+        state.saveFolderQuestion?.let { SaveFolderDialog(it, actions) }
     }
+}
+
+/**
+ * Which of Eden's save folders is a Switch game's, when Loom can't read its title ID. The folders
+ * no other game has are listed newest first, with when each changed, so the one Eden wrote when
+ * the game last saved is easy to spot; focus starts on the newest. B, or Cancel, changes nothing.
+ */
+@Composable
+private fun SaveFolderDialog(q: SaveFolderQuestion, actions: LibraryActions) {
+    val emulator = emulatorName(q.game.save?.emulator)
+    LoomDialog(
+        title = "Which $emulator save folder is ${q.game.title}'s?",
+        onDismiss = actions::dismissSaveFolderQuestion,
+        body = {
+            Text(
+                when {
+                    q.unavailable != null -> q.unavailable
+                    q.options.isEmpty() -> "$emulator has no save folder that isn't another game's. Play the game until it saves, then choose."
+                    else -> "Loom can't read this game's title ID, which names its save folder. Pick the one that changed when the game " +
+                        "last saved. Its details can change this later."
+                },
+                style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted,
+            )
+            if (q.options.isNotEmpty()) {
+                val newest = remember { FocusRequester() }
+                LaunchedEffect(q) { delay(50); runCatching { newest.requestFocus() } } // after the dialog's own first focus
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 148.dp).testTag("save-folder-options"),
+                    contentPadding = PaddingValues(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(Space.s),
+                    verticalArrangement = Arrangement.spacedBy(Space.s),
+                ) {
+                    itemsIndexed(q.options, key = { _, option -> option.titleId }) { i, option ->
+                        LoomRow(
+                            title = option.titleId,
+                            subtitle = listOfNotNull(
+                                option.changedAtMs?.let { "changed ${dateTime(it)}" },
+                                if (option.fileCount == 1) "1 file" else "${option.fileCount} files",
+                                formatBytes(option.bytes),
+                                "chosen now".takeIf { option.titleId == q.current },
+                            ).joinToString(" · "),
+                            subtitleLines = 1,
+                            dense = true,
+                            selected = option.titleId == q.current,
+                            onClick = { actions.chooseSaveFolder(option.titleId) },
+                            modifier = (if (i == 0) Modifier.focusRequester(newest) else Modifier).testTag("save-folder-${option.titleId}"),
+                        )
+                    }
+                }
+            }
+        },
+        buttons = { first -> LoomButton("Cancel", actions::dismissSaveFolderQuestion, Modifier.focusRequester(first)) },
+    )
 }
 
 /**
@@ -652,12 +722,13 @@ private fun GameDialog(
     onUploadSave: (GameItem) -> Unit,
     onRestoreSave: (GameItem) -> Unit,
     onChooseSave: () -> Unit,
+    onChooseSaveFolder: (GameItem) -> Unit,
 ) {
     // A save button can go while it has focus (a background sync changing the save's state), which
     // would leave nothing focused in the dialog: focus then goes back to its first button.
     val firstButton = remember { FocusRequester() }
     var focusedSaveAction by remember { mutableStateOf<String?>(null) }
-    val saveActions = game.save?.let { saveButtons(game, it, onUploadSave, onRestoreSave, onChooseSave) }.orEmpty()
+    val saveActions = game.save?.let { saveButtons(game, it, onUploadSave, onRestoreSave, onChooseSave, onChooseSaveFolder) }.orEmpty()
     val saveLabels = saveActions.map { it.label }
     LaunchedEffect(saveLabels) {
         if (focusedSaveAction != null && focusedSaveAction !in saveLabels) {
@@ -725,8 +796,9 @@ private fun GameDialog(
 
 /**
  * What the details offer for an installed game's save: nothing where Loom doesn't sync the
- * platform's saves, the queue for a conflict, else an upload, and a restore when RomM's copy is
- * newer or the Thor's is gone.
+ * platform's saves, the question of its save folder while Loom can't tell it, the queue for a
+ * conflict, else an upload, a restore when RomM's copy is newer or the Thor's is gone, and a new
+ * answer when the user chose the folder.
  */
 private fun saveButtons(
     game: GameItem,
@@ -734,20 +806,23 @@ private fun saveButtons(
     upload: (GameItem) -> Unit,
     restore: (GameItem) -> Unit,
     choose: () -> Unit,
+    chooseFolder: (GameItem) -> Unit,
 ): List<DialogAction> = when {
     !save.supported -> emptyList()
+    save.state == SaveSyncState.NEEDS_FOLDER -> listOf(DialogAction("Choose save folder") { chooseFolder(game) })
     save.state == SaveSyncState.CONFLICT -> listOf(DialogAction("Choose which to keep") { choose() })
     else -> listOfNotNull(
         DialogAction("Upload save") { upload(game) },
         DialogAction("Restore server save") { restore(game) }
             .takeIf { save.state == SaveSyncState.SERVER_NEWER || save.state == SaveSyncState.LOCAL_MISSING },
+        DialogAction("Change save folder") { chooseFolder(game) }.takeIf { save.folderChosen },
     )
 }
 
 private fun saveColor(save: GameSave) = when (save.state) {
     SaveSyncState.IN_SYNC -> LoomColors.Installed
     SaveSyncState.CONFLICT, SaveSyncState.ERROR -> LoomColors.Error
-    SaveSyncState.SERVER_NEWER, SaveSyncState.LOCAL_MISSING -> LoomColors.Accent
+    SaveSyncState.SERVER_NEWER, SaveSyncState.LOCAL_MISSING, SaveSyncState.NEEDS_FOLDER -> LoomColors.Accent
     else -> LoomColors.TextMuted
 }
 

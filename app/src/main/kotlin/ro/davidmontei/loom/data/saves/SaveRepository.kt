@@ -13,6 +13,8 @@ import ro.davidmontei.loom.data.db.TitledConflict
 import ro.davidmontei.loom.data.db.TitledSaveUnit
 import ro.davidmontei.loom.romm.RommException
 import ro.davidmontei.loom.storage.saves.AzaharSaveLocator
+import ro.davidmontei.loom.storage.saves.EdenSaveLocator
+import ro.davidmontei.loom.storage.saves.SwitchTitleId
 
 /**
  * What the screens show of saves, and what the user asks for one game, each answer in words for
@@ -20,7 +22,12 @@ import ro.davidmontei.loom.storage.saves.AzaharSaveLocator
  * progress and never overlap one, and they run in [scope]: leaving the screen doesn't stop a
  * restore half way.
  */
-class SaveRepository(private val engine: SaveSyncEngine, private val saves: SaveDao, private val scope: CoroutineScope) {
+class SaveRepository(
+    private val engine: SaveSyncEngine,
+    private val saves: SaveDao,
+    private val eden: EdenSaves,
+    private val scope: CoroutineScope,
+) {
 
     /** Every installed game Loom syncs saves for, by ROM id. */
     fun observeGames(): Flow<Map<Int, SaveUnitEntity>> = engine.observeGames().map { units -> units.associateBy { it.romId } }
@@ -34,6 +41,31 @@ class SaveRepository(private val engine: SaveSyncEngine, private val saves: Save
     fun observeRecentSyncs(): Flow<List<RecentSaveSync>> = saves.observeRecentSyncs(RECENT_SYNCS)
 
     suspend fun serverSaveInfo(romId: Int, saveId: Int): ServerSaveInfo? = engine.serverSaveInfo(romId, saveId)
+
+    /** The Switch games whose Eden save folder the owner chose: they can choose another. */
+    fun observeChosenFolders(): Flow<Set<Int>> = saves.observeOwnerChosenSwitchTitles().map { it.toSet() }
+
+    /** The Eden save folders the owner can pick [romId]'s from. */
+    suspend fun saveFolderChoice(romId: Int): EdenFolderChoice = eden.folderChoice(romId)
+
+    /**
+     * The owner's answer to "which Eden save folder is this game's?": remembered, then Loom looks
+     * at the game's save again (moving nothing), so its details show where it stands.
+     */
+    suspend fun chooseSaveFolder(romId: Int, title: String, titleId: SwitchTitleId): String = request {
+        eden.chooseFolder(romId, titleId)
+        val report = try {
+            engine.sync(SaveSyncRequest.CHECK.copy(romIds = setOf(romId)))
+        } catch (e: RommException) {
+            null
+        }
+        "$title's save is Eden's $titleId folder" + when {
+            report == null || report.unavailable != null || romId in report.failed -> ". Upload save in its details looks at it again"
+            romId in report.unsupported -> ", but it isn't synced: ${report.unsupported.getValue(romId)}"
+            engine.observeGame(romId).first()?.state == SaveSyncState.NO_SAVE -> ". Neither the Thor nor RomM has a save of it yet"
+            else -> ""
+        }
+    }
 
     /** "Upload save": uploads [romId]'s save if only the Thor's changed. Never downloads. */
     suspend fun upload(romId: Int, title: String): String = request {
@@ -123,6 +155,7 @@ class SaveRepository(private val engine: SaveSyncEngine, private val saves: Save
 /** An emulator id Loom gives RomM, as the user knows it. */
 fun emulatorName(id: String?): String = when (id) {
     AzaharSaveLocator.EMULATOR_ID -> "Azahar"
+    EdenSaveLocator.EMULATOR_ID -> "Eden"
     null -> "the emulator"
     else -> id
 }

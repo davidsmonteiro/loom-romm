@@ -98,6 +98,28 @@ interface SaveDao {
 
     @Upsert suspend fun upsertUnit(unit: SaveUnitEntity)
 
+    // --- Switch title IDs ---
+
+    @Query("SELECT * FROM switch_titles WHERE rom_id = :romId")
+    suspend fun switchTitle(romId: Int): SwitchTitleEntity?
+
+    @Upsert suspend fun upsertSwitchTitle(title: SwitchTitleEntity)
+
+    /** The titles of the installed games other than [romId] whose save folder is [titleId]'s. */
+    @Query(
+        """SELECT r.title FROM switch_titles t JOIN installs i ON i.rom_id = t.rom_id JOIN roms r ON r.id = t.rom_id
+           WHERE t.title_id = :titleId AND t.rom_id != :romId ORDER BY r.sort_key""",
+    )
+    suspend fun otherGamesWithSwitchTitle(titleId: String, romId: Int): List<String>
+
+    /** The title IDs of the installed games other than [romId]: those save folders are taken. */
+    @Query("SELECT t.title_id FROM switch_titles t JOIN installs i ON i.rom_id = t.rom_id WHERE t.rom_id != :romId")
+    suspend fun switchTitlesTakenBesides(romId: Int): List<String>
+
+    /** The games whose save folder the owner chose, so they can choose again. */
+    @Query("SELECT rom_id FROM switch_titles WHERE source = 'OWNER'")
+    fun observeOwnerChosenSwitchTitles(): Flow<List<Int>>
+
     /** Forgets games no longer installed; their baselines and conflicts stay with their saves. */
     @Query("DELETE FROM save_units WHERE rom_id NOT IN (SELECT rom_id FROM installs)")
     suspend fun deleteUninstalledUnits()

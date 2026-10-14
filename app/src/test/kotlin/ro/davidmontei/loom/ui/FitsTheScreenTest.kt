@@ -27,7 +27,10 @@ import ro.davidmontei.loom.data.saves.SaveSyncEngine
 import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.storage.saves.SyncDecision
+import ro.davidmontei.loom.data.saves.EdenSaves
 import ro.davidmontei.loom.ui.library.FolderQuestion
+import ro.davidmontei.loom.ui.library.SaveFolderOption
+import ro.davidmontei.loom.ui.library.SaveFolderQuestion
 import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.InstallState
@@ -172,6 +175,39 @@ class FitsTheScreenTest {
             "00000000000000000000000000000000/00000000000000000000000000000000/title/00040000/0011c400/data (Permission denied)", "azahar")
         state = state.copy(games = listOf(game.copy(save = failed)))
         assertThat(overflow(title)).isEqualTo(0f)
+    }
+
+    /**
+     * A Switch game's details at their tallest: a long title and path, the folder question's line
+     * at its longest, then a chosen folder with all three save buttons in one row.
+     */
+    @Test fun aSwitchGamesDetailsWithItsSaveFit() {
+        val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"
+        val ask = GameSave(true, SaveSyncState.NEEDS_FOLDER, EdenSaves.WRONG_KEY, "eden")
+        val game = GameItem(40, title, 16_300_000_000, null, listOf("World"), InstallState.INSTALLED, null, null, null, adopted = true,
+            removedOnServer = false, installPath = "switch/$title.xci", save = ask)
+        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game)))
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("game-40").performClick()
+        assertThat(overflow(title)).isEqualTo(0f)
+        assertThat(cutShort(EdenSaves.WRONG_KEY)).isFalse()
+        rule.saveScreenshot("library-details-switch-folder")
+        state = state.copy(games = listOf(game.copy(save = GameSave(true, SaveSyncState.SERVER_NEWER, null, "eden", folderChosen = true))))
+        assertThat(overflow(title)).isEqualTo(0f)
+        rule.saveScreenshot("library-details-switch-buttons")
+    }
+
+    /** Which Eden save folder is a game's: the explanation in full, and the folders in a list of their own. */
+    @Test fun theSaveFolderQuestionFits() {
+        val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"
+        val game = GameItem(40, title, 16_300_000_000, null, listOf("World"), InstallState.INSTALLED, null, null, null, adopted = true,
+            removedOnServer = false, installPath = "switch/$title.xci", save = GameSave(true, SaveSyncState.NEEDS_FOLDER, EdenSaves.NO_KEYS, "eden"))
+        val options = (1..12).map { SaveFolderOption("0100%012X".format(it * 0x1000L), 4, 1_200_000, System.currentTimeMillis() - it * 3_600_000L) }
+        val state = LibraryScreenTest().state.copy(games = listOf(game), saveFolderQuestion = SaveFolderQuestion(game, options, current = null))
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        assertThat(overflow("Which Eden save folder is $title's?")).isEqualTo(0f)
+        rule.saveScreenshot("library-save-folder-question")
     }
 
     /** A save conflict's choice at its tallest: a long title, the longest reason, and RomM's side in full. */

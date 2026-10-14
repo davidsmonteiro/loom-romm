@@ -35,6 +35,7 @@ import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.data.db.SaveSyncState
+import ro.davidmontei.loom.data.saves.EdenSaves
 import ro.davidmontei.loom.ui.library.FolderQuestion
 import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.GameItem
@@ -44,6 +45,8 @@ import ro.davidmontei.loom.ui.library.LibraryContent
 import ro.davidmontei.loom.ui.library.LibraryFilter
 import ro.davidmontei.loom.ui.library.LibraryHeader
 import ro.davidmontei.loom.ui.library.LibraryUiState
+import ro.davidmontei.loom.ui.library.SaveFolderOption
+import ro.davidmontei.loom.ui.library.SaveFolderQuestion
 
 @OptIn(ExperimentalTestApi::class)
 /**
@@ -80,6 +83,9 @@ class LibraryScreenTest {
         override fun showAllFolders() { calls += "allFolders" }
         override fun showSuggestedFolders() { calls += "suggestedFolders" }
         override fun dismissFolderQuestion() { calls += "dismissFolder" }
+        override fun askSaveFolder(game: GameItem) { calls += "askSaveFolder:${game.id}" }
+        override fun chooseSaveFolder(titleId: String) { calls += "saveFolder:$titleId" }
+        override fun dismissSaveFolderQuestion() { calls += "dismissSaveFolder" }
     }
 
     private fun platform(id: Int, name: String, roms: Int, installed: Int, bytes: Long) =
@@ -559,11 +565,11 @@ class LibraryScreenTest {
     }
 
     @Test fun aGameWhoseSavesLoomCantReachSaysWhy() {
-        state = withSave(1, GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Eden keeps its saves in Android/data, where Loom can't reach them", null))
+        state = withSave(1, GameSave(supported = false, SaveSyncState.UNSUPPORTED, "DuckStation keeps its memory cards in Android/data, where Loom can't reach them", null))
         show()
         press(Key.DirectionCenter)
         rule.onNodeWithTag("save-line", useUnmergedTree = true)
-            .assertTextEquals("Save: not synced. Eden keeps its saves in Android/data, where Loom can't reach them")
+            .assertTextEquals("Save: not synced. DuckStation keeps its memory cards in Android/data, where Loom can't reach them")
         rule.onNodeWithText("Upload save").assertDoesNotExist()
         press(Key.DirectionUp)
         rule.onNodeWithText("Close").assertIsFocused() // nothing above it to go to
@@ -576,6 +582,100 @@ class LibraryScreenTest {
         rule.onNodeWithTag("save-line", useUnmergedTree = true).assertTextEquals("Save: not checked yet")
         press(Key.DirectionUp); press(Key.DirectionCenter)
         assertThat(calls).contains("upload:1")
+    }
+
+    // --- a Switch game's save, in Eden ---
+
+    private fun eden(state: SaveSyncState?, detail: String? = null, chosen: Boolean = false) =
+        GameSave(supported = true, state, detail, "eden", folderChosen = chosen)
+
+    /** A Switch game whose title ID Loom can't read: its details ask for its Eden save folder, and offer nothing else. */
+    @Test fun aSwitchGameWithoutItsTitleIdAsksForItsSaveFolder() {
+        state = withSave(1, eden(SaveSyncState.NEEDS_FOLDER, EdenSaves.NO_KEYS))
+        show()
+        press(Key.DirectionCenter)
+        rule.onNodeWithTag("save-line", useUnmergedTree = true).assertTextEquals("Save: choose its Eden save folder. ${EdenSaves.NO_KEYS}")
+        rule.onNodeWithText("Upload save").assertDoesNotExist()
+        rule.onNodeWithText("Close").assertIsFocused()
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Choose save folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("askSaveFolder:1")
+        rule.onNodeWithText("Choose save folder").assertDoesNotExist() // the details closed for the question
+    }
+
+    /** Once the owner chose a game's save folder, its details can change it. */
+    @Test fun aChosenSaveFolderCanBeChangedFromTheDetails() {
+        state = withSave(1, eden(SaveSyncState.IN_SYNC, chosen = true))
+        show()
+        press(Key.DirectionCenter); press(Key.DirectionUp) // into the save buttons, wherever Close lines up with them
+        press(Key.DirectionLeft); press(Key.DirectionLeft)
+        rule.onNodeWithText("Upload save").assertIsFocused()
+        press(Key.DirectionRight)
+        rule.onNodeWithText("Change save folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("askSaveFolder:1")
+    }
+
+    @Test fun aSaveFolderLoomReadItselfCantBeChanged() {
+        state = withSave(1, eden(SaveSyncState.IN_SYNC))
+        show()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Upload save").assertExists()
+        rule.onNodeWithText("Change save folder").assertDoesNotExist()
+    }
+
+    /** The same question before a restore, naming Eden. */
+    @Test fun restoringASwitchSaveAsksToCloseEden() {
+        state = withSave(1, eden(SaveSyncState.SERVER_NEWER))
+        show()
+        press(Key.DirectionCenter); press(Key.DirectionUp); press(Key.DirectionCenter)
+        rule.onNodeWithText("Close Eden completely first (swipe it away in Recents). Loom backs up the save on the Thor before replacing it.")
+            .assertExists()
+        rule.onNodeWithText("Cancel").assertIsFocused()
+    }
+
+    private val now = System.currentTimeMillis()
+    private val wonderQuestion get() = SaveFolderQuestion(
+        game = games[0].copy(save = eden(SaveSyncState.NEEDS_FOLDER, EdenSaves.NO_KEYS)),
+        options = listOf(SaveFolderOption("010015100B514000", 4, 1_200_000, now - 60_000), SaveFolderOption("01001F5010DFA000", 2, 300_000, now - 86_400_000)),
+        current = null,
+    )
+
+    /** Eden's folders, newest first, with the newest focused: A takes the one focused. */
+    @Test fun theSaveFolderQuestionStartsOnTheNewestFolder() {
+        state = state.copy(saveFolderQuestion = wonderQuestion)
+        show()
+        rule.onNodeWithText("Which Eden save folder is Chrono Trigger's?").assertExists()
+        rule.onNodeWithTag("save-folder-010015100B514000", useUnmergedTree = true).assertIsFocused()
+        press(Key.DirectionRight)
+        rule.onNodeWithTag("save-folder-01001F5010DFA000", useUnmergedTree = true).assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("saveFolder:01001F5010DFA000")
+    }
+
+    @Test fun bLeavesTheSaveFolderQuestionChoosingNothing() {
+        state = state.copy(saveFolderQuestion = wonderQuestion)
+        show()
+        back()
+        assertThat(calls).contains("dismissSaveFolder")
+        assertThat(calls.filter { it.startsWith("saveFolder:") }).isEmpty()
+    }
+
+    /** The folder chosen before is marked when choosing again. */
+    @Test fun theFolderChosenBeforeIsMarked() {
+        state = state.copy(saveFolderQuestion = wonderQuestion.copy(current = "01001F5010DFA000"))
+        show()
+        rule.onNodeWithText("2 files · 293 KB · chosen now", substring = true, useUnmergedTree = true).assertExists()
+    }
+
+    @Test fun withNoFolderToChooseTheQuestionSaysWhy() {
+        state = state.copy(saveFolderQuestion = wonderQuestion.copy(options = emptyList(), unavailable = EdenSaves.SEVERAL_PROFILES))
+        show()
+        rule.onNodeWithText(EdenSaves.SEVERAL_PROFILES).assertExists()
+        rule.onNodeWithText("Cancel").assertIsFocused()
+        update { it.copy(saveFolderQuestion = wonderQuestion.copy(options = emptyList())) }
+        rule.onNodeWithText("Eden has no save folder that isn't another game's. Play the game until it saves, then choose.").assertExists()
     }
 
     // --- the folder question, at a platform's first download when the card has several candidates ---

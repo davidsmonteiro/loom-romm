@@ -10,7 +10,7 @@ import java.io.File
 /** From an installed 3DS game to its Azahar save folder, or why not. */
 @RunWith(AndroidJUnit4::class)
 class SaveUnitResolverTest : SaveSyncTestBase() {
-    private val resolver get() = SaveUnitResolver(settings, volumes)
+    private val resolver get() = SaveUnitResolver(settings, volumes, eden())
 
     private suspend fun resolve(game: Game): ResolvedSave {
         val dao = db.catalogDao()
@@ -50,12 +50,26 @@ class SaveUnitResolverTest : SaveSyncTestBase() {
         assertThat(SaveUnitResolver.supportsPlatform("3ds")).isTrue()
         assertThat(SaveUnitResolver.supportsPlatform("new-nintendo-3ds")).isTrue()
         assertThat(SaveUnitResolver.supportsPlatform("nds")).isFalse()
-        assertThat(SaveUnitResolver.unsupportedReason("switch")).isEqualTo("Eden keeps its saves in Android/data, where Loom can't reach them")
         assertThat(SaveUnitResolver.unsupportedReason("psx")).isEqualTo("DuckStation keeps its memory cards in Android/data, where Loom can't reach them")
         assertThat(SaveUnitResolver.unsupportedReason("ngc")).startsWith("Dolphin")
         assertThat(SaveUnitResolver.unsupportedReason("wiiu")).startsWith("Cemu")
         assertThat(SaveUnitResolver.unsupportedReason("psp")).isEqualTo("Loom doesn't sync PPSSPP saves yet")
-        assertThat(SaveUnitResolver.unsupportedReason("snes")).isEqualTo("Loom syncs 3DS saves (Azahar) only, for now")
+        assertThat(SaveUnitResolver.unsupportedReason("snes")).isEqualTo("Loom syncs 3DS (Azahar) and Switch (Eden) saves only, for now")
+    }
+
+    /** Eden's save folder moved to the card makes Switch games syncable, under Eden's emulator id (Argosy's too). */
+    @Test fun switchGamesAreSyncedThroughEden() = runBlocking<Unit> {
+        assertThat(SaveUnitResolver.supportsPlatform("switch")).isTrue()
+        assertThat(SaveUnitResolver.emulatorForPlatform("switch")).isEqualTo("eden")
+        assertThat(SaveUnitResolver.emulatorForPlatform("3ds")).isEqualTo("azahar")
+        putProdKeys()
+        installSwitch(wonder)
+        val dao = db.catalogDao()
+        val ready = resolver.resolve(dao.rom(wonder.romId)!!, dao.install(wonder.romId)!!) as ResolvedSave.Ready
+        assertThat(ready.emulator).isEqualTo("eden")
+        assertThat(ready.roots.single().name).isEqualTo(wonder.titleId)
+        assertThat(ready.roots.single().folder.toFile()).isEqualTo(edenFolder(wonder))
+        assertThat(ready.fileName).isEqualTo("Super Mario Bros Wonder.zip")
     }
 
     @Test fun azaharsFolderIsTheOneHoldingItsSdCard() {

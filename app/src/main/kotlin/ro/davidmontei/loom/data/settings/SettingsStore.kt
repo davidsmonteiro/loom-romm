@@ -56,6 +56,13 @@ data class Settings(
      * holds Azahar's `sdmc/Nintendo 3DS` (as on the Thor).
      */
     val azaharUserDir: String? = null,
+    /**
+     * Eden's save folder (the one holding `user/save`) when the user set one; null means
+     * `<ROMs root>/saves/Eden`, when it holds `user/save` (as on the Thor).
+     */
+    val edenSaveDir: String? = null,
+    /** The Eden profile (user ID folder) whose saves Loom syncs, when Eden has several; null until chosen. */
+    val edenProfile: String? = null,
     /** Null until a background save sync has run. */
     val lastSaveSync: SaveSyncOutcome? = null,
     val catalogRefresh: CatalogRefresh = CatalogRefresh.DEFAULT,
@@ -86,6 +93,8 @@ class SettingsStore(
             catalogFields = p[CATALOG_FIELDS] ?: 1,
             autoUploadSaves = p[AUTO_UPLOAD_SAVES] ?: true,
             azaharUserDir = p[AZAHAR_USER_DIR],
+            edenSaveDir = p[EDEN_SAVE_DIR],
+            edenProfile = p[EDEN_PROFILE],
             lastSaveSync = p[SAVE_SYNC_AT]?.let { at -> SaveSyncOutcome(at, p[SAVE_SYNC_SUMMARY].orEmpty(), p[SAVE_SYNC_FAILED] ?: false) },
             catalogRefresh = CatalogRefresh.entries.find { it.hours == p[REFRESH_HOURS] } ?: CatalogRefresh.DEFAULT,
             refreshOnWifiOnly = p[REFRESH_WIFI_ONLY] ?: false,
@@ -112,6 +121,15 @@ class SettingsStore(
     /** [path] null goes back to finding Azahar's folder in the n3ds system folder. */
     suspend fun setAzaharUserDir(path: String?) = dataStore.edit {
         if (path.isNullOrBlank()) it.remove(AZAHAR_USER_DIR) else it[AZAHAR_USER_DIR] = path
+    }
+
+    /** [path] null goes back to looking for Eden's saves in `<ROMs root>/saves/Eden`. */
+    suspend fun setEdenSaveDir(path: String?) = dataStore.edit {
+        if (path.isNullOrBlank()) it.remove(EDEN_SAVE_DIR) else it[EDEN_SAVE_DIR] = path
+    }
+
+    suspend fun setEdenProfile(profile: String?) = dataStore.edit {
+        if (profile.isNullOrBlank()) it.remove(EDEN_PROFILE) else it[EDEN_PROFILE] = profile
     }
 
     suspend fun setLastSaveSync(outcome: SaveSyncOutcome) = dataStore.edit {
@@ -171,6 +189,8 @@ class SettingsStore(
         val CATALOG_FIELDS = intPreferencesKey("catalog_fields")
         val AUTO_UPLOAD_SAVES = booleanPreferencesKey("auto_upload_saves")
         val AZAHAR_USER_DIR = stringPreferencesKey("azahar_user_dir")
+        val EDEN_SAVE_DIR = stringPreferencesKey("eden_save_dir")
+        val EDEN_PROFILE = stringPreferencesKey("eden_profile")
         val SAVE_SYNC_AT = longPreferencesKey("save_sync_last_ms")
         val SAVE_SYNC_SUMMARY = stringPreferencesKey("save_sync_last_summary")
         val SAVE_SYNC_FAILED = booleanPreferencesKey("save_sync_last_failed")

@@ -16,8 +16,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SaveBaselineEntity::class,
         SaveConflictEntity::class,
         SaveUnitEntity::class,
+        SwitchTitleEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class LoomDatabase : RoomDatabase() {
@@ -64,5 +65,18 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
 val MIGRATION_2_3 = object : Migration(2, 3) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE `save_baselines` ADD COLUMN `unit_path` TEXT")
+    }
+}
+
+/**
+ * Version 4 (Eden saves): each Switch game's title ID, read from its image or chosen by the owner,
+ * so a scan doesn't read the images again and the owner's answer is remembered.
+ */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `switch_titles` (`rom_id` INTEGER NOT NULL, `title_id` TEXT NOT NULL, " +
+                "`source` TEXT NOT NULL, `image_fingerprint` TEXT, `recorded_at` INTEGER NOT NULL, PRIMARY KEY(`rom_id`))",
+        )
     }
 }

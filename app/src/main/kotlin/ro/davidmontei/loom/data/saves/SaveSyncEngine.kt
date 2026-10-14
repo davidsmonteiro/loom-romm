@@ -290,6 +290,10 @@ class SaveSyncEngine(
                         unsupported[save.romId] = save.reason
                         setState(save.romId, SaveSyncState.UNSUPPORTED, save.reason, emulator = units.emulatorFor(rom))
                     }
+                    is ResolvedSave.NeedsFolder -> {
+                        unsupported[save.romId] = save.reason
+                        setState(save.romId, SaveSyncState.NEEDS_FOLDER, save.reason, emulator = units.emulatorFor(rom))
+                    }
                     is ResolvedSave.Unavailable -> {
                         failed[save.romId] = save.reason
                         setState(save.romId, SaveSyncState.ERROR, save.reason, emulator = units.emulatorFor(rom))
@@ -409,7 +413,7 @@ class SaveSyncEngine(
                     Acted.DONE
                 } else {
                     serverNewer += game.romId
-                    setState(game.romId, SaveSyncState.SERVER_NEWER, "RomM has a newer save; close Azahar, then restore it")
+                    setState(game.romId, SaveSyncState.SERVER_NEWER, "RomM has a newer save; close ${emulatorName(game.save.emulator)}, then restore it")
                     Acted.NOTHING
                 }
                 SyncOutcome.CONFLICT -> {
@@ -429,7 +433,7 @@ class SaveSyncEngine(
             }
             if (sent == null) {
                 waiting += game.romId
-                setState(game.romId, SaveSyncState.WRITING, "Azahar is writing this save; Loom uploads it once it has been quiet for a minute")
+                setState(game.romId, SaveSyncState.WRITING, "${emulatorName(game.save.emulator)} is writing this save; Loom uploads it once it has been quiet for a minute")
                 return Acted.NOTHING
             }
             uploaded += game.romId
@@ -496,6 +500,7 @@ class SaveSyncEngine(
                 Opened.Ready(api, deviceId, resolved)
             }
             is ResolvedSave.Unsupported -> Opened.Refused(resolved.reason)
+            is ResolvedSave.NeedsFolder -> Opened.Refused(resolved.reason)
             is ResolvedSave.Unavailable -> Opened.Refused(resolved.reason)
         }
     }
@@ -553,13 +558,13 @@ class SaveSyncEngine(
                 ConflictChoice.KEEP_THOR -> {
                     if (local == null) return ResolveResult.Failed("There's no save on the Thor to keep")
                     whenSettled(save, local) { file -> uploadSlotted(api, deviceId, null, save, file, local, head, overwrite = true) }
-                        ?: return ResolveResult.Failed(STILL_WRITING)
+                        ?: return ResolveResult.Failed(stillWriting(save))
                 }
                 ConflictChoice.KEEP_SERVER, ConflictChoice.KEEP_BOTH -> {
                     if (head == null) return ResolveResult.Failed("RomM has no save for this game to take")
                     if (choice == ConflictChoice.KEEP_BOTH && local != null) {
                         whenSettled(save, local) { file -> uploadArchival(api, deviceId, save, file, local) }
-                            ?: return ResolveResult.Failed(STILL_WRITING)
+                            ?: return ResolveResult.Failed(stillWriting(save))
                     }
                     download(api, deviceId, null, romId, save, head, local)
                 }
@@ -779,6 +784,8 @@ class SaveSyncEngine(
     private fun isNewHead(saved: SaveDto, head: ServerHead): Boolean =
         saved.id > head.saveId && !saved.updatedAtInstant().isBefore(head.updatedAt)
 
+    private fun stillWriting(save: ResolvedSave.Ready) = "${emulatorName(save.emulator)} is still writing this save. Close it and try again in a minute."
+
     /** Errors no game in the run can get past: the server is gone, or Loom's token isn't accepted. */
     private fun Exception.isFatal() =
         this is RommException.Unreachable || this is RommException.Unauthorized || this is RommException.Forbidden
@@ -796,7 +803,6 @@ class SaveSyncEngine(
         const val NO_DEVICE = "RomM doesn't have Loom as a device, so saves can't sync. Pair again in Settings with the code Loom shows."
         private const val STALE_LOCAL = "The save on the Thor changed since this choice was shown"
         private const val STALE_SERVER = "RomM's save changed since this choice was shown"
-        private const val STILL_WRITING = "Azahar is still writing this save. Close it and try again in a minute."
         private const val EMULATOR_UNKNOWN = "unknown"
 
         private val ARCHIVE_STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH-mm-ss 'UTC'").withZone(ZoneOffset.UTC)

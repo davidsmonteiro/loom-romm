@@ -27,7 +27,7 @@ import java.time.Duration
 @RunWith(AndroidJUnit4::class)
 class SaveRepositoryTest : SaveSyncTestBase() {
     private val screen = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val repository get() = SaveRepository(engine(), db.saveDao(), scope)
+    private val repository get() = SaveRepository(engine(), db.saveDao(), eden(), scope)
 
     @After fun tearDownScreen() = screen.cancel()
 
