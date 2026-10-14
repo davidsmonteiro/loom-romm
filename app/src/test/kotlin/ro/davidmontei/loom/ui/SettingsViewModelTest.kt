@@ -113,6 +113,17 @@ class SettingsViewModelTest {
         vm.viewModelScope.cancel()
     }
 
+    /** Going back to the 3DS folder looks there again: Azahar may have made its data since Settings opened. */
+    @Test fun goingBackToThe3dsFolderLooksForAzaharsDataAgain() = runBlocking<Unit> {
+        val vm = viewModel()
+        withTimeout(5_000) { vm.state.first { it.storage.romsRoot != null } }
+        File(roms, "n3ds/sdmc/Nintendo 3DS").mkdirs() // a game run in Azahar meanwhile
+        vm.setAzaharFolder(null).join()
+        val found = withTimeout(5_000) { vm.state.first { it.storage.azaharFound != null } }.storage.azaharFound
+        assertThat(found).isEqualTo(File(roms, "n3ds").path)
+        vm.viewModelScope.cancel()
+    }
+
     @Test fun theAutomaticUploadSwitchStartsAndStopsThePeriodicScan() = runBlocking<Unit> {
         val vm = viewModel()
         vm.setAutoUploadSaves(true).join()

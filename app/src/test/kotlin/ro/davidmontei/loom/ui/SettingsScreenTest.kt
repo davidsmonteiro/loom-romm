@@ -438,6 +438,7 @@ class SettingsScreenTest {
         rule.onNodeWithText("Change folder").assertIsFocused()
         press(Key.DirectionCenter) // the browser opens, on the folder in use
         rule.onNodeWithText("n3ds").assertIsFocused()
+        rule.onNodeWithText("Azahar's folder holds sdmc and nand; they aren't here.").assertExists() // ROMs itself
         press(Key.DirectionCenter) // A goes into it
         rule.onNodeWithText("Azahar's data is here (nand, sdmc).").assertExists()
         rule.onNodeWithText("Use this folder").assertIsFocused()
@@ -463,6 +464,7 @@ class SettingsScreenTest {
         show()
         toTheSaveSwitch()
         rule.onNodeWithText("/storage/6365-3230/Azahar").assertExists()
+        rule.onNodeWithText("Chosen here. Azahar keeps sdmc and nand in it.").assertExists()
         press(Key.DirectionDown); press(Key.DirectionRight)
         rule.onNodeWithText("Use the 3DS folder").assertIsFocused()
         press(Key.DirectionCenter)
@@ -473,6 +475,9 @@ class SettingsScreenTest {
         show()
         toTheSaveSwitch()
         rule.onNodeWithText("Not found").assertExists()
+        rule.onNodeWithText("Loom looks for Azahar's sdmc folder in the 3DS system folder. Run a game in Azahar once, or choose its folder.")
+            .assertExists()
+        rule.onNodeWithTag("last-save-sync").assertTextEquals("No save sync has run yet.")
         rule.onNodeWithText("Use the 3DS folder").assertDoesNotExist()
     }
 }

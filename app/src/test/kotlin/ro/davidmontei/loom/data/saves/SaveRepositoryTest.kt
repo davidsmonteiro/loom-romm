@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import mockwebserver3.MockResponse
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
 import org.junit.Test
@@ -72,6 +73,38 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         assertThat(romm.uploads()).hasSize(1)
     }
 
+    @Test fun aSaveRommAlreadyHasIsSaidToBeInSync() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.addSave(7, archiveOf(bytes(1))) // the same bytes, uploaded from elsewhere
+        assertThat(repository.upload(7, "Pokemon X")).isEqualTo("RomM already had this save of Pokemon X; it's in sync")
+        assertThat(romm.uploads()).isEmpty()
+    }
+
+    /** A game Loom can't place, and an upload RomM fails, each say why. */
+    @Test fun uploadSaysWhyItCouldnt() = runBlocking<Unit> {
+        install(pokemonX, cartridgeId = null, file = "Pokemon X.cia") // no title ID to find its save by
+        assertThat(repository.upload(7, "Pokemon X")).startsWith("Pokemon X's save isn't synced: ")
+
+        install(omegaRuby)
+        writeSave(omegaRuby, bytes(1))
+        romm.uploadAnswer = { json(500, "Database is locked") }
+        assertThat(repository.upload(8, "Pokemon Omega Ruby")).isEqualTo("Couldn't sync Pokemon Omega Ruby's save: HTTP 500: Database is locked")
+    }
+
+    /** RomM turning Loom away is said with what to do, or in RomM's words. */
+    @Test fun aServerThatRefusesLoomIsSaidPlainly() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.uploadAnswer = { json(401, "Invalid token") }
+        assertThat(repository.upload(7, "Pokemon X")).isEqualTo("RomM rejected Loom's token. Pair again in Settings.")
+        romm.uploadAnswer = { json(403, "Forbidden: missing scope assets.write") }
+        assertThat(repository.upload(7, "Pokemon X")).isEqualTo("Forbidden: missing scope assets.write")
+    }
+
+    private fun json(code: Int, detail: String) =
+        MockResponse.Builder().code(code).setHeader("Content-Type", "application/json").body("""{"detail":"$detail"}""").build()
+
     @Test fun aConflictIsSettledInTheQueueEvenOnceSkipped() = runBlocking<Unit> {
         install(pokemonX)
         writeSave(pokemonX, bytes(1))
@@ -114,6 +147,17 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         engine().sync(SaveSyncRequest.PUSH) // the conflict as it is now
         assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_SERVER))
             .isEqualTo("The Thor now has RomM's save of Pokemon X; the one it replaced is backed up on the card")
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(2))
+    }
+
+    @Test fun keepingBothSaysWhereEachSaveWent() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.addSave(7, archiveOf(bytes(2)))
+        engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_BOTH))
+            .isEqualTo("RomM keeps the Thor's save of Pokemon X as a separate copy, and the Thor now has RomM's")
         assertThat(localMain(pokemonX)).isEqualTo(bytes(2))
     }
 

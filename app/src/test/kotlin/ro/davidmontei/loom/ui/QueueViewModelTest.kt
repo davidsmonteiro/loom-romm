@@ -82,6 +82,22 @@ class QueueViewModelTest : SaveSyncTestBase() {
         assertThat(item.emulator).isEqualTo("azahar")
     }
 
+    /** RomM is asked once per server save, not each time the conflicts change (a Skip, another game's conflict). */
+    @Test fun rommIsAskedAboutAServerSaveOnce() = runBlocking<Unit> {
+        romm.devices += romm.device("dev-deck", "argosy-deck", name = "Steam Deck")
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.addSave(7, archiveOf(bytes(2)), device = "dev-deck")
+        engine().sync(SaveSyncRequest.PUSH)
+        withTimeout(5_000) { vm.state.first { s -> s.conflicts.any { it.serverDevice != null } } }
+
+        db.saveDao().upsertConflict(db.saveDao().conflict(7)!!.copy(skipped = true))
+        withTimeout(5_000) { vm.state.first { s -> s.conflicts.any { it.skipped } } }
+        delay(500) // a second question, had it been asked, would have reached RomM by now
+
+        assertThat(romm.paths().count { it == "GET /api/devices/dev-deck" }).isEqualTo(1)
+    }
+
     @Test fun anAnswerIsCarriedOutOnceAndSaysHowItWent() = runBlocking<Unit> {
         install(pokemonX)
         writeSave(pokemonX, bytes(1))
