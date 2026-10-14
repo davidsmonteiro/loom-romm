@@ -13,12 +13,15 @@ import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.storage.saves.EdenSaveLocation
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import ro.davidmontei.loom.storage.saves.EdenTitleFolder
+import ro.davidmontei.loom.storage.saves.SAVE_SLOT
 import ro.davidmontei.loom.storage.saves.SwitchHeaderKey
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import ro.davidmontei.loom.storage.saves.SwitchTitleIdReader
 import ro.davidmontei.loom.storage.saves.SwitchTitleIdResult
 import java.io.File
 import java.io.IOException
+import java.nio.file.Path
+import java.nio.file.Paths
 
 /** The save folders the owner can pick a Switch game's from, or why there's nothing to pick. */
 sealed interface EdenFolderChoice {
@@ -70,7 +73,8 @@ class EdenSaves(
                     rom.id, "$other has the same Eden save folder ($titleId), and Loom syncs a folder for one game only",
                 )
             }
-            when (val location = locator.locate(titleId, s.edenProfile)) {
+            val synced = saves.baseline(rom.id, SAVE_SLOT)?.unitPath?.let { Paths.get(it) }
+            when (val location = locator.locate(titleId, s.edenProfile, synced)) {
                 is EdenSaveLocation.Found -> ResolvedSave.Ready(
                     romId = rom.id,
                     emulator = EdenSaveLocator.EMULATOR_ID,
@@ -81,6 +85,10 @@ class EdenSaves(
                 EdenSaveLocation.NoSaveFolder -> ResolvedSave.Unsupported(rom.id, "There's no user/save in $dir")
                 EdenSaveLocation.NoProfile -> ResolvedSave.Unsupported(rom.id, "Eden hasn't saved a game in $dir yet: play one until it saves")
                 is EdenSaveLocation.ChooseProfile -> ResolvedSave.Unsupported(rom.id, SEVERAL_PROFILES)
+                is EdenSaveLocation.Moved -> ResolvedSave.Unsupported(
+                    rom.id, "Eden now keeps this game's save in its ${kind(locator, location.now)} folder, but Loom synced its " +
+                        "${kind(locator, location.synced)} one, which still holds a save. Loom won't switch between them; keep the save in one of them",
+                )
             }
         } catch (e: IOException) {
             ResolvedSave.Unavailable(rom.id, "Couldn't read Eden's save folder: ${e.message}")
@@ -105,6 +113,8 @@ class EdenSaves(
             EdenFolderChoice.Unavailable("Couldn't read Eden's save folder: ${e.message}")
         }
     }
+
+    private fun kind(locator: EdenSaveLocator, folder: Path) = if (locator.isConsoleWide(folder)) "console-wide" else "profile"
 
     /** The owner's answer: [titleId]'s folder is [romId]'s save. It stands until they choose another. */
     suspend fun chooseFolder(romId: Int, titleId: SwitchTitleId) =

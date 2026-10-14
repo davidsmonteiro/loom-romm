@@ -100,6 +100,30 @@ class EdenSaveLocatorTest {
             .isEqualTo(users(eden).resolve("$profile/01006F8002326000"))
     }
 
+    /**
+     * A game synced from the console-wide folder that then writes a profile save isn't switched to
+     * it (nor back): the two hold different saves. Once the synced folder is gone, the other is it.
+     */
+    @Test fun aGameSyncedFromOneFolderIsNeverSwitchedToTheOther() {
+        val eden = thorEden()
+        val zeros = "0".repeat(32)
+        val device = users(eden).resolve("$zeros/$arceus")
+        val own = users(eden).resolve("$profile/$arceus")
+        folderOf(device, "device.bin" to byteArrayOf(1))
+        val locator = EdenSaveLocator(eden)
+        assertThat((locator.locate(arceus, null, synced = device) as EdenSaveLocation.Found).unit.folder).isEqualTo(device)
+
+        folderOf(own, "user.bin" to byteArrayOf(2)) // the game now saves per user too
+        assertThat(locator.locate(arceus, null, synced = device)).isEqualTo(EdenSaveLocation.Moved(device, own))
+        assertThat((locator.locate(arceus, null) as EdenSaveLocation.Found).unit.folder).isEqualTo(own) // never synced: as before
+        assertThat((locator.locate(arceus, null, synced = own) as EdenSaveLocation.Found).unit.folder).isEqualTo(own)
+        assertThat(locator.isConsoleWide(device)).isTrue()
+        assertThat(locator.isConsoleWide(own)).isFalse()
+
+        device.toFile().deleteRecursively() // the synced folder is gone: nothing to mix up
+        assertThat((locator.locate(arceus, null, synced = device) as EdenSaveLocation.Found).unit.folder).isEqualTo(own)
+    }
+
     @Test fun withoutEdensSaveFolderThereIsNoPlaceForSaves() {
         val empty = tmp.newFolder("Eden").toPath()
         assertThat(EdenSaveLocator(empty).locate(wonder, null)).isEqualTo(EdenSaveLocation.NoSaveFolder)

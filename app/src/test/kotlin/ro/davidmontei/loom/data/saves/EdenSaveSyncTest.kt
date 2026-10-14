@@ -209,6 +209,30 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         assertThat(choice.folders.map { it.titleId.toString() }).contains(wonder.titleId)
     }
 
+    /**
+     * Synced from Eden's console-wide folder, a game that starts saving per user isn't switched to
+     * the profile's folder: it stops, saying why, and neither save goes up as the other.
+     */
+    @Test fun aGameSyncedConsoleWideIsntSwitchedToItsProfileFolder() = runBlocking<Unit> {
+        installSwitch(wonder)
+        val device = File(eden, "user/save/0000000000000000/$ZEROS/${wonder.titleId}").apply { mkdirs() }
+        File(device, "device.bin").writeBytes(bytes(1))
+        device.listFiles()!!.forEach { it.setLastModified(clock.minusSeconds(600).toEpochMilli()) }
+        eden().chooseFolder(wonder.romId, SwitchTitleId.parse(wonder.titleId)!!)
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(wonder.romId)
+        assertThat(saves.baseline(wonder.romId, "autosave")!!.unitPath).isEqualTo(device.path)
+
+        writeEdenSave(wonder, bytes(2)) // the profile's folder appears
+        engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.UNSUPPORTED)
+        assertThat(detail(wonder)).isEqualTo(
+            "Eden now keeps this game's save in its profile folder, but Loom synced its console-wide one, which still holds a save. " +
+                "Loom won't switch between them; keep the save in one of them",
+        )
+        assertThat(romm.uploads()).hasSize(1)
+    }
+
     /** Once another game has a folder, it isn't offered for this one. */
     @Test fun aFolderAnotherGameHasIsntOffered() = runBlocking<Unit> {
         putProdKeys()
