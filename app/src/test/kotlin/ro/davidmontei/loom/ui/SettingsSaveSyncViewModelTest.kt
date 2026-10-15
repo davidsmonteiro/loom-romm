@@ -2,7 +2,11 @@ package ro.davidmontei.loom.ui
 
 import android.content.Context
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -13,10 +17,12 @@ import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -62,6 +68,9 @@ class SettingsSaveSyncViewModelTest {
     private lateinit var settings: SettingsStore
     private lateinit var workManager: WorkManager
     private lateinit var roms: File
+    /** Every view model a test makes, cleared before the database closes. */
+    private val viewModels = ViewModelStore()
+    private val viewModelJobs = mutableListOf<Job>()
 
     @Before fun setUp() = runBlocking {
         Dispatchers.setMain(UnconfinedTestDispatcher())
@@ -77,6 +86,10 @@ class SettingsSaveSyncViewModelTest {
     }
 
     @After fun tearDown() {
+        // A view model's look at the device (its init's refreshDevice) can still be querying the database: it is
+        // stopped, and waited for, before the database closes, or its failure would land in a later test.
+        viewModels.clear()
+        runBlocking { withTimeout(5_000) { viewModelJobs.joinAll() } }
         db.close()
         scope.cancel()
         Dispatchers.resetMain()
@@ -91,14 +104,20 @@ class SettingsSaveSyncViewModelTest {
                 override fun decrypt(blob: String) = blob
             }, scope)
         val volumes = StorageVolumes(context)
-        return SettingsViewModel(
-            context, settings, credentials, db.catalogDao(), mapping, FolderChooser(settings, mapping), volumes,
-            InstallManager(db.catalogDao(), settings, mapping, volumes),
-            CatalogSyncScheduler(workManager), RommConnector(OkHttpClient()), ActiveServer(settings, credentials, OkHttpClient(), scope),
-            SaveSyncTriggers(settings, SaveSyncScheduler(workManager)),
-            SendToDeviceStore(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "send_to_device.preferences_pb") }),
-            {},
-        )
+        val vm = ViewModelProvider.create(viewModels, viewModelFactory {
+            initializer {
+                SettingsViewModel(
+                    context, settings, credentials, db.catalogDao(), mapping, FolderChooser(settings, mapping), volumes,
+                    InstallManager(db.catalogDao(), settings, mapping, volumes),
+                    CatalogSyncScheduler(workManager), RommConnector(OkHttpClient()), ActiveServer(settings, credentials, OkHttpClient(), scope),
+                    SaveSyncTriggers(settings, SaveSyncScheduler(workManager)),
+                    SendToDeviceStore(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "send_to_device.preferences_pb") }),
+                    {},
+                )
+            }
+        })["settings-${viewModelJobs.size}", SettingsViewModel::class]
+        viewModelJobs += vm.viewModelScope.coroutineContext[Job]!!
+        return vm
     }
 
     @Test fun azaharsDataIsFoundInThe3dsSystemFolder() = runBlocking<Unit> {
