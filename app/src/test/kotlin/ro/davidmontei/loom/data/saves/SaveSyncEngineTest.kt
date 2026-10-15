@@ -129,6 +129,33 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(saves.baseline(7, "autosave")!!.serverSaveId).isEqualTo(head.id)
     }
 
+    /**
+     * RomM answering an upload with its head itself: the head holds those bytes, and RomM has no
+     * record that the Thor has it. Loom tells it so, with the Thor's hash, and sends nothing more.
+     * RomM can't answer so today (it matches bytes by the hash it stored, and a head with the
+     * Thor's hash is adopted, not uploaded over), so it is made to here: a head it couldn't hash.
+     */
+    @Test fun anUploadAnsweredWithTheHeadItselfIsConfirmedNotSentAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        val head = romm.addSave(7, archiveOf(bytes(2)), hash = null)
+        assertThat(engine().sync(SaveSyncRequest.PULL).downloaded).containsExactly(7)
+        val changed = writeSave(pokemonX, bytes(3), minutesAgo = 5)
+        romm.uploadAnswer = {
+            mockwebserver3.MockResponse.Builder().code(200).setHeader("Content-Type", "application/json")
+                .body(romm.json(head).toString()).build()
+        }
+
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(7)
+
+        assertThat(romm.uploads().map { it.url.queryParameter("overwrite") }).containsExactly("false")
+        val confirmed = romm.requests.last { it.url.encodedPath == "/api/saves/${head.id}/downloaded" }
+        assertThat(RommJson.parseToJsonElement(confirmed.body!!.utf8()).jsonObject["content_hash"]!!.jsonPrimitive.content).isEqualTo(changed)
+        val baseline = saves.baseline(7, "autosave")!!
+        assertThat(baseline.localHash).isEqualTo(changed)
+        assertThat(baseline.serverSaveId).isEqualTo(head.id)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
     /** RomM 5.4.0 makes the older version holding those bytes the newest itself: one upload, and that version is the head. */
     @Test fun bytesRomm54HasInAnOlderVersionArePromotedNotSentAgain() = runBlocking<Unit> {
         romm.rommVersion = "5.4.0"

@@ -761,7 +761,8 @@ class SaveSyncEngine(
         }
         var saved = send(overwrite)
         if (!overwrite && head != null && saved.id == head.saveId) {
-            // The head itself holds these bytes; RomM just has no record that this device has it.
+            // The head itself holds these bytes; RomM just has no record that this device has it. A guard:
+            // RomM matches bytes by the hash it stored, and a head with the Thor's hash is adopted, not uploaded over.
             rommCall { api.confirmSaveDownloaded(saved.id, SaveDownloadedRequest(deviceId, hash)) }
         } else if (!overwrite && head != null && !isNewHead(saved, head, hash)) {
             saved = send(overwrite = true)
