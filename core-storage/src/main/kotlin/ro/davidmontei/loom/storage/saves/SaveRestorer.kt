@@ -116,8 +116,12 @@ class SaveRestorer(
      * files a work folder still holds are only dropped once their restore finished. Returns whether
      * there was anything to clean up.
      *
-     * @throws IOException when the old files can't be put back; the work folder is then kept, so
-     *   nothing is lost and the next attempt can finish the job.
+     * A leftover of another game's restore, in a folder several games share (melonDS's, PPSSPP's
+     * `SAVEDATA`, Eden's profile), is undone too, but one that can't be is that game's to report:
+     * none of this unit's files are in it, so it never stops this one.
+     *
+     * @throws IOException when this unit's old files can't be put back; the work folder is then
+     *   kept, so nothing is lost and the next attempt can finish the job. The message names it.
      */
     fun recover(unit: SaveUnit): Boolean {
         val parent = parentOf(unit)
@@ -127,9 +131,33 @@ class SaveRestorer(
         }
         for (work in leftovers) {
             val unfinished = !Files.exists(work.resolve(DONE)) && (Files.exists(work.resolve(JOURNAL)) || holdsFiles(work.resolve(OLD)))
-            if (unfinished) rollBack(work, unit) else deleteTree(work)
+            try {
+                if (unfinished) rollBack(work, unit) else deleteTree(work)
+            } catch (e: Exception) {
+                if (!namesFilesOf(work, unit)) continue
+                if (!unfinished) throw e
+                throw IOException("Loom couldn't undo a restore it didn't finish: its files are kept in $work", e)
+            }
         }
         return leftovers.isNotEmpty()
+    }
+
+    /** Whether [work] names a file of [unit]'s, or can't be read to tell. */
+    private fun namesFilesOf(work: Path, unit: SaveUnit): Boolean = try {
+        val old = work.resolve(OLD)
+        val aside = if (!old.isDirectory(LinkOption.NOFOLLOW_LINKS)) emptyList() else checkedIo {
+            Files.walk(old).use { walk -> walk.iterator().asSequence().filter { it != old }.map { old.relativize(it).joinToString("/") { p -> p.name } }.toList() }
+        }
+        val journal = readJournal(work)
+        (journal.incoming + journal.outgoing + aside).any { name ->
+            when (unit) {
+                is SaveUnit.SingleFile -> name.equals(unit.name, ignoreCase = true)
+                is SaveUnit.Prefixed -> SaveZipper.rootOf(name)?.startsWith(unit.prefix, ignoreCase = true) == true
+                is SaveUnit.Folders -> unit.roots.any { it.name.equals(SaveZipper.rootOf(name), ignoreCase = true) }
+            }
+        }
+    } catch (e: IOException) {
+        true
     }
 
     /** [recover] for a unit of folders. */
@@ -141,6 +169,10 @@ class SaveRestorer(
      * while its old namesake is still aside in `old/`; once that is gone, it was already put back.
      * Among prefixed folders, those that held no file before the restore are removed once empty
      * again, as the restore made them.
+     *
+     * A single file's old save may find an empty file in its place: melonDS makes one for a game
+     * run with no save, as it was while the old one was aside. That placeholder moves aside in
+     * turn. An empty old file, a placeholder itself, gives way to whatever file is there now.
      */
     private fun rollBack(work: Path, unit: SaveUnit) {
         val journal = readJournal(work)
@@ -153,14 +185,29 @@ class SaveRestorer(
         val old = work.resolve(OLD)
         if (old.isDirectory(LinkOption.NOFOLLOW_LINKS)) {
             val aside = checkedIo { Files.walk(old).use { walk -> walk.iterator().asSequence().filter { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) }.toList() } }
-            for (file in aside) moveInto(file, live(unit, old.relativize(file).joinToString("/") { it.name }))
+            for (file in aside) {
+                val name = old.relativize(file).joinToString("/") { it.name }
+                val live = live(unit, name)
+                if (unit is SaveUnit.SingleFile && Files.exists(live, LinkOption.NOFOLLOW_LINKS)) {
+                    if (isEmptyFile(live)) moveInto(live, work.resolve(PLACEHOLDERS).resolve(name))
+                    else if (isEmptyFile(file)) continue
+                }
+                moveInto(file, live)
+            }
         }
         if (unit is SaveUnit.Prefixed) {
             val made = journal.incoming.mapNotNull(SaveZipper::rootOf).toSet() - journal.outgoing.mapNotNull(SaveZipper::rootOf).toSet()
             runCatching { removeEmpty(made.map { unit.anchor.resolve(it) }) }
         }
+        // A placeholder the emulator wrote to after all, as it moved aside, is a save now: it stays.
+        if (holdsWrittenFiles(work.resolve(PLACEHOLDERS))) throw IOException("A file written as it moved aside is kept in $work")
         deleteTree(work)
     }
+
+    private fun isEmptyFile(file: Path): Boolean = Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) && Files.size(file) == 0L
+
+    private fun holdsWrittenFiles(folder: Path): Boolean = folder.isDirectory(LinkOption.NOFOLLOW_LINKS) &&
+        checkedIo { Files.walk(folder).use { walk -> walk.iterator().asSequence().any { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) && Files.size(it) > 0L } } }
 
     private fun moveInto(from: Path, to: Path) {
         Files.createDirectories(to.parent)
@@ -288,6 +335,7 @@ class SaveRestorer(
         private const val NEW = "new"
         private const val OLD = "old"
         private const val ROLLED_BACK = "rolled-back"
+        private const val PLACEHOLDERS = "placeholders"
         private const val JOURNAL = "journal"
         private const val DONE = "done"
     }
