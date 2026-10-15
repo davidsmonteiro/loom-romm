@@ -8,6 +8,7 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Multipart
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -18,8 +19,12 @@ import ro.davidmontei.loom.romm.dto.DeviceAuthInitRequest
 import ro.davidmontei.loom.romm.dto.DeviceAuthInitResponse
 import ro.davidmontei.loom.romm.dto.DeviceAuthTokenRequest
 import ro.davidmontei.loom.romm.dto.DeviceAuthTokenResponse
+import ro.davidmontei.loom.romm.dto.DeviceCapabilitiesDto
 import ro.davidmontei.loom.romm.dto.DeviceDto
+import ro.davidmontei.loom.romm.dto.DeviceUpdateRequest
 import ro.davidmontei.loom.romm.dto.HeartbeatDto
+import ro.davidmontei.loom.romm.dto.InstallReportRequest
+import ro.davidmontei.loom.romm.dto.InstallRequestDto
 import ro.davidmontei.loom.romm.dto.PlatformDto
 import ro.davidmontei.loom.romm.dto.RomDto
 import ro.davidmontei.loom.romm.dto.RomPageDto
@@ -172,6 +177,36 @@ interface RommApi {
     /** The user's devices; finds the one Loom paired as when its token isn't bound to it. */
     @GET("api/devices")
     suspend fun devices(): List<DeviceDto>
+
+    // --- Send to device (RomM 5.4). The token must be bound to the device for the claim and reports. ---
+
+    /**
+     * Declares what the device can do. RomM replaces its whole capability dict with [body]'s, and
+     * lists only devices declaring [ro.davidmontei.loom.romm.dto.REMOTE_INSTALL] under "Install on
+     * device". 404: the device was deleted.
+     */
+    @PUT("api/devices/{device_id}")
+    suspend fun updateDevice(@Path("device_id") deviceId: String, @Body body: DeviceUpdateRequest): DeviceCapabilitiesDto
+
+    /**
+     * Takes every install request waiting for the device and returns all it holds taken, oldest
+     * first, including ones taken by an earlier claim and not reported yet. It also shows the device
+     * online in RomM for 90 s. 403: the token isn't this device's; 404: device installs are off on
+     * the server, or the device was deleted; 409: RomM was busy, try again later.
+     */
+    @POST("api/devices/{device_id}/installs/claim")
+    suspend fun claimInstalls(@Path("device_id") deviceId: String): List<InstallRequestDto>
+
+    /**
+     * Reports how a taken request went, which ends it on RomM. 404: it had already ended, been
+     * cancelled or expired; 409: it isn't taken; 422: a status RomM doesn't take, or a reason too long.
+     */
+    @PUT("api/devices/{device_id}/installs/{request_id}")
+    suspend fun reportInstall(
+        @Path("device_id") deviceId: String,
+        @Path("request_id") requestId: String,
+        @Body body: InstallReportRequest,
+    ): InstallRequestDto
 }
 
 /** Versions RomM keeps per slot when Loom uploads (`autocleanup_limit`). */

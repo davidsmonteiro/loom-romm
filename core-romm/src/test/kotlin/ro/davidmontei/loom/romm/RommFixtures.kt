@@ -183,6 +183,14 @@ object RommFixtures {
         put("created_at", "2026-09-01T10:00:00+00:00"); put("updated_at", "2026-10-12T08:00:00+00:00")
     }
 
+    /** An `InstallRequestSchema`, with the fields Loom leaves unread (`file_ids`, `user_id`, …) to prove they're ignored. */
+    fun installRequest(id: String, romId: Int, status: String = "taken", reason: String? = null) = buildJsonObject {
+        put("id", id); put("user_id", 1); put("device_id", "dev-thor"); put("rom_id", romId)
+        putJsonArray("file_ids") { add(JsonPrimitive(romId * 10)); add(JsonPrimitive(romId * 10 + 1)) }
+        put("status", status); put("reason", reason.json())
+        put("created_at", "2026-10-15T09:00:00+00:00"); put("updated_at", "2026-10-15T09:00:05+00:00")
+    }
+
     private fun String?.json(): JsonElement = this?.let(::JsonPrimitive) ?: JsonNull
     private fun Int?.json(): JsonElement = this?.let(::JsonPrimitive) ?: JsonNull
 }

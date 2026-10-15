@@ -12,6 +12,8 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class HeartbeatDto(
     @SerialName("SYSTEM") val system: SystemDto,
+    /** Whether RomM can send games to devices: null from a RomM before 5.4, which can't. */
+    @SerialName("DEVICE_INSTALL") val deviceInstall: DeviceInstallDto? = null,
 )
 
 /** `SystemDict`. */

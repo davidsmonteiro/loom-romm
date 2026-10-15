@@ -28,9 +28,14 @@ import ro.davidmontei.loom.romm.dto.DeviceAuthInitRequest
 import ro.davidmontei.loom.romm.dto.DeviceAuthInitResponse
 import ro.davidmontei.loom.romm.dto.DeviceAuthTokenRequest
 import ro.davidmontei.loom.romm.dto.DeviceAuthTokenResponse
+import ro.davidmontei.loom.romm.dto.DeviceCapabilitiesDto
 import ro.davidmontei.loom.romm.dto.DeviceDto
+import ro.davidmontei.loom.romm.dto.DeviceInstallDto
 import ro.davidmontei.loom.romm.dto.DeviceSyncDto
+import ro.davidmontei.loom.romm.dto.DeviceUpdateRequest
 import ro.davidmontei.loom.romm.dto.HeartbeatDto
+import ro.davidmontei.loom.romm.dto.InstallReportRequest
+import ro.davidmontei.loom.romm.dto.InstallRequestDto
 import ro.davidmontei.loom.romm.dto.PlatformDto
 import ro.davidmontei.loom.romm.dto.RomDto
 import ro.davidmontei.loom.romm.dto.RomFileDto
@@ -106,6 +111,8 @@ class RommSchemaConformanceTest {
         check(SaveDeviceRequest.serializer(), "Body_confirm_download_api_saves__id__downloaded_post", isRequest = true)
         check(SaveDeviceRequest.serializer(), "Body_track_save_api_saves__id__track_post", isRequest = true)
         check(SaveDeviceRequest.serializer(), "Body_untrack_save_api_saves__id__untrack_post", isRequest = true)
+        check(DeviceUpdateRequest.serializer(), "DeviceUpdatePayload", isRequest = true)
+        check(InstallReportRequest.serializer(), "InstallRequestUpdatePayload", isRequest = true)
     }
 
     @Test fun saveUploadSendsTheFileInTheSchemasField() {
@@ -231,10 +238,14 @@ class RommSchemaConformanceTest {
             SaveDto.serializer() to "SaveSchema",
             DeviceSyncDto.serializer() to "DeviceSyncSchema",
             DeviceDto.serializer() to "DeviceSchema",
+            DeviceCapabilitiesDto.serializer() to "DeviceSchema",
         )
 
         /** Responses only RomM 5.4 serves, to calls Loom makes once it knows the server is 5.4. */
-        val RESPONSES_SINCE_5_4: List<Pair<KSerializer<*>, String>> = emptyList()
+        val RESPONSES_SINCE_5_4: List<Pair<KSerializer<*>, String>> = listOf(
+            InstallRequestDto.serializer() to "InstallRequestSchema",
+            DeviceInstallDto.serializer() to "DeviceInstallDict",
+        )
 
         /**
          * Query parameters Loom sends for a newer RomM. FastAPI ignores parameters a route doesn't
