@@ -71,6 +71,8 @@ data class Settings(
     val catalogRefresh: CatalogRefresh = CatalogRefresh.DEFAULT,
     /** Background refreshes and cover fetches wait for an unmetered network. */
     val refreshOnWifiOnly: Boolean = false,
+    /** A second screen beside Loom's (the Thor's bottom one) shows what the pad is on. */
+    val secondScreen: Boolean = true,
 )
 
 /**
@@ -103,6 +105,7 @@ class SettingsStore(
             },
             catalogRefresh = CatalogRefresh.entries.find { it.hours == p[REFRESH_HOURS] } ?: CatalogRefresh.DEFAULT,
             refreshOnWifiOnly = p[REFRESH_WIFI_ONLY] ?: false,
+            secondScreen = p[SECOND_SCREEN] ?: true,
         )
     }
 
@@ -170,6 +173,8 @@ class SettingsStore(
 
     suspend fun setRefreshOnWifiOnly(wifiOnly: Boolean) = dataStore.edit { it[REFRESH_WIFI_ONLY] = wifiOnly }
 
+    suspend fun setSecondScreen(on: Boolean) = dataStore.edit { it[SECOND_SCREEN] = on }
+
     /** Forget the sync watermark so the next sync is a full one. */
     suspend fun resetCatalogWatermark() = dataStore.edit { it.remove(WATERMARK) }
 
@@ -191,6 +196,7 @@ class SettingsStore(
         val LAST_SYNC = stringPreferencesKey("catalog_last_sync_ms")
         val REFRESH_HOURS = intPreferencesKey("catalog_refresh_hours")
         val REFRESH_WIFI_ONLY = booleanPreferencesKey("catalog_refresh_wifi_only")
+        val SECOND_SCREEN = booleanPreferencesKey("second_screen")
         val DEVICE_IDENTIFIER = stringPreferencesKey("device_identifier")
         val CATALOG_FIELDS = intPreferencesKey("catalog_fields")
         val AUTO_UPLOAD_SAVES = booleanPreferencesKey("auto_upload_saves")

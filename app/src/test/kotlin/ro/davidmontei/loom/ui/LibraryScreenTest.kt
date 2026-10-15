@@ -60,6 +60,9 @@ import ro.davidmontei.loom.ui.library.LibraryHeader
 import ro.davidmontei.loom.ui.library.LibraryUiState
 import ro.davidmontei.loom.ui.saves.SaveFolderOption
 import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
+import ro.davidmontei.loom.ui.second.CompanionContent
+import ro.davidmontei.loom.ui.second.CompanionHolder
+import ro.davidmontei.loom.ui.second.LocalCompanion
 
 @OptIn(ExperimentalTestApi::class)
 /**
@@ -132,8 +135,9 @@ class LibraryScreenTest {
             LibraryHeader(CatalogSyncStatus(false), System.currentTimeMillis() - 5 * 60_000, 2), coverBase = null),
     )
 
-    private fun show() {
-        rule.setContent { LoomTestTheme { LibraryContent(state, actions) } }
+    /** [companion]: what the activity hands the screens for a second screen; none by default, as on a phone. */
+    private fun show(companion: CompanionHolder? = null) {
+        rule.setContent { CompositionLocalProvider(LocalCompanion provides companion) { LoomTestTheme { LibraryContent(state, actions) } } }
         rule.mainClock.advanceTimeBy(200)
         rule.waitForIdle()
     }
@@ -641,11 +645,63 @@ class LibraryScreenTest {
         assertThat(calls).contains("download:2")
     }
 
+    /** A tablet with a monitor showing the game as a second screen: the details beside give way to it. */
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun theDetailsBesideGiveWayToASecondScreen() {
+        val companion = CompanionHolder()
+        show(companion)
+        beside("Chrono Trigger").assertExists()
+        rule.runOnIdle { companion.setPresenting(true) }
+        rule.waitForIdle()
+        rule.onNodeWithTag("details-beside").assertDoesNotExist()
+        rule.onNodeWithTag("game-1").assertIsFocused()
+    }
+
     /** The Thor's top screen, 832 dp wide, has no room for them: it stays as it was. */
     @Test fun theThorsTopScreenShowsNoDetailsBeside() {
         show()
         rule.onNodeWithTag("details-beside").assertDoesNotExist()
         rule.onNodeWithTag("game-panel").assertDoesNotExist()
+    }
+
+    // --- the second screen: the Thor's bottom one shows the game the pad is on ---
+
+    private fun published(companion: CompanionHolder) = (companion.content.value as? CompanionContent.Game)?.game?.title
+
+    @Test fun theFocusedGameIsPublished() {
+        val companion = CompanionHolder()
+        show(companion)
+        assertThat(published(companion)).isEqualTo("Chrono Trigger")
+        assertThat((companion.content.value as CompanionContent.Game).platformName).isEqualTo("Super Nintendo")
+        press(Key.DirectionRight)
+        assertThat(published(companion)).isEqualTo("EarthBound")
+        changeGame(2, games[1].copy(state = InstallState.DOWNLOADING, progress = 0.1f, jobId = 2)) // downloads, as it shows
+        assertThat((companion.content.value as CompanionContent.Game).game.progress).isEqualTo(0.1f)
+        press(Key.DirectionUp) // to the search box: the game stays
+        assertThat(published(companion)).isEqualTo("EarthBound")
+    }
+
+    @Test fun anOpenDialogKeepsTheGameOnTheBottomScreen() {
+        val companion = CompanionHolder()
+        show(companion)
+        press(listOf(Key.DirectionRight, Key.DirectionCenter))
+        rule.onNodeWithText("Download").assertIsFocused()
+        assertThat(published(companion)).isEqualTo("EarthBound")
+        back()
+        assertThat(published(companion)).isEqualTo("EarthBound")
+    }
+
+    @Test fun leavingTheLibraryTakesItsGameOffTheBottomScreen() {
+        val companion = CompanionHolder()
+        var shown by mutableStateOf(true)
+        rule.setContent {
+            CompositionLocalProvider(LocalCompanion provides companion) { LoomTestTheme { if (shown) LibraryContent(state, actions) } }
+        }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        assertThat(published(companion)).isEqualTo("Chrono Trigger")
+        shown = false
+        rule.waitForIdle()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Idle)
     }
 
     /** Found by audit: a sync error was cut to one line in the header, and nothing there led to pairing again. */

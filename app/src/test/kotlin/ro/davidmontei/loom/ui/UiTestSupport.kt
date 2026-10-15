@@ -5,9 +5,18 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.text.TextLayoutResult
+import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import ro.davidmontei.loom.ui.components.DialogHost
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.theme.LoomTheme
@@ -48,6 +57,30 @@ const val TABLET_PORTRAIT = "w800dp-h1280dp-port-xhdpi"
 @Composable
 fun LoomTestTheme(content: @Composable () -> Unit) = LoomTheme {
     CompositionLocalProvider(LocalIndication provides FocusRingIndication()) { DialogHost { content() } }
+}
+
+/**
+ * Whether everything in the node tagged [tag] is on the screen and inside it, every text there whole
+ * but for an ellipsis where its lines run out: none squeezed by a lack of room.
+ */
+fun ComposeContentTestRule.assertFitsIn(tag: String) {
+    mainClock.advanceTimeBy(300); waitForIdle()
+    val root = onRoot().fetchSemanticsNode().boundsInRoot
+    val pane = onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+    assertThat(pane.bottom).isAtMost(root.bottom)
+    assertThat(pane.right).isAtMost(root.right)
+    val texts = onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text) and hasAnyAncestor(hasTestTag(tag)), useUnmergedTree = true)
+        .fetchSemanticsNodes()
+    assertThat(texts).isNotEmpty()
+    for (node in texts) {
+        val text = node.config[SemanticsProperties.Text].joinToString()
+        assertWithMessage(text).that(node.boundsInRoot.bottom).isAtMost(pane.bottom)
+        assertWithMessage(text).that(node.boundsInRoot.right).isAtMost(pane.right)
+        val layouts = mutableListOf<TextLayoutResult>()
+        node.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+        val layout = layouts.single()
+        assertWithMessage(text).that(layout.didOverflowHeight && !layout.multiParagraph.didExceedMaxLines).isFalse()
+    }
 }
 
 /** Saves what the rule currently shows to app/build/screenshots/<name>.png for a human to look at. */

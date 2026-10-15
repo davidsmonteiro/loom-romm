@@ -57,7 +57,7 @@ import javax.inject.Inject
  */
 enum class SettingsSection(val title: String) {
     SERVER("Server & pairing"), LIBRARY("Library sync"), STORAGE("Storage"), MAPPING("Platform folders"),
-    DOWNLOADS("Downloads"), SAVES("Saves"), CONTROLS("Controls"), ABOUT("About & licenses"),
+    DOWNLOADS("Downloads"), SAVES("Saves"), CONTROLS("Controls & screens"), ABOUT("About & licenses"),
 }
 
 /** A server platform with the folder and policies Loom will use for it. */
@@ -249,6 +249,7 @@ class SettingsViewModel @Inject constructor(
         _messages.send(withContext(Dispatchers.IO) { azaharFolderSaved(dir) })
     }
     fun setSwap(swap: Boolean) = viewModelScope.launch { store.setSwapConfirmBack(swap) }
+    fun setSecondScreen(on: Boolean) = viewModelScope.launch { store.setSecondScreen(on) }
 
     /** [dir] null goes back to looking for Eden's saves in the ROMs folder's saves/Eden. */
     fun setEdenFolder(dir: File?) = viewModelScope.launch {

@@ -130,6 +130,8 @@ interface SettingsActions {
     /** Whose saves Loom syncs when Eden has several profiles. */
     fun setEdenProfile(profile: String)
     fun setSwap(swap: Boolean)
+    /** Whether a second screen (the Thor's bottom one) shows what the pad is on. */
+    fun setSecondScreen(on: Boolean)
     fun openBatterySettings()
     fun licenseText(): String
     fun fontLicense(): String
@@ -166,6 +168,7 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
             override fun setEdenFolder(dir: java.io.File?) { vm.setEdenFolder(dir) }
             override fun setEdenProfile(profile: String) { vm.setEdenProfile(profile) }
             override fun setSwap(swap: Boolean) { vm.setSwap(swap) }
+            override fun setSecondScreen(on: Boolean) { vm.setSecondScreen(on) }
             override fun openBatterySettings() {
                 runCatching {
                     context.startActivity(Intent(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri()))
@@ -252,9 +255,13 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
                 SettingsSection.MAPPING -> MappingSection(state, actions, first)
                 SettingsSection.DOWNLOADS -> DownloadsSection(state, actions, first)
                 SettingsSection.SAVES -> SaveSyncSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
-                SettingsSection.CONTROLS -> Box(first) {
-                    LoomSwitchRow("Swap A and B", state.settings?.swapConfirmBack == true, actions::setSwap,
-                        subtitle = "For Nintendo-style pads: confirm with the right face button and go back with the bottom one.")
+                SettingsSection.CONTROLS -> {
+                    Box(first) {
+                        LoomSwitchRow("Swap A and B", state.settings?.swapConfirmBack == true, actions::setSwap,
+                            subtitle = "For Nintendo-style pads: confirm with the right face button and go back with the bottom one.")
+                    }
+                    LoomSwitchRow("Use the second screen", state.settings?.secondScreen != false, actions::setSecondScreen,
+                        subtitle = "With two screens, as on the Thor, the other one shows the game you're on. It only shows: the pad stays here.")
                 }
                 SettingsSection.ABOUT -> AboutSection(state, actions, first)
             }

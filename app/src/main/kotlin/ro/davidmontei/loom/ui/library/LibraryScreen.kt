@@ -97,7 +97,10 @@ import ro.davidmontei.loom.ui.saves.ReplaceSaveDialog
 import ro.davidmontei.loom.ui.saves.SaveFolderDialog
 import ro.davidmontei.loom.ui.saves.SaveFolderOption
 import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
+import ro.davidmontei.loom.ui.second.CompanionContent
 import ro.davidmontei.loom.ui.second.GamePanel
+import ro.davidmontei.loom.ui.second.PublishCompanion
+import ro.davidmontei.loom.ui.second.secondScreenShowing
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 
@@ -247,8 +250,10 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     // last focused while focus is elsewhere (the search box, a dialog), as it is now: its download moves on
     // as it shows. They are to read only, as A still opens the details to act on the game.
     val shown = state.games.firstOrNull { it.id == (focusedId ?: lastGameId) }
+    // A second screen, where there is one, shows the same game: the details beside then give way to it.
+    PublishCompanion(shown?.let { CompanionContent.Game(it, state.selected?.platform?.displayName, state.coverBase) } ?: CompanionContent.Idle)
     val window = LocalWindowInfo.current.containerDpSize.width
-    val besideWidth = if (layout.width == WidthClass.EXPANDED) (window * 0.32f).coerceIn(280.dp, 420.dp) else 0.dp
+    val besideWidth = if (layout.width == WidthClass.EXPANDED && !secondScreenShowing()) (window * 0.32f).coerceIn(280.dp, 420.dp) else 0.dp
     // The three filter chips need about the room the Thor's top screen gives the games, 558 dp, to leave
     // the search box room. With less (a phone on its side, with the details beside) they are one chip that
     // cycles, as on a narrow screen. The games get what the margins, the rail and the details leave.

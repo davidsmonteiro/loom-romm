@@ -124,6 +124,7 @@ class SettingsScreenTest {
         override fun setEdenFolder(dir: File?) { calls += "eden:$dir" }
         override fun setEdenProfile(profile: String) { calls += "edenProfile:$profile" }
         override fun setSwap(swap: Boolean) { calls += "swap:$swap" }
+        override fun setSecondScreen(on: Boolean) { calls += "secondScreen:$on" }
         override fun openBatterySettings() { calls += "battery" }
         override fun licenseText() = (1..120).joinToString("\n\n") { "GNU GENERAL PUBLIC LICENSE, paragraph $it" }
         override fun fontLicense() = "SIL OPEN FONT LICENSE"
@@ -163,6 +164,18 @@ class SettingsScreenTest {
         press(Key.DirectionCenter) // opens Controls on its switch
         press(Key.DirectionCenter)
         assertThat(calls).contains("swap:true")
+    }
+
+    /** Under Swap A and B, on until turned off: A turns it off. */
+    @Test fun theSecondScreenSwitchIsInControlsAndOn() {
+        show()
+        goTo(SettingsSection.CONTROLS)
+        rule.onNodeWithText("Controls & screens").assertIsFocused()
+        press(Key.DirectionCenter)
+        press(Key.DirectionDown)
+        rule.onNode(hasText("Use the second screen") and hasClickAction()).assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("secondScreen:false")
     }
 
     /** Found on the Thor: A selected a section but left focus in the list; the next press did nothing new. */

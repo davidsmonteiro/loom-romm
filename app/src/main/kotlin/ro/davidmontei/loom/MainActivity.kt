@@ -2,6 +2,7 @@ package ro.davidmontei.loom
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
@@ -36,6 +37,11 @@ import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.input.GamepadKeys
 import ro.davidmontei.loom.ui.input.TouchModePress
 import ro.davidmontei.loom.ui.nav.LoomNavHost
+import ro.davidmontei.loom.ui.second.CompanionHolder
+import ro.davidmontei.loom.ui.second.LocalCompanion
+import ro.davidmontei.loom.ui.second.PresentationWindow
+import ro.davidmontei.loom.ui.second.SecondScreenContent
+import ro.davidmontei.loom.ui.second.SecondScreenController
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.LoomTheme
 import javax.inject.Inject
@@ -48,6 +54,12 @@ class AppViewModel @Inject constructor(settings: SettingsStore) : ViewModel() {
     val state: StateFlow<AppState?> = settings.settings
         .map { AppState(it.onboardingComplete && it.server != null, it.swapConfirmBack) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** What the screens publish for a second screen. */
+    val companion = CompanionHolder()
+
+    /** "Use the second screen": off until settings have loaded, so a panel switched off never flashes up. */
+    val secondScreen: StateFlow<Boolean> = settings.settings.map { it.secondScreen }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 }
 
 @AndroidEntryPoint
@@ -62,6 +74,7 @@ class MainActivity : ComponentActivity() {
 
     private val app: AppViewModel by viewModels()
     private var openQueue by mutableStateOf(false)
+    private lateinit var secondScreen: SecondScreenController
     private val touchModePress = TouchModePress(
         inTouchMode = { window.decorView.isInTouchMode },
         leaveTouchMode = ::leaveTouchMode,
@@ -74,9 +87,14 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         hideSystemBars()
         openQueue = intent?.action == ACTION_OPEN_QUEUE
+        // Handed state only: a ViewModel asked for on the second screen would be another copy of this one's.
+        secondScreen = SecondScreenController(this, app.companion, app.secondScreen, PresentationWindow(this) {
+            SecondScreenContent(app.companion.content.collectAsStateWithLifecycle().value)
+        })
+        lifecycle.addObserver(secondScreen)
         setContent {
             LoomTheme {
-                CompositionLocalProvider(LocalIndication provides FocusRingIndication()) {
+                CompositionLocalProvider(LocalIndication provides FocusRingIndication(), LocalCompanion provides app.companion) {
                     DialogHost {
                         Box(Modifier.fillMaxSize().background(LoomColors.Background)) {
                             val state = app.state.collectAsStateWithLifecycle().value ?: return@Box
@@ -92,6 +110,18 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.action == ACTION_OPEN_QUEUE) openQueue = true
+    }
+
+    /** With a screen each, another app can be resumed beside Loom and take the top (a game started on the other screen): the panel goes. */
+    override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
+        super.onTopResumedActivityChanged(isTopResumedActivity)
+        secondScreen.onTopResumedChanged(isTopResumedActivity)
+    }
+
+    /** Among others, a move to the other screen: the one Loom left can now take the panel, the one it's on can't. */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        secondScreen.onConfigurationChanged()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

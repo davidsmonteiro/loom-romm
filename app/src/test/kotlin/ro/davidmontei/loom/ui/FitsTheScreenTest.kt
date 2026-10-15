@@ -310,6 +310,21 @@ class FitsTheScreenTest {
         rule.saveScreenshot("settings-saves-eden-profiles")
     }
 
+    /** Controls & screens: both switches, each explanation in full. */
+    @Test fun theControlsSectionFits() = theControlsSectionFits("settings-controls")
+
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theControlsSectionFitsTheBottomScreen() = theControlsSectionFits("settings-controls-bottom-screen")
+
+    private fun theControlsSectionFits(screenshot: String) {
+        rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample, SettingsScreenTest.noop) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("section-CONTROLS").performClick()
+        assertThat(settingsOverflow()).isEqualTo(0f)
+        for (line in listOf("go back with the bottom one.", "the pad stays here.")) assertWithMessage(line).that(cutShort(line)).isFalse()
+        rule.saveScreenshot(screenshot)
+    }
+
     /** Saves as on the Thor: both folders found where Loom looks, shown in full, and Loom able to read title IDs. */
     @Test fun theSavesSectionShowsTheThorsFoldersInFull() = theSavesSectionShowsTheThorsFoldersInFull("settings-saves-thor")
 
@@ -671,30 +686,6 @@ class FitsTheScreenTest {
     }
 
     /**
-     * Whether everything in the node tagged [tag] is on the screen and inside it, every text there whole
-     * but for an ellipsis where its lines run out: none squeezed by a lack of room.
-     */
-    private fun fitsIn(tag: String) {
-        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
-        val root = rule.onRoot().fetchSemanticsNode().boundsInRoot
-        val pane = rule.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
-        assertThat(pane.bottom).isAtMost(root.bottom)
-        assertThat(pane.right).isAtMost(root.right)
-        val texts = rule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text) and hasAnyAncestor(hasTestTag(tag)), useUnmergedTree = true)
-            .fetchSemanticsNodes()
-        assertThat(texts).isNotEmpty()
-        for (node in texts) {
-            val text = node.config[SemanticsProperties.Text].joinToString()
-            assertWithMessage(text).that(node.boundsInRoot.bottom).isAtMost(pane.bottom)
-            assertWithMessage(text).that(node.boundsInRoot.right).isAtMost(pane.right)
-            val layouts = mutableListOf<TextLayoutResult>()
-            node.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
-            val layout = layouts.single()
-            assertWithMessage(text).that(layout.didOverflowHeight && !layout.multiParagraph.didExceedMaxLines).isFalse()
-        }
-    }
-
-    /**
      * The focused game's details beside the games at their tallest: a title and path long enough to wrap,
      * a failed save sync's long reason, then a download being moved into place.
      */
@@ -706,13 +697,13 @@ class FitsTheScreenTest {
             adopted = true, removedOnServer = false, installPath = "n3ds/$title.3ds", save = failed, matchedByName = true)
         var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game) + LibraryScreenTest().state.games))
         rule.setContent { CompositionLocalProvider(LocalInputModeManager provides pad) { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } } }
-        fitsIn("details-beside")
+        rule.assertFitsIn("details-beside")
         rule.onNode(hasText(title) and hasAnyAncestor(hasTestTag("details-beside"))).assertExists()
         rule.saveScreenshot(screenshot)
         val finishing = game.copy(state = InstallState.DOWNLOADING, stateDetail = "Finishing…", progress = 1f, jobId = 30, installPath = null,
             save = null, finishing = true, adopted = false, matchedByName = false)
         state = state.copy(games = listOf(finishing) + state.games.drop(1))
-        fitsIn("details-beside")
+        rule.assertFitsIn("details-beside")
         rule.onNode(hasText("Finishing…") and hasAnyAncestor(hasTestTag("details-beside"))).assertExists()
         rule.saveScreenshot("$screenshot-finishing")
     }
