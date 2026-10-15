@@ -3,6 +3,7 @@ package ro.davidmontei.loom.ui.second
 import android.app.Presentation
 import android.os.Bundle
 import android.view.Display
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -19,15 +20,19 @@ import ro.davidmontei.loom.ui.theme.LoomTheme
  * Loom's window on a second screen: [content], drawn edge to edge on black, which can never take
  * the pad's focus. A tap on it doesn't move focus either, so the pad stays with Loom; it stays
  * touchable, so a tap doesn't fall through to whatever is under it (Cocoon's bottom screen, which
- * would take the pad).
+ * would take the pad). A tap is still someone using Loom: [onTouch] hears it.
  *
  * Its Compose content is laid out for its own screen: the presentation's context, not the
  * activity's, so sizes are the second screen's. It shares the activity's lifecycle and saved state
  * but deliberately not its ViewModels: a ViewModel asked for here would be a second copy of the
  * activity's, so the panel is only ever handed state.
  */
-class LoomPresentation(private val activity: ComponentActivity, display: Display, private val content: @Composable () -> Unit) :
-    Presentation(activity, display, R.style.Theme_Loom_SecondScreen) {
+class LoomPresentation(
+    private val activity: ComponentActivity,
+    display: Display,
+    private val onTouch: () -> Unit = {},
+    private val content: @Composable () -> Unit,
+) : Presentation(activity, display, R.style.Theme_Loom_SecondScreen) {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,14 +53,23 @@ class LoomPresentation(private val activity: ComponentActivity, display: Display
             },
         )
     }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) onTouch()
+        return super.dispatchTouchEvent(ev)
+    }
 }
 
-/** Shows [content] in a [LoomPresentation]. */
-class PresentationWindow(private val activity: ComponentActivity, private val content: @Composable () -> Unit) : SecondScreenWindow {
+/** Shows [content] in a [LoomPresentation]; [onTouch]: a tap on it. */
+class PresentationWindow(
+    private val activity: ComponentActivity,
+    private val onTouch: () -> Unit = {},
+    private val content: @Composable () -> Unit,
+) : SecondScreenWindow {
     private var shown: LoomPresentation? = null
 
     override fun show(display: Display, onGone: () -> Unit): Boolean {
-        val presentation = LoomPresentation(activity, display, content)
+        val presentation = LoomPresentation(activity, display, onTouch, content)
         // Only the system's taking it away is news: dismiss() lets go of it first.
         presentation.setOnDismissListener { if (shown === presentation) { shown = null; onGone() } }
         shown = presentation

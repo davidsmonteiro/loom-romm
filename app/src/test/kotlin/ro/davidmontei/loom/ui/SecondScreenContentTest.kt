@@ -1,6 +1,7 @@
 package ro.davidmontei.loom.ui
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -26,6 +27,7 @@ import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.InstallState
 import ro.davidmontei.loom.ui.queue.transferLine
 import ro.davidmontei.loom.ui.second.CompanionContent
+import ro.davidmontei.loom.ui.second.DIM_AFTER
 import ro.davidmontei.loom.ui.second.QueueStrip
 import ro.davidmontei.loom.ui.second.SecondScreenContent
 
@@ -43,10 +45,13 @@ class SecondScreenContentTest {
 
     private var strip by mutableStateOf<QueueStrip?>(null)
 
+    /** The buttons and touches that have reached Loom, as the activity counts them. */
+    private var inputs by mutableLongStateOf(0)
+
     private fun show(shown: CompanionContent, queue: QueueStrip? = null) {
         content = shown
         strip = queue
-        rule.setContent { LoomTestTheme { SecondScreenContent(content, strip) } }
+        rule.setContent { LoomTestTheme { SecondScreenContent(content, strip, inputs) } }
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
     }
 
@@ -147,5 +152,64 @@ class SecondScreenContentTest {
         rule.onNodeWithContentDescription("Loom").assertExists()
         rule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text), useUnmergedTree = true).assertCountEquals(0)
         rule.saveScreenshot("second-screen-idle")
+    }
+
+    // --- dark after three minutes without a button or a touch: an OLED panel keeps the mark of what it shows for long ---
+
+    /** [millis] go by. A change made before it takes effect at the next frame, so dark is checked a second after. */
+    private fun waitFor(millis: Long) {
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(millis); rule.waitForIdle()
+    }
+
+    private val dark get() = rule.onNodeWithTag("second-screen-dark")
+
+    @Test fun theBottomScreenGoesDarkAfterThreeMinutes() {
+        show(CompanionContent.Game(tallest, "Nintendo 3DS", null))
+        waitFor(DIM_AFTER.inWholeMilliseconds - 1_000)
+        rule.onNodeWithTag("game-panel").assertExists()
+        waitFor(1_000)
+        dark.assertExists()
+        rule.onNodeWithTag("second-screen").assertDoesNotExist() // nothing drawn: all black
+        rule.saveScreenshot("second-screen-dark")
+    }
+
+    @Test fun aButtonPressLightsItAgain() {
+        show(CompanionContent.Game(tallest, "Nintendo 3DS", null))
+        waitFor(DIM_AFTER.inWholeMilliseconds + 1_000)
+        dark.assertExists()
+        inputs++
+        rule.waitForIdle()
+        rule.onNodeWithTag("game-panel").assertExists()
+        dark.assertDoesNotExist()
+        waitFor(DIM_AFTER.inWholeMilliseconds - 60_000)
+        inputs++ // another press: three minutes from this one
+        waitFor(DIM_AFTER.inWholeMilliseconds - 1_000)
+        dark.assertDoesNotExist()
+        waitFor(2_000)
+        dark.assertExists()
+    }
+
+    /** A download moving on changes what the screen shows, but nobody is looking: it goes dark all the same. */
+    @Test fun progressAloneDoesntKeepItLit() {
+        val downloading = tallest.copy(state = InstallState.DOWNLOADING, progress = 0f, jobId = 30, installPath = null, save = null)
+        show(CompanionContent.Game(downloading, "Nintendo 3DS", null))
+        for (step in 1..6) {
+            waitFor(30_000)
+            content = CompanionContent.Game(downloading.copy(progress = step / 10f), "Nintendo 3DS", null)
+        }
+        waitFor(1_000)
+        dark.assertExists()
+    }
+
+    /** The pairing code is read off it with a phone, which takes as long as it takes: it stays lit, then dims once it's gone. */
+    @Test fun thePairingCodeStaysLit() {
+        show(CompanionContent.Pairing(OnboardingScreenTest.session, System.currentTimeMillis()))
+        waitFor(DIM_AFTER.inWholeMilliseconds * 2)
+        rule.onNodeWithTag("pairing-panel").assertExists()
+        content = CompanionContent.Idle // paired
+        waitFor(DIM_AFTER.inWholeMilliseconds - 1_000)
+        rule.onNodeWithContentDescription("Loom").assertExists()
+        waitFor(2_000)
+        dark.assertExists()
     }
 }

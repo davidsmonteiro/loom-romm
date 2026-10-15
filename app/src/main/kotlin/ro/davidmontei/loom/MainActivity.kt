@@ -97,8 +97,10 @@ class MainActivity : ComponentActivity() {
         hideSystemBars()
         openQueue = intent?.action == ACTION_OPEN_QUEUE
         // Handed state only: a ViewModel asked for on the second screen would be another copy of this one's.
-        secondScreen = SecondScreenController(this, app.companion, app.secondScreen, PresentationWindow(this) {
-            SecondScreenContent(app.companion.content.collectAsStateWithLifecycle().value, app.companion.strip.collectAsStateWithLifecycle().value)
+        val holder = app.companion
+        secondScreen = SecondScreenController(this, holder, app.secondScreen, PresentationWindow(this, onTouch = holder::poke) {
+            SecondScreenContent(holder.content.collectAsStateWithLifecycle().value, holder.strip.collectAsStateWithLifecycle().value,
+                holder.inputs.collectAsStateWithLifecycle().value)
         })
         lifecycle.addObserver(secondScreen)
         setContent {
@@ -131,6 +133,12 @@ class MainActivity : ComponentActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         secondScreen.onConfigurationChanged()
+    }
+
+    /** A button pressed or the screen touched: the second screen stays lit, or lights up again. */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        app.companion.poke()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

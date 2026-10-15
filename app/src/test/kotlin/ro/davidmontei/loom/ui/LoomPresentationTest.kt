@@ -3,6 +3,7 @@ package ro.davidmontei.loom.ui
 import android.hardware.display.DisplayManager
 import android.os.Looper
 import android.view.Display
+import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.Text
@@ -77,6 +78,21 @@ class LoomPresentationTest {
         val view = panel.findViewById<ComposeView>(R.id.loom_second_screen)
         assertThat(view.findViewTreeLifecycleOwner()).isSameInstanceAs(activity)
         assertThat(view.findViewTreeViewModelStoreOwner()).isNull()
+        panel.dismiss()
+    }
+
+    /** A tap on the panel does nothing there, but it is someone using Loom: it lights the panel again. */
+    @Test fun aTapOnThePanelCountsAsInput() {
+        var touches = 0
+        val panel = LoomPresentation(activity, bottomScreen(), onTouch = { touches++ }) { Text("Chrono Trigger") }
+        panel.show()
+        idle()
+        for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP)) {
+            val event = MotionEvent.obtain(0, 0, action, 100f, 100f, 0)
+            panel.dispatchTouchEvent(event)
+            event.recycle()
+        }
+        assertThat(touches).isEqualTo(1) // once per tap
         panel.dismiss()
     }
 }

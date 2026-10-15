@@ -9,6 +9,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * What the screens publish for the second screen, and whether one shows it. Screens publish with
@@ -33,6 +34,11 @@ class CompanionHolder(
     /** What to say in place of the button hints while AYN's Focus Mode keeps the pad from Loom, or null. */
     val padNotice: StateFlow<PadNotice?> = _padNotice.asStateFlow()
 
+    private val _inputs = MutableStateFlow(0L)
+
+    /** How many buttons and touches have reached Loom: each one keeps the second screen lit, or lights it again. */
+    val inputs: StateFlow<Long> = _inputs.asStateFlow()
+
     /** Each screen's latest, in the order the screens arrived. */
     private val published = LinkedHashMap<Any, CompanionContent>()
 
@@ -46,6 +52,9 @@ class CompanionHolder(
         published.remove(owner)
         _content.value = published.values.lastOrNull() ?: CompanionContent.Idle
     }
+
+    /** A button or a touch has reached Loom: someone is using it. */
+    fun poke() = _inputs.update { it + 1 }
 
     internal fun setPresenting(on: Boolean) {
         _presenting.value = on
