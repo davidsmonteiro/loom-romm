@@ -27,6 +27,9 @@ import javax.inject.Singleton
 /** Authenticated, unlogged, untimed streaming for ROM downloads. */
 @Qualifier @Retention(AnnotationRetention.BINARY) annotation class DownloadHttp
 
+/** RomM's device socket: the token goes in its connect payload, and it says nothing of reachability. */
+@Qualifier @Retention(AnnotationRetention.BINARY) annotation class SocketHttp
+
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
@@ -81,6 +84,15 @@ object NetworkModule {
         .addInterceptor(AuthInterceptor(LazyAuthSource(server)))
         .addInterceptor(ReachabilityInterceptor(reachability, LazyAuthSource(server)))
         .build()
+
+    /**
+     * RomM's device socket ([ro.davidmontei.loom.data.sent.LiveNudges]), without the API's interceptors:
+     * no Authorization header, as the token goes only in the namespace's connect payload, and no
+     * reachability reports, as a proxy in front of RomM that won't pass WebSockets answers the upgrade
+     * with a 502 while RomM itself is fine, which mustn't make the library say it's offline.
+     */
+    @Provides @Singleton @SocketHttp
+    fun socketClient(@BareHttp bare: OkHttpClient): OkHttpClient = bare.newBuilder().build()
 
     /** Breaks the ActiveServer ↔ OkHttpClient construction cycle. */
     private class LazyAuthSource(private val server: dagger.Lazy<ActiveServer>) : ro.davidmontei.loom.net.AuthSource {

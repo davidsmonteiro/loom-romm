@@ -1,22 +1,24 @@
 package ro.davidmontei.loom.di
 
 import android.content.Context
-import androidx.work.WorkManager
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.work.WorkManager
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineScope
+import okhttp3.OkHttpClient
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.download.DownloadNotifications
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.download.QueueGame
 import ro.davidmontei.loom.data.sent.ClaimScheduler
+import ro.davidmontei.loom.data.sent.LiveNudges
 import ro.davidmontei.loom.data.sent.SendToDevice
 import ro.davidmontei.loom.data.sent.SendToDeviceStore
 import ro.davidmontei.loom.data.settings.SettingsStore
@@ -24,6 +26,7 @@ import ro.davidmontei.loom.data.settings.WriteThroughDataStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.net.ServerInfo
 import ro.davidmontei.loom.net.ServerReachability
+import ro.davidmontei.loom.romm.socket.DeviceSocket
 import javax.inject.Qualifier
 import javax.inject.Singleton
 
@@ -49,6 +52,9 @@ object SendToDeviceModule {
     fun claimScheduler(workManager: WorkManager) = ClaimScheduler(workManager)
 
     @Provides @Singleton
+    fun liveNudges(@SocketHttp client: OkHttpClient) = LiveNudges({ base, token -> DeviceSocket(client, base, token).events() })
+
+    @Provides @Singleton
     fun sendToDevice(
         settings: SettingsStore,
         credentials: CredentialStore,
@@ -60,6 +66,7 @@ object SendToDeviceModule {
         downloads: DownloadRepository,
         notifications: DownloadNotifications,
         claims: ClaimScheduler,
+        live: LiveNudges,
         @AppScope scope: CoroutineScope,
-    ) = SendToDevice(settings, credentials, store, server, serverInfo, reachability, queue, downloads, notifications, claims, scope)
+    ) = SendToDevice(settings, credentials, store, server, serverInfo, reachability, queue, downloads, notifications, claims, live, scope)
 }

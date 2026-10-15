@@ -44,6 +44,7 @@ import ro.davidmontei.loom.romm.dto.InstallRequestDto
 import ro.davidmontei.loom.romm.dto.REMOTE_INSTALL
 import ro.davidmontei.loom.romm.dto.installReason
 import ro.davidmontei.loom.romm.rommCall
+import ro.davidmontei.loom.romm.socket.DeviceSocket
 
 /** Whether games sent from RomM's web UI ("Install on device") can reach Loom, and if not, why. */
 sealed interface SendToDeviceState {
@@ -80,7 +81,8 @@ sealed interface SendToDeviceState {
  * for the next claim, which returns it again.
  *
  * RomM lists the device under "Install on device" only once it declares [REMOTE_INSTALL], which Loom
- * does at every start and whenever the switch in Settings changes.
+ * does at every start and whenever the switch in Settings changes. While Loom is in front, RomM's
+ * device socket nudges it to claim the moment a game is sent ([LiveNudges]).
  */
 class SendToDevice(
     private val settings: SettingsStore,
@@ -93,6 +95,7 @@ class SendToDevice(
     private val downloads: DownloadRepository,
     private val notifications: DownloadNotifications,
     private val claims: ClaimScheduler,
+    private val live: LiveNudges,
     scope: CoroutineScope,
 ) {
     /** What decides the state, read together. */
@@ -123,10 +126,11 @@ class SendToDevice(
 
     /**
      * Keeps everything in step while Loom runs: the periodic claim exists exactly while games can come,
-     * RomM hears of the switch, and Loom claims when asked to ([nudge]), after pairing again and when
-     * RomM can be reached again.
+     * RomM hears of the switch, the socket is open while Loom is in front, and Loom claims when asked
+     * to ([nudge]), after pairing again and when RomM can be reached again.
      */
     suspend fun run(): Unit = coroutineScope {
+        launch { live.run(inputs.map { it.liveTarget() }, socketListener) }
         launch { inputs.map { it.state() is SendToDeviceState.Ready }.distinctUntilChanged().collect(claims::schedule) }
         launch {
             inputs.map { it.declaration() }.distinctUntilChanged().collect { d ->
@@ -170,10 +174,32 @@ class SendToDevice(
         nudges.trySend(Unit)
     }
 
-    /** Claims each time Loom comes to the front, the first time being when it starts. */
+    /**
+     * Claims each time Loom comes to the front, the first time being when it starts, and keeps the
+     * socket open while it's there.
+     */
     fun follow(lifecycle: Lifecycle) = lifecycle.addObserver(object : DefaultLifecycleObserver {
-        override fun onStart(owner: LifecycleOwner) = nudge()
+        override fun onStart(owner: LifecycleOwner) {
+            live.inFront(true)
+            nudge()
+        }
+
+        override fun onStop(owner: LifecycleOwner) = live.inFront(false)
     })
+
+    /** What the socket says: RomM refusing it stops the claims as RomM refusing a claim does. */
+    private val socketListener = object : LiveNudges.Listener {
+        override fun nudge() = this@SendToDevice.nudge()
+
+        override suspend fun cancelled(requestId: String) = this@SendToDevice.cancelled(requestId)
+
+        override suspend fun refused(message: String, token: String) {
+            when (message) {
+                DeviceSocket.UNAUTHORIZED -> needsPairing(token)
+                DeviceSocket.DISABLED -> store.setInstallsEnabled(false) // until a heartbeat says they're back
+            }
+        }
+    }
 
     /**
      * Claims the games sent to this device and queues each one, reporting how that went. One drain at a
@@ -298,6 +324,13 @@ class SendToDevice(
         val deviceId = creds.deviceId
         if (deviceId == null || store.needsPairing) return SendToDeviceState.NeedsPairing
         return SendToDeviceState.Ready(deviceId)
+    }
+
+    /** Where the socket connects while games can come. */
+    private fun Inputs.liveTarget(): LiveNudges.Target? {
+        val url = settings.server?.url ?: return null
+        val token = credentials?.token ?: return null
+        return if (state() is SendToDeviceState.Ready) LiveNudges.Target(url, token) else null
     }
 
     /** What to tell RomM: nothing until paired as a device with a RomM that has device installs. */

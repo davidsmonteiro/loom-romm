@@ -7,6 +7,9 @@ import android.os.Environment
 import android.os.Process
 import android.os.storage.StorageManager
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -24,7 +27,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -74,6 +80,8 @@ import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.net.ServerInfo
 import ro.davidmontei.loom.net.ServerReachability
 import ro.davidmontei.loom.romm.pairing.PairedCredentials
+import ro.davidmontei.loom.romm.socket.DeviceEvent
+import ro.davidmontei.loom.romm.socket.DeviceSocket
 import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.JobStatus
 import ro.davidmontei.loom.storage.engine.WaitReason
@@ -96,6 +104,13 @@ class SendToDeviceTest {
     private val fake = FakeRommDevices()
     private val romm = MockWebServer()
     private val reachability = ServerReachability()
+
+    /** What RomM's device socket says while Loom is in front; a refusal ends the connection, as RomM's do. */
+    private val socket = Channel<DeviceEvent>(Channel.UNLIMITED)
+    private val connections = AtomicInteger()
+    private val app = object : LifecycleOwner {
+        override val lifecycle = LifecycleRegistry.createUnsafe(this)
+    }
     private lateinit var db: LoomDatabase
     private lateinit var settings: SettingsStore
     private lateinit var credentials: CredentialStore
@@ -135,7 +150,7 @@ class SendToDeviceTest {
         queue = QueueGame(db.catalogDao(), downloads, FolderChooser(settings, mapping), CatalogSyncScheduler(workManager))
         sendToDevice = SendToDevice(
             settings, credentials, store, server, ServerInfo(settings, store), reachability, queue, downloads,
-            DownloadNotifications(context), ClaimScheduler(workManager), scope,
+            DownloadNotifications(context), ClaimScheduler(workManager), LiveNudges({ _, _ -> connection() }), scope,
         )
         db.catalogDao().upsertPlatforms(listOf(PlatformEntity(1, "snes", "snes", "SNES", "Super Nintendo", 1, "t")))
         db.catalogDao().upsertRoms(listOf(rom(10), rom(11)))
@@ -160,6 +175,22 @@ class SendToDeviceTest {
     private fun running() = scope.launch { sendToDevice.run() }
 
     private suspend fun until(what: suspend () -> Boolean) = withTimeout(5_000) { while (!what()) delay(10) }
+
+    private fun connection(): Flow<DeviceEvent> = flow {
+        connections.incrementAndGet()
+        for (event in socket) {
+            emit(event)
+            if (event is DeviceEvent.Refused) break
+        }
+    }
+
+    /** Loom comes to the front, with the coordinator running as in Loom. */
+    private suspend fun inFront() {
+        running()
+        sendToDevice.follow(app.lifecycle)
+        app.lifecycle.currentState = Lifecycle.State.STARTED
+        until { connections.get() == 1 }
+    }
 
     private fun periodicClaim() = WorkManager.getInstance(context).getWorkInfosForUniqueWork(ClaimWorker.UNIQUE_NAME).get()
 
@@ -428,6 +459,56 @@ class SendToDeviceTest {
         until { fake.claims.get() == 1 }
         delay(SendToDevice.NUDGE_GATHER_MS * 3)
         assertThat(fake.claims.get()).isEqualTo(1)
+    }
+
+    // --- while Loom is in front ---
+
+    /** Coming to the front claims, and RomM's socket then says the moment a game is sent. */
+    @Test fun inFrontASentGameArrivesAtOnce() = runBlocking<Unit> {
+        folders("snes")
+        inFront()
+        until { fake.claims.get() == 1 }
+
+        fake.send("req-1", 10)
+        socket.send(DeviceEvent.InstallQueued("req-1", 10))
+
+        until { fake.reports.isNotEmpty() }
+        assertThat(fake.reports).containsExactly("req-1" to """{"status":"done"}""")
+        assertThat(fake.claims.get()).isEqualTo(2)
+    }
+
+    /** The socket refusing Loom's token is RomM refusing the device: Loom asks to pair again, and the socket closes. */
+    @Test fun aSocketThatRefusesTheTokenAsksToPairAgain() = runBlocking<Unit> {
+        inFront()
+
+        socket.send(DeviceEvent.Refused(DeviceSocket.UNAUTHORIZED))
+
+        until { store.snapshot().needsPairing }
+        until { sendToDevice.state.value == SendToDeviceState.NeedsPairing }
+    }
+
+    /** The socket saying device installs are off on the server stops the claims until a heartbeat says they're back. */
+    @Test fun aSocketThatSaysInstallsAreOffStopsTheClaims() = runBlocking<Unit> {
+        inFront()
+        until { periodicClaim().singleOrNull()?.state == WorkInfo.State.ENQUEUED }
+
+        socket.send(DeviceEvent.Refused(DeviceSocket.DISABLED))
+
+        until { sendToDevice.state.value == SendToDeviceState.OffOnServer }
+        until { periodicClaim().single().state == WorkInfo.State.CANCELLED }
+        assertThat(store.snapshot().needsPairing).isFalse()
+    }
+
+    /** The owner cancelled on RomM while the game waits for its folder: it leaves the queue. */
+    @Test fun aCancelFromTheSocketTakesTheGameOutOfTheQueue() = runBlocking<Unit> {
+        folders("snes", "sfc")
+        fake.send("req-1", 10)
+        inFront()
+        until { jobFor(10) != null }
+
+        socket.send(DeviceEvent.InstallCancelled("req-1", 10))
+
+        until { jobFor(10)!!.phase == JobPhase.CANCELLING.name }
     }
 
     // --- in the background ---
