@@ -5,6 +5,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import ro.davidmontei.loom.storage.saves.PspDiscIdResult.Source
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Files
@@ -97,6 +98,24 @@ class PspDiscIdReaderTest {
         val pvdFrame = ((csoIndex(cso)[16] and 0x7FFF_FFFFL)).toInt()
         val damaged = cso.copyOf().also { for (i in 0 until 4) it[pvdFrame + i] = 0xFF.toByte() }
         assertThat(PspDiscIdReader.read(image("damaged.cso", damaged))).isInstanceOf(PspDiscIdResult.None::class.java)
+    }
+
+    /**
+     * A CSO whose index alignment is huge, crafted or damaged, and whose file is large enough for
+     * its last frame (sparse here): a frame as long as the alignment allows would not fit in an
+     * int, or in memory. No answer, and never an exception or an error.
+     */
+    @Test fun aCsoWithAHugeAlignmentHasNone() {
+        for (align in listOf(31, 28, 17, 16)) {
+            val header = ByteBuffer.allocate(0x18 + 4 * 18).order(ByteOrder.LITTLE_ENDIAN)
+            header.put("CISO".toByteArray()).putInt(0x04, 0x18).putLong(0x08, 17L * 2048).putInt(0x10, 2048)
+            header.put(0x14, 1.toByte()).put(0x15, align.toByte())
+            header.putInt(0x18 + 4 * 17, 1) // every frame starts at 0 and the last ends at 1 << align
+            val cso = image("align-$align.cso", header.array())
+            RandomAccessFile(cso.toFile(), "rw").use { it.setLength(1L shl align) }
+
+            assertThat(PspDiscIdReader.read(cso)).isInstanceOf(PspDiscIdResult.None::class.java)
+        }
     }
 
     @Test fun aCsoV2IsNotRead() {

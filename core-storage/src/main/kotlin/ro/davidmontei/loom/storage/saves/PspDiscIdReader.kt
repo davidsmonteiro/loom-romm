@@ -37,7 +37,8 @@ sealed interface PspDiscIdResult {
  *   checked against `PSP_GAME/PARAM.SFO`'s `DISC_ID`, which is where PPSSPP takes it from.
  * - CSO (CISO v1), as PPSSPP reads it (`BlockDevices.cpp`): "CISO", the image's size (u64 at
  *   0x08), the frame size (u32 at 0x10, a power of two of at least one sector), the version (0x14)
- *   and the index alignment (0x15), then an index of frames + 1 u32s at 0x18. A frame starts at
+ *   and the index alignment (0x15, at most 16 here: real images use 0 to 2), then an index of
+ *   frames + 1 u32s at 0x18. A frame starts at
  *   its index value without bit 31, shifted left by the alignment, and ends where the next one
  *   starts; with bit 31 it is stored as it is, else raw-deflated.
  * - PBP (a PSN game's EBOOT.PBP): "\0PBP", a version, then eight u32 offsets at 0x08, the first
@@ -73,6 +74,9 @@ object PspDiscIdReader {
             }
         } catch (e: Malformed) {
             PspDiscIdResult.None(e.reason)
+        } catch (e: RuntimeException) {
+            // Whatever else a crafted or damaged image trips the parsing on: still no answer, never an exception.
+            PspDiscIdResult.None("the image is damaged")
         }
 
         private fun iso(sectors: Sectors): PspDiscIdResult {
@@ -211,7 +215,7 @@ object PspDiscIdReader {
 
         /** [length] bytes at [at]; [short] says why when the file ends first. */
         private fun bytes(at: Long, length: Int, short: String): ByteArray {
-            if (at < 0 || at + length > size) throw Malformed(short)
+            if (at < 0 || length < 0 || at + length > size) throw Malformed(short)
             val buffer = ByteBuffer.allocate(length)
             while (buffer.hasRemaining()) {
                 if (channel.read(buffer, at + buffer.position()) < 0) throw Malformed(short)
@@ -227,7 +231,12 @@ object PspDiscIdReader {
         companion object {
             private const val CUT = "the image is cut short"
             private const val STORED = 0x8000_0000L
-            private const val MAX_ALIGN = 31
+            /**
+             * The largest index alignment read. Real images use 0 to 2. A frame may take up to
+             * 2^alignment bytes more than its size, so a larger one would only let a damaged
+             * or crafted index ask for a frame too large to read into memory.
+             */
+            private const val MAX_ALIGN = 16
             private const val MAX_IMAGE_BYTES = 1L shl 40
         }
     }
