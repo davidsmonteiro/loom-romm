@@ -64,6 +64,21 @@ class DownloadNotifications(private val context: Context) {
         title.hashCode(),
     )
 
+    /**
+     * [title], sent from RomM, waits in the queue until Loom knows which folder [platform]'s games go
+     * in. Replaced by how its download ends, like the other notices about a game.
+     */
+    fun chooseFolder(title: String, platform: String) = post(
+        NotificationCompat.Builder(context, CHANNEL_RESULTS)
+            .setSmallIcon(R.drawable.ic_stat_loom)
+            .setContentTitle(context.getString(R.string.download_choose_folder_title, title))
+            .setContentText(context.getString(R.string.download_choose_folder_text, platform))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(context.getString(R.string.download_choose_folder_text, platform)))
+            .setAutoCancel(true)
+            .setContentIntent(openQueue()),
+        title.hashCode(),
+    )
+
     /** Android wouldn't let downloads start in the background; opening Loom resumes them. */
     fun resumeHint() = post(
         NotificationCompat.Builder(context, CHANNEL_RESULTS)

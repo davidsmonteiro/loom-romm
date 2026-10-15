@@ -65,6 +65,9 @@ class DownloadRepository(
     /** Whether [romId] has a job in the queue, failed ones included. */
     suspend fun hasJob(romId: Int): Boolean = dao.jobForRom(romId) != null
 
+    /** The job queued for RomM install request [requestId], while it's in the queue. */
+    suspend fun jobForInstallRequest(requestId: String): DownloadJobEntity? = dao.jobForInstallRequest(requestId)
+
     /**
      * Queues [romId], planned from what RomM has now ([known], when the caller just asked RomM for it).
      * [installRequestId]: the RomM install request that sent the game, kept on its job. With

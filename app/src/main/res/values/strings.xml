@@ -15,6 +15,8 @@
     <string name="download_waiting_title">Downloads are waiting</string>
     <string name="download_waiting_text">Android paused them in the background. Open Loom to continue.</string>
     <string name="download_needs_files_access">Loom no longer has All files access. Turn it back on in Android settings, then open Loom.</string>
+    <string name="download_choose_folder_title">%1$s is waiting for its folder</string>
+    <string name="download_choose_folder_text">Sent from RomM. Open the queue and press A to choose where %1$s games go.</string>
     <string name="action_pause_all">Pause all</string>
     <string name="action_cancel">Cancel</string>
 

@@ -17,6 +17,7 @@ import ro.davidmontei.loom.data.catalog.CoverStore
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.saves.SaveSyncTriggers
+import ro.davidmontei.loom.data.sent.SendToDevice
 import ro.davidmontei.loom.data.settings.SettingsStore
 import coil3.ImageLoader
 import coil3.PlatformContext
@@ -38,6 +39,7 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     @Inject lateinit var settings: SettingsStore
     @Inject lateinit var refresh: CatalogRefreshScheduler
     @Inject lateinit var reachability: ReachabilityWatch
+    @Inject lateinit var sendToDevice: SendToDevice
 
     /** Cover art comes only from the [CoverStore], which keeps its own files on disk. */
     override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
@@ -63,6 +65,10 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         // comes or goes (Wi-Fi joined or left, a VPN up or down), and when Loom comes to the front.
         scope.launch { reachability.run() }
         reachability.follow(ProcessLifecycleOwner.get().lifecycle, getSystemService(ConnectivityManager::class.java))
+        // Games sent from RomM's web UI: claimed at start and each time Loom comes to the front, and
+        // periodically in the background while they can come.
+        scope.launch { runCatching { sendToDevice.run() } }
+        sendToDevice.follow(ProcessLifecycleOwner.get().lifecycle)
         // Coming to the foreground lets Android start the download service again: resume anything
         // that was parked for that, and make sure a worker is draining the queue.
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {

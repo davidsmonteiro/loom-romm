@@ -1,0 +1,317 @@
+package ro.davidmontei.loom.data.sent
+
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import ro.davidmontei.loom.data.auth.CredentialStore
+import ro.davidmontei.loom.data.auth.Credentials
+import ro.davidmontei.loom.data.download.DownloadNotifications
+import ro.davidmontei.loom.data.download.DownloadRepository
+import ro.davidmontei.loom.data.download.QueueGame
+import ro.davidmontei.loom.data.settings.Settings
+import ro.davidmontei.loom.data.settings.SettingsStore
+import ro.davidmontei.loom.net.ActiveServer
+import ro.davidmontei.loom.net.NotPairedException
+import ro.davidmontei.loom.net.ServerInfo
+import ro.davidmontei.loom.net.ServerReachability
+import ro.davidmontei.loom.romm.ROMM_5_4
+import ro.davidmontei.loom.romm.RommException
+import ro.davidmontei.loom.romm.RommVersion
+import ro.davidmontei.loom.romm.dto.DeviceUpdateRequest
+import ro.davidmontei.loom.romm.dto.INSTALL_ALREADY_INSTALLED
+import ro.davidmontei.loom.romm.dto.INSTALL_DONE
+import ro.davidmontei.loom.romm.dto.INSTALL_FAILED
+import ro.davidmontei.loom.romm.dto.InstallReportRequest
+import ro.davidmontei.loom.romm.dto.InstallRequestDto
+import ro.davidmontei.loom.romm.dto.REMOTE_INSTALL
+import ro.davidmontei.loom.romm.dto.installReason
+import ro.davidmontei.loom.romm.rommCall
+
+/** Whether games sent from RomM's web UI ("Install on device") can reach Loom, and if not, why. */
+sealed interface SendToDeviceState {
+    /** Setup isn't finished, or Loom isn't paired. */
+    data object NotSetUp : SendToDeviceState
+
+    /** Switched off in Settings › Downloads: RomM doesn't offer this device. */
+    data object Off : SendToDeviceState
+
+    /** RomM [version] can't send games to devices: that came with RomM 5.4. Null: not known yet. */
+    data class OldServer(val version: String?) : SendToDeviceState
+
+    /** Sending games to devices is switched off on the RomM server. */
+    data object OffOnServer : SendToDeviceState
+
+    /**
+     * RomM won't take this device's claims: the device was deleted on RomM's Devices page, or Loom's
+     * token isn't bound to a device (a pasted token or a pair code). Pairing again by QR code fixes it.
+     */
+    data object NeedsPairing : SendToDeviceState
+
+    /** Games sent to device [deviceId] land in Loom's queue. */
+    data class Ready(val deviceId: String) : SendToDeviceState
+}
+
+/**
+ * Games sent from RomM's web UI land in Loom's queue (RomM 5.4's device installs, ADR 0013). RomM keeps
+ * each game sent as an install request until the device claims it and reports how it went; Loom claims
+ * at start, each time it comes to the front, when RomM answers again after being out of reach, after
+ * pairing again, and every 15 minutes in the background ([ClaimWorker]). Each game claimed is queued
+ * like one picked in the library, waiting in the queue to be asked about when its platform's folder
+ * isn't clear, and reported [INSTALL_DONE] once it's in the queue, which RomM shows as "Added to
+ * downloads". Only a lasting problem is reported [INSTALL_FAILED]; a passing one leaves the request
+ * for the next claim, which returns it again.
+ *
+ * RomM lists the device under "Install on device" only once it declares [REMOTE_INSTALL], which Loom
+ * does at every start and whenever the switch in Settings changes.
+ */
+class SendToDevice(
+    private val settings: SettingsStore,
+    private val credentials: CredentialStore,
+    private val store: SendToDeviceStore,
+    private val server: ActiveServer,
+    private val serverInfo: ServerInfo,
+    private val reachability: ServerReachability,
+    private val queue: QueueGame,
+    private val downloads: DownloadRepository,
+    private val notifications: DownloadNotifications,
+    private val claims: ClaimScheduler,
+    scope: CoroutineScope,
+) {
+    /** What decides the state, read together. */
+    private data class Inputs(val settings: Settings, val credentials: Credentials?, val store: SendToDeviceSettings)
+
+    /**
+     * What RomM is told the device can do: [receive] as [REMOTE_INSTALL], for device [deviceId] as
+     * the token [token] knows it (a new pairing may have found a device without it).
+     */
+    private data class Declaration(val deviceId: String, val receive: Boolean, val token: String) {
+        override fun toString() = "Declaration(deviceId=$deviceId, receive=$receive)"
+    }
+
+    /** Once the credentials are read: before, Loom would look unpaired for a moment. */
+    private val inputs: Flow<Inputs> = flow {
+        credentials.awaitLoaded()
+        emitAll(combine(settings.settings, credentials.current, store.settings, ::Inputs))
+    }
+
+    val state: StateFlow<SendToDeviceState> =
+        inputs.map { it.state() }.stateIn(scope, SharingStarted.Eagerly, SendToDeviceState.NotSetUp)
+
+    private val lock = Mutex()
+    private val nudges = Channel<Unit>(Channel.CONFLATED)
+
+    /** What RomM was last told, this process: told again at each start, and whenever it changes. */
+    @Volatile private var declared: Declaration? = null
+
+    /**
+     * Keeps everything in step while Loom runs: the periodic claim exists exactly while games can come,
+     * RomM hears of the switch, and Loom claims when asked to ([nudge]), after pairing again and when
+     * RomM can be reached again.
+     */
+    suspend fun run(): Unit = coroutineScope {
+        launch { inputs.map { it.state() is SendToDeviceState.Ready }.distinctUntilChanged().collect(claims::schedule) }
+        launch {
+            inputs.map { it.declaration() }.distinctUntilChanged().collect { d ->
+                if (d != null) lock.withLock { if (d != declared) declare(d) }
+            }
+        }
+        launch {
+            // Paired again, maybe after RomM refused the old token or device: that refusal no longer holds.
+            credentials.awaitLoaded()
+            credentials.current.map { it?.token }.distinctUntilChanged().drop(1).collect { token ->
+                if (token != null) {
+                    store.setNeedsPairing(false)
+                    nudge()
+                }
+            }
+        }
+        launch {
+            // A game sent while RomM was out of reach is waiting there.
+            var away = false
+            reachability.current.collect {
+                if (it == ServerReachability.State.UNREACHABLE) away = true
+                else if (it == ServerReachability.State.REACHABLE && away) { away = false; nudge() }
+            }
+        }
+        // Nudges that come together, as when Loom comes to the front and RomM answers again, claim once.
+        for (nudge in nudges) {
+            delay(NUDGE_GATHER_MS)
+            nudges.tryReceive()
+            try {
+                drain()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // What went wrong is left for the next claim, which returns every request not reported.
+            }
+        }
+    }
+
+    /** Claims soon (see [run]): Loom came to the front, or RomM said a game was sent. */
+    fun nudge() {
+        nudges.trySend(Unit)
+    }
+
+    /** Claims each time Loom comes to the front, the first time being when it starts. */
+    fun follow(lifecycle: Lifecycle) = lifecycle.addObserver(object : DefaultLifecycleObserver {
+        override fun onStart(owner: LifecycleOwner) = nudge()
+    })
+
+    /**
+     * Claims the games sent to this device and queues each one, reporting how that went. One drain at a
+     * time; it does nothing unless games can come ([SendToDeviceState.Ready]).
+     */
+    suspend fun drain() = lock.withLock {
+        inputs().declaration()?.let { if (it != declared) declare(it) }
+        val inputs = inputs() // as RomM left them: it may have refused the device just now
+        val ready = inputs.state() as? SendToDeviceState.Ready ?: return@withLock
+        val token = inputs.credentials?.token ?: return@withLock
+        val requests = try {
+            server.call { api -> rommCall { api.claimInstalls(ready.deviceId) } }
+        } catch (e: NotPairedException) {
+            return@withLock
+        } catch (e: RommException.Unauthorized) {
+            return@withLock needsPairing(token)
+        } catch (e: RommException.Forbidden) {
+            return@withLock needsPairing(token) // the token isn't this device's
+        } catch (e: RommException.NotFound) {
+            return@withLock claimRefused(token)
+        } catch (e: RommException) {
+            return@withLock // out of reach, busy (409) or failing for now: the next claim
+        }
+        for (request in requests) if (!handle(ready.deviceId, token, request)) break
+    }
+
+    /**
+     * The owner cancelled request [requestId] on RomM: its game leaves the queue, unless it's already
+     * being moved into place or installed.
+     */
+    suspend fun cancelled(requestId: String) {
+        downloads.jobForInstallRequest(requestId)?.let { downloads.cancel(it.id) }
+    }
+
+    private suspend fun inputs(): Inputs {
+        credentials.awaitLoaded()
+        return Inputs(settings.snapshot(), credentials.current.value, store.snapshot())
+    }
+
+    /** Queues [request]'s game and reports how that went. False when there's no use going on now. */
+    private suspend fun handle(deviceId: String, token: String, request: InstallRequestDto): Boolean {
+        val report = when (val outcome = queue.queue(request.romId, QueueGame.WhenUnsure.WAIT_IN_QUEUE, request.id)) {
+            is QueueGame.Outcome.Queued, QueueGame.Outcome.AlreadyQueued -> InstallReportRequest(INSTALL_DONE)
+            is QueueGame.Outcome.WaitingForFolder -> {
+                // In the queue all the same: RomM says "Added to downloads", and the owner chooses its folder there.
+                val title = downloads.job(outcome.jobId)?.title ?: outcome.ask.platformName
+                notifications.chooseFolder(title, outcome.ask.platformName)
+                InstallReportRequest(INSTALL_DONE)
+            }
+            QueueGame.Outcome.AlreadyInstalled -> InstallReportRequest(INSTALL_ALREADY_INSTALLED)
+            is QueueGame.Outcome.Failed ->
+                if (outcome.transient) return true // RomM out of reach or busy for now: the next claim returns it
+                else InstallReportRequest(INSTALL_FAILED, installReason(outcome.message))
+            is QueueGame.Outcome.AskFolder -> return true // never, when it can wait in the queue
+        }
+        return try {
+            server.call { api -> rommCall { api.reportInstall(deviceId, request.id, report) } }
+            true
+        } catch (e: RommException.NotFound) {
+            true // cancelled or expired meanwhile, or reported before: it has ended either way
+        } catch (e: RommException.Conflict) {
+            true // not taken (any more): nothing to report on
+        } catch (e: RommException.Unauthorized) {
+            needsPairing(token)
+            false
+        } catch (e: RommException.Forbidden) {
+            needsPairing(token)
+            false
+        } catch (e: RommException.Unreachable) {
+            false // the next claim returns it, and finds the game queued
+        } catch (e: RommException) {
+            true // RomM didn't take the report (422, say): the request expires on its own
+        }
+    }
+
+    /** Tells RomM what the device can do. A refused device needs pairing again; a passing problem, the next claim. */
+    private suspend fun declare(declaration: Declaration) {
+        try {
+            server.call { api ->
+                rommCall { api.updateDevice(declaration.deviceId, DeviceUpdateRequest(mapOf(REMOTE_INSTALL to declaration.receive))) }
+            }
+            declared = declaration
+        } catch (e: NotPairedException) {
+            // Signed out meanwhile.
+        } catch (e: RommException.Unauthorized) {
+            needsPairing(declaration.token)
+        } catch (e: RommException.Forbidden) {
+            needsPairing(declaration.token)
+        } catch (e: RommException.NotFound) {
+            needsPairing(declaration.token) // the device was deleted on RomM
+        } catch (e: RommException) {
+            // Out of reach or failing for now: declared again before the next claim.
+        }
+    }
+
+    /**
+     * RomM refused the claim with 404: its device installs are off (the heartbeat says so, and recording
+     * that stops the claims), or it no longer has the device.
+     */
+    private suspend fun claimRefused(token: String) {
+        val heartbeat = try {
+            server.call { api -> serverInfo.heartbeat(api) }
+        } catch (e: NotPairedException) {
+            return
+        } catch (e: RommException) {
+            return
+        }
+        if (heartbeat.deviceInstall?.enabled == true) needsPairing(token)
+    }
+
+    /** Only for the token RomM refused: a pairing made meanwhile isn't undone. */
+    private suspend fun needsPairing(token: String) {
+        if (credentials.current.value?.token == token) store.setNeedsPairing(true)
+    }
+
+    private fun Inputs.state(): SendToDeviceState {
+        val creds = credentials
+        if (!settings.onboardingComplete || settings.server == null || creds == null) return SendToDeviceState.NotSetUp
+        if (!store.receive) return SendToDeviceState.Off
+        if (!sendsToDevices(settings.serverVersion)) return SendToDeviceState.OldServer(settings.serverVersion)
+        if (store.installsEnabled == false) return SendToDeviceState.OffOnServer
+        val deviceId = creds.deviceId
+        if (deviceId == null || store.needsPairing) return SendToDeviceState.NeedsPairing
+        return SendToDeviceState.Ready(deviceId)
+    }
+
+    /** What to tell RomM: nothing until paired as a device with a RomM that has device installs. */
+    private fun Inputs.declaration(): Declaration? {
+        val creds = credentials ?: return null
+        val deviceId = creds.deviceId ?: return null
+        if (!settings.onboardingComplete || store.needsPairing || !sendsToDevices(settings.serverVersion)) return null
+        return Declaration(deviceId, store.receive, creds.token)
+    }
+
+    private fun sendsToDevices(version: String?) = version?.let(RommVersion::parse)?.let { it >= ROMM_5_4 } == true
+
+    companion object {
+        /** How long nudges are gathered before claiming once for all of them. */
+        const val NUDGE_GATHER_MS = 500L
+    }
+}
