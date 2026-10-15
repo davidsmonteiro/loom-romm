@@ -459,10 +459,21 @@ class SaveSyncEngine(
                     adopted += game.romId
                     Acted.DONE
                 }
-                SyncOutcome.UPLOAD -> if (request.uploads) upload(api, deviceId, sessionId, game, head) else {
-                    waiting += game.romId
-                    setState(game.romId, SaveSyncState.LOCAL_NEWER, "Changed on the Thor; it uploads with the next sync")
-                    Acted.NOTHING
+                SyncOutcome.UPLOAD -> when {
+                    // A save larger than Loom could restore isn't uploaded: it could never come back.
+                    // That stands until it shrinks, so it says why rather than failing every run.
+                    game.snapshot.totalBytes > game.save.maxUnitBytes -> {
+                        val reason = tooLarge(game.save, game.snapshot.totalBytes)
+                        unsupported[game.romId] = reason
+                        setState(game.romId, SaveSyncState.UNSUPPORTED, reason)
+                        Acted.NOTHING
+                    }
+                    request.uploads -> upload(api, deviceId, sessionId, game, head)
+                    else -> {
+                        waiting += game.romId
+                        setState(game.romId, SaveSyncState.LOCAL_NEWER, "Changed on the Thor; it uploads with the next sync")
+                        Acted.NOTHING
+                    }
                 }
                 SyncOutcome.DOWNLOAD -> if (request.downloads && request.downloadsUntil.let { it == null || !now().isAfter(it) }) {
                     try {
@@ -487,7 +498,6 @@ class SaveSyncEngine(
 
         private suspend fun upload(api: RommApi, deviceId: String, sessionId: Int, game: Prepared, head: ServerHead?): Acted {
             val hash = game.localHash!!
-            checkRestorable(game.save, game.snapshot.totalBytes)
             val sent = try {
                 whenSettled(game.save, hash) { file -> uploadSlotted(api, deviceId, sessionId, game.save, file, hash, head, overwrite = false) }
             } catch (e: RommException.Conflict) {
@@ -969,10 +979,12 @@ class SaveSyncEngine(
 
     /** A save larger than Loom could restore isn't uploaded: it could never come back. */
     private fun checkRestorable(save: ResolvedSave.Ready, bytes: Long) {
-        if (bytes > save.maxUnitBytes) {
-            throw SaveArchiveException("This save is ${formatBytes(bytes)}, more than Loom restores (${formatBytes(save.maxUnitBytes)}), so it isn't uploaded")
-        }
+        if (bytes > save.maxUnitBytes) throw SaveArchiveException(tooLarge(save, bytes))
     }
+
+    /** Why [save], holding [bytes], isn't synced: more than Loom restores for its emulator. */
+    private fun tooLarge(save: ResolvedSave.Ready, bytes: Long): String =
+        "${emulatorName(save.emulator)} keeps ${formatBytes(bytes)} in this game's save, more than Loom syncs (${formatBytes(save.maxUnitBytes)})"
 
     private fun stillWriting(save: ResolvedSave.Ready) = "${emulatorName(save.emulator)} is still writing this save. Close it and try again in a minute."
 

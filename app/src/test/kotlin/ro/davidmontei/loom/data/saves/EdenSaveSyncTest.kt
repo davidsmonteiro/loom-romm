@@ -11,6 +11,7 @@ import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.db.SaveKeySource
 import ro.davidmontei.loom.storage.saves.SaveHasher
 import ro.davidmontei.loom.storage.saves.SaveRestorer
+import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import ro.davidmontei.loom.storage.saves.SyncDecision
 import java.io.File
@@ -534,8 +535,11 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         assertThat(work.exists()).isFalse()
     }
 
-    /** A save larger than Loom restores for Eden isn't uploaded: it could never come back. */
-    @Test fun aSaveTooLargeToRestoreIsntUploaded() = runBlocking<Unit> {
+    /**
+     * A save larger than Loom restores for Eden isn't uploaded: it could never come back. That
+     * stands until the save shrinks, so the game says why, once, rather than failing every run.
+     */
+    @Test fun aSaveTooLargeToRestoreSaysWhyAndIsntCountedAsFailed() = runBlocking<Unit> {
         edenMaxUnitBytes = 8 * 1024
         putProdKeys()
         installSwitch(wonder)
@@ -543,9 +547,22 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
 
         val report = engine().sync(SaveSyncRequest.PUSH)
 
-        assertThat(report.failed.getValue(wonder.romId)).isEqualTo("This save is 16.0 KB, more than Loom restores (8.0 KB), so it isn't uploaded")
+        val why = "Eden keeps ${formatBytes(16 * 1024 + 7)} in this game's save, more than Loom syncs (${formatBytes(8 * 1024)})"
+        assertThat(report.failed).isEmpty()
+        assertThat(report.unsupported).containsExactly(wonder.romId, why)
+        assertThat(report.summary()).isEqualTo("no changes")
         assertThat(romm.uploads()).isEmpty()
-        assertThat(state(wonder)).isEqualTo(SaveSyncState.ERROR)
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.UNSUPPORTED)
+        assertThat(detail(wonder)).isEqualTo(why)
+        // A look says the same, rather than promising an upload with the next sync.
+        assertThat(engine().sync(SaveSyncRequest.CHECK).unsupported).containsExactly(wonder.romId, why)
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.UNSUPPORTED)
+        val repository = SaveRepository(engine(), saves, eden(), scope)
+        assertThat(repository.upload(wonder.romId, wonder.title)).isEqualTo("Super Mario Bros Wonder's save isn't synced: $why")
+
+        writeEdenSave(wonder, bytes(2)) // small again
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(wonder.romId)
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.IN_SYNC)
     }
 
     /** A restore unpacks at most what Loom allows for the game's emulator, whatever the default. */
