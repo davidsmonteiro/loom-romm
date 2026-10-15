@@ -171,16 +171,20 @@ class MainActivity : ComponentActivity() {
     /**
      * Pad A/B become confirm/back before Compose sees them, a pad button never falls back to
      * another key, the Shift AYN sends on a focus-mode change is dropped (see [GamepadKeys]), and
-     * a press made in touch mode waits for focus (see [TouchModePress]). Any other key is someone
-     * using Loom: the second screen stays lit, or lights up again, even for an X that only brings
-     * focus back after a tap.
+     * a press made in touch mode waits for focus (see [TouchModePress]). R3 hides the second
+     * screen's panel, or brings it back, and goes no further. Every key but AYN's Shift is
+     * someone using Loom: the second screen stays lit, or lights up again, even for an X that
+     * only brings focus back after a tap.
      *
      * Lint flags these because androidx.core re-declares the platform method as
      * library-restricted; it is the public Activity.dispatchKeyEvent.
      */
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        GamepadKeys.dispatch(event, app.state.value?.swapConfirmBack ?: false) { key -> app.companion.poke(); touchModePress.dispatch(key) }
+        GamepadKeys.dispatch(
+            event, app.state.value?.swapConfirmBack ?: false,
+            togglePanel = { app.companion.poke(); secondScreen.togglePanel() },
+        ) { key -> app.companion.poke(); touchModePress.dispatch(key) }
 
     @SuppressLint("RestrictedApi")
     private fun deliver(key: KeyEvent): Boolean = super.dispatchKeyEvent(key)

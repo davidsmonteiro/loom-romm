@@ -212,6 +212,66 @@ class SecondScreenControllerTest {
         assertShownOn(null)
     }
 
+    // --- R3: the panel goes, so an app open on the bottom screen can be used, and comes back ---
+
+    @Test fun r3HidesThePanelAndBringsItBack() {
+        val bottom = addBottomScreen()
+        open()
+        controller.togglePanel()
+        assertShownOn(null)
+        controller.togglePanel()
+        assertShownOn(bottom)
+    }
+
+    /**
+     * The owner hides the panel to use the app under it, which takes the top, then turns back to Loom:
+     * the panel stays hidden. Nor does anything else that shows it again (a change of screen, the
+     * bottom screen off and on) bring it back.
+     */
+    @Test fun hiddenWithR3ItStaysHiddenWhenLoomIsBackOnTop() {
+        val bottom = addBottomScreen()
+        open()
+        controller.togglePanel()
+        controller.onTopResumedChanged(false) // the app on the bottom screen, touched
+        controller.onTopResumedChanged(true) // and Loom again
+        controller.onConfigurationChanged()
+        shadowOf(displays.getDisplay(bottom)).setState(Display.STATE_OFF)
+        idle()
+        shadowOf(displays.getDisplay(bottom)).setState(Display.STATE_ON)
+        idle()
+        assertShownOn(null)
+        controller.togglePanel()
+        assertShownOn(bottom)
+    }
+
+    /** Left (Home, a game launched) and opened again, Loom shows the panel as it did before R3. */
+    @Test fun reopeningLoomBringsThePanelBack() {
+        val bottom = addBottomScreen()
+        val activity = open()
+        controller.togglePanel()
+        controller.onTopResumedChanged(false)
+        activity.pause().stop()
+        idle()
+        activity.restart().start().resume()
+        controller.onTopResumedChanged(true)
+        idle()
+        assertShownOn(bottom)
+    }
+
+    /** With no panel to hide, R3 hides nothing for later: the panel shows once there's a screen for it, or the switch is on. */
+    @Test fun r3DoesNothingWithoutASecondScreen() {
+        open()
+        controller.togglePanel()
+        val bottom = addBottomScreen()
+        assertShownOn(bottom)
+        enabled.value = false
+        idle()
+        controller.togglePanel()
+        enabled.value = true
+        idle()
+        assertShownOn(bottom)
+    }
+
     // --- AYN's Focus Mode: which screen the pad's keys go to ---
 
     /** As AYN's Dual screen assistant does: the setting changes, and whoever watches it hears. */

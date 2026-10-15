@@ -428,7 +428,7 @@ class FitsTheScreenTest {
         rule.saveScreenshot("settings-saves-eden-profiles")
     }
 
-    /** Controls & screens: both switches, each explanation in full. */
+    /** Controls & screens: both switches, each explanation in full, the second screen's with what R3 does. */
     @Test fun theControlsSectionFits() = theControlsSectionFits("settings-controls")
 
     @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
@@ -439,7 +439,9 @@ class FitsTheScreenTest {
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
         rule.onNodeWithTag("section-CONTROLS").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
-        for (line in listOf("go back with the bottom one.", "stays in view while Loom is in front.")) assertWithMessage(line).that(cutShort(line)).isFalse()
+        for (line in listOf("go back with the bottom one.", "stays in view while Loom is in front.", "or next open Loom.")) {
+            assertWithMessage(line).that(cutShort(line)).isFalse()
+        }
         rule.saveScreenshot(screenshot)
     }
 

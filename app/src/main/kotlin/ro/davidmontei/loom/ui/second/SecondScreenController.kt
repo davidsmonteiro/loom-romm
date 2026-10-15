@@ -34,8 +34,10 @@ interface SecondScreenWindow {
  * so in place of its hints; and with the pad on the bottom screen, the panel goes, so whatever the
  * pad works there is in view.
  *
- * Observe it from the activity's lifecycle; the activity passes on [onTopResumedChanged] and
- * [onConfigurationChanged] (a move to the other screen).
+ * R3 hides it too, and brings it back: see [togglePanel].
+ *
+ * Observe it from the activity's lifecycle; the activity passes on [onTopResumedChanged],
+ * [onConfigurationChanged] (a move to the other screen) and [togglePanel].
  */
 class SecondScreenController(
     activity: Activity,
@@ -60,11 +62,13 @@ class SecondScreenController(
     }
     private var started = false
     private var topResumed = false
+    private var hiddenWithR3 = false
     private var watching: Job? = null
     private var shownOn: Int? = null
 
     override fun onStart(owner: LifecycleOwner) {
         started = true
+        hiddenWithR3 = false // Loom opened again
         displays.registerDisplayListener(listener, Handler(Looper.getMainLooper()))
         resolver.registerContentObserver(Settings.System.getUriFor(AYN_FOCUS_LOCK), false, focusMode)
         watching = owner.lifecycleScope.launch { enabled.collect { update() } }
@@ -88,13 +92,23 @@ class SecondScreenController(
 
     fun onConfigurationChanged() = update()
 
+    /**
+     * R3: hides the panel, so an app open on the second screen is in view and can be used while Loom
+     * stays in front, or brings it back. Hidden, it stays hidden until R3 again or Loom is opened
+     * again (it stops, then starts): going over to that app and back to Loom doesn't bring it back.
+     * With no panel to hide or bring back (no second screen, the switch off), R3 does nothing.
+     */
+    fun togglePanel() {
+        if (place() == null) return
+        hiddenWithR3 = !hiddenWithR3
+        update()
+    }
+
     private fun update() {
         val own = ownDisplay()
         val notice = padNotice(readFocusLock(resolver), onDefaultDisplay = own == Display.DEFAULT_DISPLAY)
         holder.setPadNotice(notice)
-        // With the pad on the bottom screen, what it works there (Cocoon, a game) must be in view, not under the panel.
-        val target = if (!started || !topResumed || notice == PadNotice.LOCKED_TO_BOTTOM) null
-            else pickSecondScreen(own, presentationDisplays().map { it.toCandidate() }, enabled.value)
+        val target = if (hiddenWithR3) null else place(own, notice)
         if (target == shownOn) return
         if (shownOn != null) {
             shownOn = null
@@ -106,4 +120,13 @@ class SecondScreenController(
         }
         holder.setPresenting(shownOn != null)
     }
+
+    /** The display the panel goes on now, R3 aside, or null for none. */
+    private fun place(
+        own: Int = ownDisplay(),
+        notice: PadNotice? = padNotice(readFocusLock(resolver), onDefaultDisplay = own == Display.DEFAULT_DISPLAY),
+    ): Int? =
+        // With the pad on the bottom screen, what it works there (Cocoon, a game) must be in view, not under the panel.
+        if (!started || !topResumed || notice == PadNotice.LOCKED_TO_BOTTOM) null
+        else pickSecondScreen(own, presentationDisplays().map { it.toCandidate() }, enabled.value)
 }

@@ -65,6 +65,10 @@ class MainActivityInputTest {
                     KeyCharacterMap.VIRTUAL_KEYBOARD, 0))
             }
             counts("A", input = true) { activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_A)) }
+            // R3 is used up even with no second screen to hide, as here: nothing else ever sees it.
+            counts("R3", input = true) {
+                assertWithMessage("R3 used").that(activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_THUMBR))).isTrue()
+            }
             counts("a touch", input = true) { activity.dispatchTouchEvent(MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, 100f, 100f, 0)) }
             // In touch mode, as a tap leaves it (Robolectric's taps don't go through the window).
             val window = ReflectionHelpers.callInstanceMethod<Any>(activity.window.decorView, "getViewRootImpl")

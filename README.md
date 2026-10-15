@@ -165,8 +165,11 @@ Either way the choice is remembered for that platform; change it in Settings →
 | L1 / R1 | Previous / next platform | | |
 | Start | Open the queue | | |
 | Select | Settings | | |
+| R3 | | | Hide or bring back the second screen's panel |
 
-In a save conflict's choice, B is **Skip**. For Nintendo-layout pads, use Settings → Controls → **Swap A and B**. Touch works too, and the first button press after a tap still acts (it doesn't just bring the focus ring back), except X, which only brings focus back so it never downloads a game you didn't pick. Loom runs full screen; swipe from an edge to see the system bars.
+With two screens, as on the Thor, the other one shows the game you're on, or the download or save conflict in the queue, while Loom is in front. It only shows: the pad stays with Loom, and tapping that screen does nothing. To use an app open on that screen, press R3: the panel goes, and stays gone, even once you've used that app and come back to Loom, until you press R3 again or next open Loom. Settings → Controls & screens → **Use the second screen** turns the panel off altogether.
+
+In a save conflict's choice, B is **Skip**. For Nintendo-layout pads, use Settings → Controls & screens → **Swap A and B**. Touch works too, and the first button press after a tap still acts (it doesn't just bring the focus ring back), except X, which only brings focus back so it never downloads a game you didn't pick. Loom runs full screen; swipe from an edge to see the system bars.
 
 ## Save sync
 

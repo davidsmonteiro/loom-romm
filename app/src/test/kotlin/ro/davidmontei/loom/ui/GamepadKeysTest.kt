@@ -57,6 +57,35 @@ class GamepadKeysTest {
         assertThat(usedWhenNothingTakesIt(KeyEvent.KEYCODE_DPAD_DOWN)).isFalse() // Android still moves focus
     }
 
+    /** R3 hides or shows the second screen's panel from any screen: never seen by Compose, nor falling back to another key. */
+    @Test fun r3TogglesThePanelOncePerPressAndGoesNoFurther() {
+        for (swap in listOf(false, true)) {
+            var toggles = 0
+            val delivered = mutableListOf<Int>()
+            for (event in listOf(
+                KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_THUMBR),
+                KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_THUMBR, 1), // held
+                KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BUTTON_THUMBR),
+            )) {
+                val used = GamepadKeys.dispatch(event, swap, togglePanel = { toggles++ }) {
+                    delivered += it.keyCode
+                    false
+                }
+                assertThat(used).isTrue()
+            }
+            assertThat(toggles).isEqualTo(1)
+            assertThat(delivered).isEmpty()
+        }
+    }
+
+    @Test fun otherButtonsDontTouchThePanel() {
+        var toggles = 0
+        for (code in listOf(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_THUMBL, KeyEvent.KEYCODE_BUTTON_R1)) {
+            GamepadKeys.dispatch(KeyEvent(KeyEvent.ACTION_DOWN, code), swapConfirmBack = false, togglePanel = { toggles++ }) { true }
+        }
+        assertThat(toggles).isEqualTo(0)
+    }
+
     private fun rightShift(action: Int, deviceId: Int) =
         KeyEvent(0, 0, action, KeyEvent.KEYCODE_SHIFT_RIGHT, 0, 0, deviceId, 0, 0, InputDevice.SOURCE_KEYBOARD)
 
