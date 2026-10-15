@@ -11,6 +11,7 @@ import ro.davidmontei.loom.storage.mapping.FolderDecision
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * The card has several folders a platform's games could go in ([FolderDecision.Ask]): which one
@@ -146,6 +147,21 @@ class QueueGame @Inject constructor(
             val d = folders.decide(platform.slug, platform.fsSlug) as? FolderDecision.Use ?: continue
             settle(platform, d)
             downloads.releaseFolderWaits(listOf(platformId), d.folder)
+        }
+    }
+
+    /**
+     * [releaseDecided] at once and each time the platforms' folders change, for as long as it is
+     * collected (while Loom is in front): a folder settled in Settings › Platform folders lets the
+     * platform's waiting games go then, not only once the queue is next opened.
+     */
+    suspend fun releaseWhenFoldersChange() = folders.changes.collect {
+        try {
+            releaseDecided()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The card gone, say: the next change, or opening the queue, tries again.
         }
     }
 

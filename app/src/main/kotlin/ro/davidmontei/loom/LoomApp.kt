@@ -9,6 +9,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.catalog.CatalogRefreshScheduler
@@ -16,6 +17,7 @@ import ro.davidmontei.loom.data.catalog.CoverFetcher
 import ro.davidmontei.loom.data.catalog.CoverKeyer
 import ro.davidmontei.loom.data.catalog.CoverStore
 import ro.davidmontei.loom.data.download.DownloadRepository
+import ro.davidmontei.loom.data.download.QueueGame
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.saves.SaveSyncTriggers
 import ro.davidmontei.loom.data.sent.SendToDevice
@@ -42,6 +44,7 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     @Inject lateinit var reachability: ReachabilityWatch
     @Inject lateinit var sendToDevice: SendToDevice
     @Inject lateinit var credentials: CredentialStore
+    @Inject lateinit var queueGame: QueueGame
 
     /** Cover art comes only from the [CoverStore], which keeps its own files on disk. */
     override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
@@ -57,6 +60,7 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
 
     @Volatile private var lastReconcile = 0L
+    private var folderRelease: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -83,6 +87,10 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         // that was parked for that, and make sure a worker is draining the queue.
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
+                // A game sent from RomM waiting for its platform's folder goes as soon as the folder is
+                // settled, wherever that happens (Settings › Platform folders, say), not only once the
+                // queue is opened. Only Loom in front can settle it.
+                folderRelease = scope.launch { runCatching { queueGame.releaseWhenFoldersChange() } }
                 scope.launch {
                     downloads.resumeWaiting(WaitReason.APP_OPEN)
                     // Files may have been added or deleted in a file manager, and saves changed by
@@ -95,6 +103,10 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
                         runCatching { saveSync.appOpened() }
                     }
                 }
+            }
+
+            override fun onStop(owner: LifecycleOwner) {
+                folderRelease?.cancel()
             }
         })
     }

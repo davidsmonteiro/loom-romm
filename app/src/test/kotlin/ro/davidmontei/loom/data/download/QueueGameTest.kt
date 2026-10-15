@@ -18,8 +18,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -54,6 +56,8 @@ import ro.davidmontei.loom.romm.pairing.PairedCredentials
 import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.JobStatus
 import ro.davidmontei.loom.storage.engine.WaitReason
+import ro.davidmontei.loom.storage.mapping.PlatformMappingEntry
+import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -364,6 +368,25 @@ class QueueGameTest {
 
         // Sent once the choice was made: it goes in at once.
         assertThat(fromRomm(11)).isEqualTo(QueueGame.Outcome.Queued(db.downloadDao().jobForRom(11)!!.id))
+    }
+
+    /**
+     * Found by review: a folder set in Settings › Platform folders released nothing until the queue was next
+     * opened, so a game sent from RomM kept saying "Choose its folder" and didn't download. Loom follows the
+     * folders from its start, so it goes as soon as the folder is saved, with the queue never opened.
+     */
+    @Test fun aFolderSavedInSettingsReleasesWaitingGamesWithoutTheQueue() = runBlocking<Unit> {
+        folders("snes", "sfc")
+        val id = (fromRomm(10) as QueueGame.Outcome.WaitingForFolder).jobId
+        val following = scope.launch { queue.releaseWhenFoldersChange() }
+        try {
+            mapping.setOverride(PlatformMappingEntry(PlatformMatch(fsSlug = "snes"), folder = "sfc", include = listOf("game")))
+
+            val released = withTimeout(5_000) { db.downloadDao().observeJob(id).first { it?.phase == JobPhase.QUEUED.name } }!!
+            assertThat(released.plan().systemFolder).isEqualTo("sfc")
+        } finally {
+            following.cancel()
+        }
     }
 
     /** Asked about after its folder was settled some other way: there's nothing to ask, and it goes ahead. */

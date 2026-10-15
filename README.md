@@ -153,7 +153,7 @@ In **Settings → Platform folders** you can change each platform's:
 Cocoon can read any folder for a system, so the folder name alone doesn't tell Loom which one Cocoon uses. Each platform therefore lists the other names its folder often has (ES-DE's, among others: `arcade`, `mame`, `fbneo` and `fba` for arcade; `genesis` and `megadrive`). At a platform's first download Loom looks at the card:
 - one of those folders holds games, or only one exists: Loom uses it and says so;
 - none exists: Loom creates the default;
-- several exist and it can't tell (ES-DE's template has them all, empty): Loom asks, with the likeliest folder focused, or **Another folder…** for any folder in the ROMs folder. A game sent from RomM waits in the queue for that answer, saying **Choose its folder**, and the queue opens on it, ahead of the other downloads and of any saves to settle; A on it asks, and "Pause all" leaves it waiting.
+- several exist and it can't tell (ES-DE's template has them all, empty): Loom asks, with the likeliest folder focused, or **Another folder…** for any folder in the ROMs folder. A game sent from RomM waits in the queue for that answer, saying **Choose its folder**, and the queue opens on it, ahead of the other downloads and of any saves to settle; A on it asks, and "Pause all" leaves it waiting. Setting the platform's folder in Settings → Platform folders lets it go as well, at once.
 
 A `saves` folder in the ROMs folder (for emulators' saves, such as `ROMs/saves/Eden`) is never taken for a system folder: Loom doesn't look for games in it, offer it, mark it as a system when you browse, accept it as a platform's folder, or offload anything in it.
 

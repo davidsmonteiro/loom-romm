@@ -1,6 +1,9 @@
 package ro.davidmontei.loom.data.mapping
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.storage.mapping.EmulatorData
@@ -75,6 +78,12 @@ class FolderChooser @Inject constructor(
     suspend fun allFolders(): List<SystemFolder> = withContext(Dispatchers.IO) {
         settings.snapshot().romsRoot?.let { SystemFolderScanner.scan(File(it)) }.orEmpty().filter { FolderNames.validate(it.name) == null }
     }
+
+    /**
+     * The platforms' folder settings, now and each time they change: a choice, or Settings › Platform
+     * folders (an edit, a reset, an import).
+     */
+    val changes: Flow<Unit> = mapping.overrides.distinctUntilChanged().map { }
 
     /** Remembers [folder] for the platform: the user's answer, or with [detected] one Loom found on the card. */
     suspend fun choose(fsSlug: String, folder: String, detected: Boolean = false) = mapping.chooseFolder(fsSlug, folder, detected)
