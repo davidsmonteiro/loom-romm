@@ -15,7 +15,10 @@ import kotlinx.coroutines.flow.map
 data class SendToDeviceSettings(
     /** The owner's switch in Settings → Downloads: on until switched off. */
     val receive: Boolean = true,
-    /** What RomM's last heartbeat said of device installs; null before one did (and from RomM before 5.4). */
+    /**
+     * What RomM's last heartbeat said of device installs: false too when it said nothing of them (a RomM
+     * without them). Null before a heartbeat was heard.
+     */
     val installsEnabled: Boolean? = null,
     /** RomM refused the device or its token for installs: only pairing again can fix that. */
     val needsPairing: Boolean = false,
@@ -40,7 +43,7 @@ class SendToDeviceStore(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setReceive(on: Boolean) = dataStore.edit { it[RECEIVE] = on }
 
-    /** [enabled] null forgets it: the server doesn't say (RomM before 5.4). */
+    /** [enabled] null forgets it, as before any heartbeat. */
     suspend fun setInstallsEnabled(enabled: Boolean?) = dataStore.edit {
         if (enabled == null) it.remove(INSTALLS_ENABLED) else it[INSTALLS_ENABLED] = enabled
     }

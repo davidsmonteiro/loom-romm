@@ -450,6 +450,28 @@ class SendToDeviceTest {
         until { sendToDevice.state.value == SendToDeviceState.OffOnServer }
     }
 
+    /**
+     * A RomM built from source says "development" for its version, which reads as the newest; one from
+     * before 5.4 has no device installs, says nothing of them in its heartbeat, and has no claim. Loom
+     * stops claiming, as for installs switched off there, rather than claiming every minute for nothing.
+     */
+    @Test fun aRommThatSaysNothingOfDeviceInstallsIsntClaimedFromAgain() = runBlocking<Unit> {
+        settings.setServerVersion("development")
+        fake.version = "development"
+        fake.installsOffered = false
+        running()
+        until { periodicClaim().singleOrNull()?.state == WorkInfo.State.ENQUEUED }
+
+        sendToDevice.drain()
+        sendToDevice.drain()
+
+        assertThat(fake.claims.get()).isEqualTo(1)
+        assertThat(fake.heartbeats.get()).isEqualTo(1)
+        assertThat(store.snapshot().needsPairing).isFalse()
+        until { sendToDevice.state.value == SendToDeviceState.OffOnServer }
+        until { periodicClaim().single().state == WorkInfo.State.CANCELLED }
+    }
+
     /** Paired by pasting a token or a pair code: RomM wouldn't take the claim, so it isn't made. */
     @Test fun aTokenWithoutADeviceNeverClaims() = runBlocking<Unit> {
         credentials.save(PairedCredentials(romm.url("/"), "rmm_y", null, "david", null))
@@ -659,6 +681,10 @@ class SendToDeviceTest {
         val reportAttempts = CopyOnWriteArrayList<String>()
 
         @Volatile var installsEnabled = true
+
+        /** False: a RomM without device installs, whose heartbeat says nothing of them and which has no claim. */
+        @Volatile var installsOffered = true
+        @Volatile var version = "5.4.0"
         @Volatile var deviceDeleted = false
 
         /** The claim's answer when not the usual 200. */
@@ -680,7 +706,8 @@ class SendToDeviceTest {
             val method = request.method
             if (path == "/api/heartbeat") {
                 heartbeats.incrementAndGet()
-                return json("""{"SYSTEM":{"VERSION":"5.4.0","SHOW_SETUP_WIZARD":false},
+                if (!installsOffered) return json("""{"SYSTEM":{"VERSION":"$version","SHOW_SETUP_WIZARD":false}}""")
+                return json("""{"SYSTEM":{"VERSION":"$version","SHOW_SETUP_WIZARD":false},
                     "DEVICE_INSTALL":{"ENABLED":$installsEnabled,"EXCLUDED_PLATFORM_SLUGS":[]}}""")
             }
             Regex("""/api/roms/(\d+)$""").find(path)?.let { m ->
@@ -696,6 +723,7 @@ class SendToDeviceTest {
             }
             if (method == "POST" && path.endsWith("/installs/claim")) {
                 claims.incrementAndGet()
+                if (!installsOffered) return error(404, "Not Found")
                 claimAnswer?.let { return error(it, "Only the device itself can do this") }
                 if (!installsEnabled) return error(404, "Installing on a device is disabled on this server")
                 if (deviceDeleted) return error(404, "Device not found")

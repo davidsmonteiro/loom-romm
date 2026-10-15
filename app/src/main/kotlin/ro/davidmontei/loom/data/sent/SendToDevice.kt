@@ -57,7 +57,10 @@ sealed interface SendToDeviceState {
     /** RomM [version] can't send games to devices: that came with RomM 5.4. Null: not known yet. */
     data class OldServer(val version: String?) : SendToDeviceState
 
-    /** Sending games to devices is switched off on the RomM server. */
+    /**
+     * Sending games to devices is switched off on the RomM server, or it has none though its version
+     * reads as new enough (a build from source says "development").
+     */
     data object OffOnServer : SendToDeviceState
 
     /**

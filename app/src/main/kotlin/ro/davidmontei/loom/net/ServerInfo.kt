@@ -20,6 +20,8 @@ class ServerInfo(private val settings: SettingsStore, private val sendToDevice: 
     suspend fun record(heartbeat: HeartbeatDto) {
         val version = heartbeat.system.version
         if (settings.snapshot().serverVersion != version) settings.setServerVersion(version)
-        sendToDevice.setInstallsEnabled(heartbeat.deviceInstall?.enabled)
+        // A heartbeat that says nothing of device installs comes from a RomM without them: before 5.4, or
+        // built from source before then, whose version ("development") reads as the newest.
+        sendToDevice.setInstallsEnabled(heartbeat.deviceInstall?.enabled ?: false)
     }
 }

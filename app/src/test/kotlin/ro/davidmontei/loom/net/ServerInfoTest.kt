@@ -49,13 +49,16 @@ class ServerInfoTest {
         assertThat(sendToDevice.snapshot().installsEnabled).isTrue()
     }
 
-    /** RomM before 5.4 can't send games; what an earlier, newer server said doesn't hold for it. */
-    @Test fun a531HeartbeatLeavesInstallsUnknown() = runBlocking<Unit> {
+    /**
+     * RomM before 5.4 can't send games, and says nothing of them; what an earlier, newer server said
+     * doesn't hold for it.
+     */
+    @Test fun aHeartbeatThatSaysNothingOfInstallsRecordsThemOff() = runBlocking<Unit> {
         sendToDevice.setInstallsEnabled(true)
         heartbeat(HEARTBEAT_5_3_1)
         info.heartbeat(api)
         assertThat(settings.snapshot().serverVersion).isEqualTo("5.3.1")
-        assertThat(sendToDevice.snapshot().installsEnabled).isNull()
+        assertThat(sendToDevice.snapshot().installsEnabled).isFalse()
     }
 
     @Test fun installsSwitchedOffOnTheServerAreRecorded() = runBlocking<Unit> {
