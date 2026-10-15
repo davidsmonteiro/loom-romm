@@ -86,6 +86,7 @@ import ro.davidmontei.loom.net.ServerReachability
 import ro.davidmontei.loom.romm.pairing.PairedCredentials
 import ro.davidmontei.loom.romm.socket.DeviceEvent
 import ro.davidmontei.loom.romm.socket.DeviceSocket
+import ro.davidmontei.loom.storage.engine.FailureCode
 import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.JobStatus
 import ro.davidmontei.loom.storage.engine.WaitReason
@@ -272,6 +273,48 @@ class SendToDeviceTest {
 
         assertThat(fake.reports).containsExactly("req-1" to """{"status":"done"}""")
         assertThat(jobFor(10)!!.id).isEqualTo(id)
+    }
+
+    /**
+     * Sent again after its download failed in a way retrying can't help (a file over 4 GB for a FAT32
+     * card): RomM is told it failed, and why, not "Added to downloads" for a game that won't come.
+     */
+    @Test fun aGameWhoseDownloadFailedForGoodIsReportedFailedWithWhy() = runBlocking<Unit> {
+        folders("snes")
+        val id = (queue.queue(10, QueueGame.WhenUnsure.ASK) as QueueGame.Outcome.Queued).jobId
+        val why = "This card can't hold files over 4 GB (FAT32). Reformat it as exFAT."
+        db.downloadDao().setPhase(id, JobPhase.QUEUED.name, JobPhase.FAILED.name, null, FailureCode.FILE_TOO_LARGE_FOR_SD.name, why, false, 0)
+        fake.send("req-1", 10)
+
+        sendToDevice.drain()
+
+        val (reported, body) = fake.reports.single()
+        val report = Json.parseToJsonElement(body).jsonObject
+        assertThat(reported).isEqualTo("req-1")
+        assertThat(report["status"]!!.jsonPrimitive.content).isEqualTo("failed")
+        assertThat(report["reason"]!!.jsonPrimitive.content).isEqualTo(why)
+        assertThat(jobFor(10)!!.phase).isEqualTo(JobPhase.FAILED.name)
+        assertThat(jobFor(10)!!.installRequestId).isNull()
+    }
+
+    /**
+     * Sent again while its cancelled job is still leaving the queue: left for the next claim, by when it's
+     * gone, rather than reported done for a job about to be deleted.
+     */
+    @Test fun aGameStillLeavingTheQueueIsLeftForTheNextClaim() = runBlocking<Unit> {
+        folders("snes")
+        val id = (queue.queue(10, QueueGame.WhenUnsure.ASK) as QueueGame.Outcome.Queued).jobId
+        db.downloadDao().setPhase(id, JobPhase.QUEUED.name, JobPhase.CANCELLING.name, null, null, null, true, 0)
+        fake.send("req-1", 10)
+
+        sendToDevice.drain()
+
+        assertThat(fake.reportAttempts).isEmpty()
+        db.downloadDao().deleteParts(id) // the worker cleaned it up
+        db.downloadDao().deleteJob(id)
+        sendToDevice.drain()
+        assertThat(fake.reports).containsExactly("req-1" to """{"status":"done"}""")
+        assertThat(jobFor(10)!!.installRequestId).isEqualTo("req-1")
     }
 
     /** RomM shows the reason beside "Failed", and takes at most 500 characters of it. */

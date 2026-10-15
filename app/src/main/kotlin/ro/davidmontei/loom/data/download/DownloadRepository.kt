@@ -76,10 +76,15 @@ class DownloadRepository(
      */
     suspend fun enqueue(romId: Int, installRequestId: String? = null, waitForFolder: Boolean = false, known: RomDto? = null): EnqueueResult {
         dao.jobForRom(romId)?.let { existing ->
-            if (existing.phase == JobPhase.FAILED.name) {
-                retry(existing.id)
-                installRequestId?.let { dao.setInstallRequest(existing.id, it) }
-                return EnqueueResult.Queued(existing.id)
+            when (existing.phase) {
+                JobPhase.FAILED.name -> {
+                    // Failed in a way retrying can't help (a file over 4 GB for a FAT32 card, say): it stays so, and says why.
+                    if (!retry(existing.id)) return EnqueueResult.Failed(existing.failureDetail ?: CANT_RETRY)
+                    installRequestId?.let { dao.setInstallRequest(existing.id, it) }
+                    return EnqueueResult.Queued(existing.id)
+                }
+                // Cancelled, and about to be gone: it can be queued again once it is.
+                JobPhase.CANCELLING.name -> return EnqueueResult.Failed(LEAVING, transient = true)
             }
             return EnqueueResult.AlreadyQueued
         }
@@ -159,7 +164,8 @@ class DownloadRepository(
 
     suspend fun resume(jobId: Long) { if (apply(jobId, JobEvent.Resume)) kicker.kick() }
 
-    suspend fun retry(jobId: Long) { if (apply(jobId, JobEvent.Retry)) kicker.kick() }
+    /** Queues failed job [jobId] again; false when retrying can't help it (or it no longer failed). */
+    suspend fun retry(jobId: Long): Boolean = apply(jobId, JobEvent.Retry).also { if (it) kicker.kick() }
 
     /** Marks the job for cleanup; the worker removes its staging files and the row. */
     suspend fun cancel(jobId: Long) { if (apply(jobId, JobEvent.Cancel)) kicker.kick() }
@@ -212,6 +218,11 @@ class DownloadRepository(
 
     private suspend fun DownloadDao.observeJobsSnapshot(): List<DownloadJobEntity> =
         JobPhase.entries.flatMap { jobsIn(it.name) }
+
+    private companion object {
+        const val CANT_RETRY = "Its download failed, and retrying won't help until that's fixed"
+        const val LEAVING = "This game is still leaving the queue. Try again in a moment."
+    }
 }
 
 fun RomDto.toSnapshot() = RomSnapshot(
