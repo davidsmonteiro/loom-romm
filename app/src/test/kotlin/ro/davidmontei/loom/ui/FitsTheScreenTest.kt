@@ -63,6 +63,9 @@ import ro.davidmontei.loom.ui.onboarding.OnboardingState
 import ro.davidmontei.loom.ui.onboarding.OnboardingStep
 import ro.davidmontei.loom.ui.onboarding.PairMode
 import ro.davidmontei.loom.ui.queue.QueueContent
+import ro.davidmontei.loom.ui.second.CompanionHolder
+import ro.davidmontei.loom.ui.second.LocalCompanion
+import ro.davidmontei.loom.ui.second.PadNotice
 import ro.davidmontei.loom.ui.settings.SettingsActions
 import ro.davidmontei.loom.ui.settings.SettingsContent
 import ro.davidmontei.loom.ui.settings.SettingsSection
@@ -623,6 +626,36 @@ class FitsTheScreenTest {
     @Test fun theHintsWrapToTwoLinesAtMostOnAPhone() {
         assertThat(libraryHintLines(margin = Space.l)).isEqualTo(2)
     }
+
+    /**
+     * While AYN's Focus Mode has the pad on the other screen, its [notice] takes the hints' place in
+     * full, inside the screen's [margin], in no more [lines] than the hints took there.
+     */
+    private fun theFocusModeNoticeFits(notice: PadNotice, lines: Int, margin: Dp, screenshot: String) {
+        val companion = CompanionHolder().apply { setPadNotice(notice) }
+        rule.setContent {
+            CompositionLocalProvider(LocalCompanion provides companion) { LoomTestTheme { LibraryContent(LibraryScreenTest().state, NoopLibraryActions) } }
+        }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("button-hints").assertDoesNotExist()
+        assertThat(lineCount(notice.text)).isAtMost(lines) // and no limit to cut it short
+        val root = rule.onRoot().fetchSemanticsNode().boundsInRoot
+        val shown = rule.onNodeWithTag("pad-notice").fetchSemanticsNode().boundsInRoot
+        assertThat(shown.right).isAtMost(root.right - with(rule.density) { margin.toPx() })
+        assertThat(shown.bottom).isAtMost(root.bottom)
+        // One line is the hints' height, so the screen above keeps the room it was laid out for.
+        if (lines == 1) assertThat(shown.height).isAtMost(with(rule.density) { 26.dp.roundToPx() }.toFloat())
+        rule.saveScreenshot(screenshot)
+    }
+
+    /** Loom on the top screen, the pad on the bottom one: one line, as the hints were. */
+    @Test fun theFocusModeNoticeFitsInPlaceOfTheHints() =
+        theFocusModeNoticeFits(PadNotice.LOCKED_TO_BOTTOM, lines = 1, Space.xl, "library-focus-mode-notice")
+
+    /** Loom on the bottom screen, the pad on the top one. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theFocusModeNoticeFitsInPlaceOfTheHintsOnTheBottomScreen() =
+        theFocusModeNoticeFits(PadNotice.LOCKED_TO_TOP, lines = 2, Space.l, "library-focus-mode-notice-bottom-screen")
 
     /**
      * The library's header on a narrow screen: the platform's name and where the sync stands in full,

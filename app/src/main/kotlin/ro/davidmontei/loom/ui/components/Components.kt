@@ -93,6 +93,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import ro.davidmontei.loom.ui.layout.rememberLoomLayout
+import ro.davidmontei.loom.ui.second.PadNotice
+import ro.davidmontei.loom.ui.second.padNoticeShowing
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 
@@ -447,6 +449,8 @@ fun ButtonHints(hints: List<ButtonHint>, modifier: Modifier = Modifier) {
  * Screen chrome: title bar, content, and a footer of button hints. [titleContent], when given,
  * takes the title's place (the library's platform button on a narrow screen), filling what
  * [actions] leave. A narrow screen has narrower margins, so the hints wrap to two lines at most.
+ * While AYN's Focus Mode has the pad on the other screen, the hints would do nothing: a line
+ * saying so takes their place.
  */
 @Composable
 fun ScreenScaffold(
@@ -472,7 +476,16 @@ fun ScreenScaffold(
             actions()
         }
         Column(Modifier.weight(1f).fillMaxWidth()) { content() }
-        ButtonHints(hints)
+        val notice = padNoticeShowing()
+        if (notice != null) PadNoticeLine(notice) else ButtonHints(hints)
+    }
+}
+
+/** What AYN's Focus Mode keeps from Loom, in the hints' place and at their height. */
+@Composable
+private fun PadNoticeLine(notice: PadNotice) {
+    Box(Modifier.heightIn(min = 26.dp).testTag("pad-notice"), contentAlignment = Alignment.CenterStart) {
+        Text(notice.text, style = MaterialTheme.typography.labelMedium, color = LoomColors.Accent)
     }
 }
 

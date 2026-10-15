@@ -28,6 +28,11 @@ class CompanionHolder(
     /** Whether a second screen shows [content] now. */
     val presenting: StateFlow<Boolean> = _presenting.asStateFlow()
 
+    private val _padNotice = MutableStateFlow<PadNotice?>(null)
+
+    /** What to say in place of the button hints while AYN's Focus Mode keeps the pad from Loom, or null. */
+    val padNotice: StateFlow<PadNotice?> = _padNotice.asStateFlow()
+
     /** Each screen's latest, in the order the screens arrived. */
     private val published = LinkedHashMap<Any, CompanionContent>()
 
@@ -44,6 +49,10 @@ class CompanionHolder(
 
     internal fun setPresenting(on: Boolean) {
         _presenting.value = on
+    }
+
+    internal fun setPadNotice(notice: PadNotice?) {
+        _padNotice.value = notice
     }
 }
 
@@ -62,3 +71,7 @@ fun PublishCompanion(content: CompanionContent) {
 /** Whether a second screen shows what the screens publish: then a wide window leaves its own panel out. */
 @Composable
 fun secondScreenShowing(): Boolean = LocalCompanion.current?.presenting?.collectAsState()?.value ?: false
+
+/** What to say in place of the button hints, while AYN's Focus Mode keeps the pad from Loom. */
+@Composable
+fun padNoticeShowing(): PadNotice? = LocalCompanion.current?.padNotice?.collectAsState()?.value
