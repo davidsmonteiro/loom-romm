@@ -15,6 +15,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.net.NotPairedException
 import ro.davidmontei.loom.romm.RommException
@@ -28,6 +29,7 @@ class CatalogSyncWorker @AssistedInject constructor(
     private val syncer: CatalogSyncer,
     private val afterSync: AfterCatalogSync,
     private val workManager: WorkManager,
+    private val settings: SettingsStore,
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
@@ -38,7 +40,7 @@ class CatalogSyncWorker @AssistedInject constructor(
             }
             afterSync.onCatalogSynced()
             // Separate work, so the sync is done as soon as the catalog is.
-            CoverPrefetchWorker.enqueue(workManager)
+            CoverPrefetchWorker.enqueue(workManager, wifiOnly = settings.snapshot().refreshOnWifiOnly)
             Result.success(workDataOf(KEY_FETCHED to result.romsWritten, KEY_TOTAL to result.serverRomCount))
         } catch (e: NotPairedException) {
             Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Not paired")))

@@ -5,7 +5,7 @@ Phase 1 (the MVP: pairing, catalog sync, offline browsing, platform mapping, dow
 ## Phase 2: background refresh and save sync
 
 ### Scheduled catalog refresh (built)
-- `CatalogRefreshWorker` is periodic work every 6, 12 (the default) or 24 h. It needs a network (an unmetered one with "Only on Wi-Fi") and a battery that isn't low.
+- `CatalogRefreshWorker` is periodic work every 6, 12 (the default) or 24 h. It needs a network (an unmetered one with "Only on Wi-Fi") and a battery that isn't low. "Only on Wi-Fi" holds covers to an unmetered network too: the prefetch after a sync waits for one, and no cover is fetched or sharpened on a metered one; covers already kept still show.
 - It queues the manual sync's incremental `CatalogSyncWorker` (`updated_after` watermark plus the `/api/roms/identifiers` diff for deletions) as the same unique work, so a refresh never runs alongside a manual or headless sync.
 - It does nothing until setup is finished, or while Loom is signed out.
 - It first checks that RomM answers (the heartbeat). When RomM can't be reached it queues no sync: it retries three times over a few minutes, then waits for the next interval, so a refresh that finds RomM out of reach doesn't leave "Sync failed" in the library. Any other answer, a rejected token for one, queues the sync, which reports it.

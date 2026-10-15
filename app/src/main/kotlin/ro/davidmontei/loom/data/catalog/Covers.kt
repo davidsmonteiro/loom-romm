@@ -71,8 +71,17 @@ fun coverCacheKey(path: String): String = path.substringBefore('?') + "#" + path
  *
  * They live in the cache dir: Android may trim them when storage runs low, and the next sync fetches
  * them again.
+ *
+ * Every fetch from RomM first asks [canFetch], which says no while "Only on Wi-Fi" is on and the
+ * network is metered: covers already kept still show, and the rest wait until they're drawn again
+ * (or the next prefetch) on Wi-Fi.
  */
-class CoverStore(private val dir: File, private val http: OkHttpClient, private val scope: CoroutineScope) {
+class CoverStore(
+    private val dir: File,
+    private val http: OkHttpClient,
+    private val scope: CoroutineScope,
+    private val canFetch: suspend () -> Boolean = { true },
+) {
 
     /** Where [path]'s sharp thumbnail is kept. */
     fun file(path: String): File = File(dir, name(path))
@@ -80,7 +89,7 @@ class CoverStore(private val dir: File, private val http: OkHttpClient, private 
     /** [path]'s plain thumbnail (or one made at an earlier size), if it has one. */
     fun plain(path: String): File? = PLAIN_SUFFIXES.map { File(dir, "${hash(path)}$it.webp") }.firstOrNull { it.exists() }
 
-    /** [path]'s sharp thumbnail, made first if needed (from [large] when it has one); null if it can't be had. */
+    /** [path]'s sharp thumbnail, made first if needed (from [large] when it has one); null if it can't be had now. */
     suspend fun get(base: HttpUrl?, path: String, large: String? = null): File? {
         val file = file(path)
         if (file.exists()) return file
@@ -137,6 +146,8 @@ class CoverStore(private val dir: File, private val http: OkHttpClient, private 
         if (ref.base == null || sharpening.size >= SHARPENING_WAITING || !sharpening.add(ref.path)) return
         scope.launch {
             try {
+                // Not even a slot while covers can't be fetched: the plain one stays until it's drawn again.
+                if (!canFetch()) return@launch
                 sharpenSlots.withPermit { if (get(ref.base, ref.path, ref.large) != null) onSharpened() }
             } catch (e: CancellationException) {
                 throw e
@@ -149,14 +160,14 @@ class CoverStore(private val dir: File, private val http: OkHttpClient, private 
     }
 
     /**
-     * Makes a plain thumbnail for every cover that has no thumbnail yet, stopping early if [stopped];
-     * then drops thumbnails no game uses. Covers already kept are left as they are: only covers that
-     * are drawn are made sharp.
+     * Makes a plain thumbnail for every cover that has no thumbnail yet, stopping early if [stopped] or
+     * once covers can't be fetched ([canFetch]); then drops thumbnails no game uses. Covers already
+     * kept are left as they are: only covers that are drawn are made sharp.
      */
     suspend fun prefetch(base: HttpUrl, paths: Collection<String>, parallelism: Int = 4, stopped: () -> Boolean = { false }) {
         val missing = paths.distinct().filter { !file(it).exists() && plain(it) == null }
         for (batch in missing.chunked(parallelism)) {
-            if (stopped()) return
+            if (stopped() || !canFetch()) return
             coroutineScope {
                 // Best effort: a cover that fails to load only costs a placeholder.
                 batch.map { path -> async { runCatching { makePlain(base, path) } } }.awaitAll()
@@ -175,7 +186,9 @@ class CoverStore(private val dir: File, private val http: OkHttpClient, private 
         }
     }
 
-    private fun fetch(base: HttpUrl, path: String): Bitmap? {
+    /** RomM's cover at [path], shrunk; null if RomM can't serve it or covers can't be fetched now. */
+    private suspend fun fetch(base: HttpUrl, path: String): Bitmap? {
+        if (!canFetch()) return null
         val url = RommUrls.coverUrl(base, path) ?: return null
         val bytes = http.newCall(Request.Builder().url(url).build()).execute().use { response ->
             if (!response.isSuccessful) return null
@@ -275,13 +288,19 @@ class CoverPrefetchWorker @AssistedInject constructor(
     }
 
     companion object {
-        private const val UNIQUE_NAME = "cover-prefetch"
+        const val UNIQUE_NAME = "cover-prefetch"
 
-        /** Restarts the prefetch, so covers of games added since the last run are included. */
-        fun enqueue(workManager: WorkManager) {
+        /**
+         * Restarts the prefetch, so covers of games added since the last run are included. With
+         * [wifiOnly] ("Only on Wi-Fi") it waits for an unmetered network, as the refresh does.
+         */
+        fun enqueue(workManager: WorkManager, wifiOnly: Boolean) {
             val request = OneTimeWorkRequestBuilder<CoverPrefetchWorker>()
                 .setConstraints(
-                    Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).setRequiresStorageNotLow(true).build(),
+                    Constraints.Builder()
+                        .setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
+                        .setRequiresStorageNotLow(true)
+                        .build(),
                 )
                 .build()
             workManager.enqueueUniqueWork(UNIQUE_NAME, ExistingWorkPolicy.REPLACE, request)

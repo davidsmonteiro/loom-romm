@@ -69,7 +69,7 @@ data class Settings(
     /** Null until a background save sync has run. */
     val lastSaveSync: SaveSyncOutcome? = null,
     val catalogRefresh: CatalogRefresh = CatalogRefresh.DEFAULT,
-    /** Background refreshes wait for an unmetered network. */
+    /** Background refreshes and cover fetches wait for an unmetered network. */
     val refreshOnWifiOnly: Boolean = false,
 )
 

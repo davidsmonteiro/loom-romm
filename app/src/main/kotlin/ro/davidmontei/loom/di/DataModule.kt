@@ -1,6 +1,7 @@
 package ro.davidmontei.loom.di
 
 import android.content.Context
+import android.net.ConnectivityManager
 import androidx.room.Room
 import androidx.work.WorkManager
 import dagger.Module
@@ -24,6 +25,8 @@ import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
+import ro.davidmontei.loom.net.CoverNetwork
+import ro.davidmontei.loom.net.onUnmeteredNetwork
 import kotlinx.coroutines.CoroutineScope
 import okhttp3.OkHttpClient
 import java.io.File
@@ -54,9 +57,20 @@ object DataModule {
     @Provides @Singleton
     fun afterCatalogSync(installs: InstallManager): AfterCatalogSync = AfterCatalogSync { installs.reconcile() }
 
+    /** Whether covers may be fetched now: "Only on Wi-Fi" holds them back on a metered network. */
     @Provides @Singleton
-    fun coverStore(@ApplicationContext context: Context, @ApiHttp http: OkHttpClient, @AppScope scope: CoroutineScope) =
-        CoverStore(File(context.cacheDir, "cover-thumbs"), http, scope)
+    fun coverNetwork(@ApplicationContext context: Context, settings: SettingsStore): CoverNetwork {
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        return CoverNetwork(settings) { connectivity?.onUnmeteredNetwork() == true }
+    }
+
+    @Provides @Singleton
+    fun coverStore(
+        @ApplicationContext context: Context,
+        @ApiHttp http: OkHttpClient,
+        @AppScope scope: CoroutineScope,
+        network: CoverNetwork,
+    ) = CoverStore(File(context.cacheDir, "cover-thumbs"), http, scope, network::allowed)
 
     @Provides @Singleton
     fun catalogSyncScheduler(workManager: WorkManager) = CatalogSyncScheduler(workManager)

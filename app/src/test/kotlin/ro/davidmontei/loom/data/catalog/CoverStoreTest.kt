@@ -231,4 +231,63 @@ class CoverStoreTest {
         store.prefetch(server.url("/"), listOf(small), stopped = { true })
         assertThat(requested).isEmpty()
     }
+
+    /** "Only on Wi-Fi" on a metered network: [held] says covers can't be fetched now. */
+    @Volatile private var held = false
+    private val heldStore by lazy { CoverStore(dir, OkHttpClient(), scope) { !held } }
+
+    @Test fun noCoverIsFetchedWhileFetchingIsHeld() = runBlocking<Unit> {
+        cover(small, 240, 360)
+        cover(large, 600, 900)
+        held = true
+        assertThat(heldStore.get(server.url("/"), small, large)).isNull()
+        assertThat(heldStore.forDrawing(CoverRef(small, server.url("/"), large))).isNull()
+        heldStore.prefetch(server.url("/"), listOf(small))
+        assertThat(requested).isEmpty()
+        assertThat(heldStore.plain(small)).isNull()
+    }
+
+    @Test fun aCoverAlreadyKeptStillShowsWhileFetchingIsHeld() = runBlocking<Unit> {
+        cover(large, 600, 900)
+        val sharp = heldStore.get(server.url("/"), small, large)!!
+        val plain = plainThumbnail(smallOf(2))
+        held = true
+        assertThat(heldStore.forDrawing(CoverRef(small, server.url("/"), large))).isEqualTo(sharp)
+        assertThat(heldStore.forDrawing(CoverRef(smallOf(2), server.url("/"), largeOf(2)))).isEqualTo(plain)
+        assertThat(requested).hasSize(1) // only the one fetched before
+    }
+
+    /** It isn't given up on either: drawn again once covers can be fetched, it is sharpened then. */
+    @Test fun aPlainCoverIsntSharpenedWhileFetchingIsHeld() = runBlocking<Unit> {
+        cover(large, 600, 900)
+        val plain = plainThumbnail(small)
+        held = true
+        val sharpenedWhileHeld = CountDownLatch(1)
+        assertThat(heldStore.forDrawing(CoverRef(small, server.url("/"), large)) { sharpenedWhileHeld.countDown() }).isEqualTo(plain)
+        assertThat(sharpenedWhileHeld.await(300, TimeUnit.MILLISECONDS)).isFalse()
+        assertThat(requested).isEmpty()
+        assertThat(heldStore.file(small).exists()).isFalse()
+
+        held = false
+        val sharpened = CountDownLatch(1)
+        assertThat(heldStore.forDrawing(CoverRef(small, server.url("/"), large)) { sharpened.countDown() }).isEqualTo(plain)
+        assertThat(sharpened.await(5, TimeUnit.SECONDS)).isTrue()
+        assertThat(heldStore.file(small).exists()).isTrue()
+    }
+
+    /** Turned on mid-prefetch, on mobile data: the prefetch stops at the next batch. */
+    @Test fun prefetchStopsOnceFetchingIsHeld() = runBlocking<Unit> {
+        (1..4).forEach { cover(smallOf(it), 240, 360) }
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                requested += request.url.encodedPath
+                held = true
+                return MockResponse.Builder().setHeader("Content-Type", "image/png").body(Buffer().write(png(240, 360))).build()
+            }
+        }
+        heldStore.prefetch(server.url("/"), (1..4).map(::smallOf), parallelism = 1)
+        assertThat(requested).containsExactly("/assets/romm/resources/roms/18/1/cover/small.png")
+        assertThat(heldStore.plain(smallOf(1))).isNotNull()
+        assertThat((2..4).none { heldStore.plain(smallOf(it)) != null }).isTrue()
+    }
 }

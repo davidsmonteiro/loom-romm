@@ -395,7 +395,7 @@ private fun LibrarySyncSection(
         }
     }
     LoomSwitchRow("Only on Wi-Fi", state.settings?.refreshOnWifiOnly == true, actions::setRefreshOnWifiOnly,
-        subtitle = "Not over mobile data or a phone's hotspot.")
+        subtitle = "Refreshes and new covers wait for Wi-Fi, not mobile data or a phone's hotspot. Covers already on the Thor still show.")
     SectionHeader("Last sync")
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
