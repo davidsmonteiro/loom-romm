@@ -202,18 +202,36 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
         }
         val hash = hashOf(bytes)
         if (slot != null && !overwrite) {
-            saves.firstOrNull { it.romId == romId && it.slot == slot && it.hash == hash }?.let { return ok(json(it)) }
+            saves.firstOrNull { it.romId == romId && it.slot == slot && it.hash == hash }?.let { matched ->
+                // 5.3.1 answers the matched version as it is, recording nothing. 5.4.0 makes it the
+                // slot's newest unless it already is (`promote_to_slot_head`), and records the device.
+                if (is54) {
+                    val head = head(romId)!!
+                    if (matched !== head) {
+                        clock = clock.plusSeconds(1)
+                        matched.updatedAt = maxOf(clock, head.updatedAt.plusSeconds(1))
+                    }
+                    if (device != null) recordSync(device, matched, url.queryParameter("content_hash"))
+                }
+                return ok(json(matched))
+            }
         }
         clock = clock.plusSeconds(1)
         val stored = if (slot != null) "${fileName.substringBeforeLast('.')} [$clock].${fileName.substringAfterLast('.')}" else fileName
         val save = Save(nextId++, romId, stored, slot, url.queryParameter("emulator"), bytes, hash, clock, device)
         saves += save
-        if (device != null) syncRows[device to save.id] = save.updatedAt
+        if (device != null) recordSync(device, save, url.queryParameter("content_hash"))
         if (slot != null && url.queryParameter("autocleanup") == "true") {
             val keep = url.queryParameter("autocleanup_limit")!!.toInt()
             saves.filter { it.romId == romId && it.slot == slot }.sortedByDescending { it.updatedAt }.drop(keep).forEach { saves.remove(it) }
         }
         return ok(json(save))
+    }
+
+    /** The device's sync row for [save]; 5.4.0 also keeps the hash the device sent as its baseline (`_record_device_sync`). */
+    private fun recordSync(device: String, save: Save, sentHash: String?) {
+        syncRows[device to save.id] = save.updatedAt
+        if (is54) syncHashes[device to save.id] = sentHash
     }
 
     private fun list(request: RecordedRequest): MockResponse {

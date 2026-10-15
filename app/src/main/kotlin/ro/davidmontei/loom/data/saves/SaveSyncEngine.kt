@@ -171,8 +171,8 @@ fun conflictReason(decision: String): String = when (decision) {
  * any disagreement becomes a save conflict.
  *
  * Safety rules, all enforced here:
- * - Runs never overlap: one process-wide lock, because negotiate cancels the device's other
- *   sessions (and two runs could act on one save).
+ * - Runs never overlap: one process-wide lock, because two runs could act on one save (and RomM
+ *   before 5.4.0 cancels the device's other sessions when it negotiates).
  * - A save is uploaded only after a quiet minute and two equal hashes a few seconds apart.
  * - A local save is replaced only after a checked backup, and only atomically ([SaveRestorer]).
  *   Downloads happen only when asked for ([SaveSyncRequest.downloads], a resolution).
@@ -657,9 +657,9 @@ class SaveSyncEngine(
 
     /**
      * Uploads [file], the unit's archive hashing as [hash], to the slot. Without [overwrite], RomM
-     * may answer with an older version holding the same bytes (it then makes no new head): Loom
-     * uploads again with `overwrite`, deliberately making those bytes the newest, since the Thor
-     * went back to them.
+     * may answer with an older version holding the same bytes. RomM 5.4.0 makes that version the
+     * newest itself; older RomMs make no new head, so Loom uploads again with `overwrite`,
+     * deliberately making those bytes the newest, since the Thor went back to them.
      */
     private suspend fun uploadSlotted(
         api: RommApi, deviceId: String, sessionId: Int?, save: ResolvedSave.Ready, file: File, hash: String, head: ServerHead?, overwrite: Boolean,
@@ -674,7 +674,7 @@ class SaveSyncEngine(
         if (!overwrite && head != null && saved.id == head.saveId) {
             // The head itself holds these bytes; RomM just has no record that this device has it.
             rommCall { api.confirmSaveDownloaded(saved.id, SaveDownloadedRequest(deviceId, hash)) }
-        } else if (!overwrite && head != null && !isNewHead(saved, head)) {
+        } else if (!overwrite && head != null && !isNewHead(saved, head, hash)) {
             saved = send(overwrite = true)
         }
         writeBaseline(save, hash, saved.id, saved.contentHash, saved.updatedAtInstant())
@@ -847,9 +847,15 @@ class SaveSyncEngine(
     private fun SaveDto.updatedAtInstant(): Instant =
         RommTime.parse(updatedAt) ?: throw RommException.Protocol("RomM sent an unreadable time for save $id")
 
-    /** Whether an upload's answer is a new slot head, not an older version RomM matched by hash. */
-    private fun isNewHead(saved: SaveDto, head: ServerHead): Boolean =
-        saved.id > head.saveId && !saved.updatedAtInstant().isBefore(head.updatedAt)
+    /**
+     * Whether an upload's answer of bytes hashing as [hash] is the slot's new head: a new version,
+     * or (RomM 5.4.0) an older one holding those bytes that RomM made the newest, a second past the
+     * head at least. Older RomMs answer that version as it was, never newer than the head.
+     */
+    private fun isNewHead(saved: SaveDto, head: ServerHead, hash: String): Boolean {
+        val at = saved.updatedAtInstant()
+        return (saved.id > head.saveId && !at.isBefore(head.updatedAt)) || (saved.contentHash == hash && at.isAfter(head.updatedAt))
+    }
 
     /**
      * Why RomM's save can't go in place of the Thor's: it holds other folders. For a Switch game
@@ -906,5 +912,5 @@ class SaveSyncEngine(
     }
 }
 
-/** Every sync run in the process takes this lock: negotiate cancels the device's other sessions. */
+/** Every sync run in the process takes this lock: two runs could act on one save. */
 private val SAVE_SYNC_LOCK = Mutex()

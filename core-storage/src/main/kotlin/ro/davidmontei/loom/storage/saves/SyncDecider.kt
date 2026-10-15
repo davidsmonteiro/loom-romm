@@ -8,7 +8,8 @@ const val SAVE_SLOT = "autosave"
 
 /**
  * What Loom recorded the last time a game's slot was in sync on this device: the three-way base
- * RomM 5.3.1 doesn't keep. Written after every upload, download and adopt.
+ * RomM doesn't keep per slot (5.4.0 keeps one per save version, lost once another client uploads
+ * a newer one). Written after every upload, download and adopt.
  */
 data class SaveBaseline(
     /** Loom's hash of the local save unit right after that sync. */
@@ -109,11 +110,11 @@ enum class SyncDecision(val outcome: SyncOutcome) {
 }
 
 /**
- * Loom's own sync rule for one game's slot (design §3). RomM 5.3.1's negotiate pairs on timestamps
- * when the device has no sync row for the slot head, which happens whenever another device or the
- * web player uploaded last; it can then answer `download` over unsynced local progress. So Loom
- * decides from its baseline and content hashes, and when negotiate asks for anything else, the
- * game becomes a conflict for the user to settle.
+ * Loom's own sync rule for one game's slot (design §3). RomM's negotiate (5.4.0's too) pairs on
+ * timestamps when the device has no sync row for the slot head, which happens whenever another
+ * device or the web player uploaded last; it can then answer `download` over unsynced local
+ * progress. So Loom decides from its baseline and content hashes, and when negotiate asks for
+ * anything else, the game becomes a conflict for the user to settle.
  */
 object SyncDecider {
     /**
@@ -164,7 +165,7 @@ object SyncDecider {
                 else -> SyncDecision.NEW_ON_SERVER
             }
         }
-        // 5.3.1 has no tombstones: uploading would quietly re-create what someone deleted.
+        // Someone emptied the slot on RomM: uploading would quietly re-create what they deleted.
         if (server == null) return SyncDecision.SERVER_SLOT_GONE
         val localChanged = local != base.localHash
         // The web player rewrites its row in place, so the hash counts as much as the id.

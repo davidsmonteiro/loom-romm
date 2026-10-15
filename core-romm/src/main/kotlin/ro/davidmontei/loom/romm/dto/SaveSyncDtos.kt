@@ -27,7 +27,11 @@ data class ClientSaveStateDto(
     @SerialName("file_size_bytes") val fileSizeBytes: Long,
 )
 
-/** `SyncNegotiatePayload`. Negotiating cancels this device's other open sync sessions. */
+/**
+ * `SyncNegotiatePayload`. RomM 5.4.0's `emulators` is left out on purpose: with it, RomM pairs
+ * each slot with the newest save of those emulators only, not the slot's newest, so a newer save
+ * from another app would never reach Loom's own rule. Its `restore_unlisted` stays false.
+ */
 @Serializable
 data class SyncNegotiateRequest(
     /** Falls back to the device the token is bound to. */

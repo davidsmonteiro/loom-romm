@@ -129,6 +129,35 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(saves.baseline(7, "autosave")!!.serverSaveId).isEqualTo(head.id)
     }
 
+    /** RomM 5.4.0 makes the older version holding those bytes the newest itself: one upload, and that version is the head. */
+    @Test fun bytesRomm54HasInAnOlderVersionArePromotedNotSentAgain() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        val first = writeSave(pokemonX, bytes(1), minutesAgo = 30)
+        engine().sync(SaveSyncRequest.PUSH)
+        val older = romm.head(7)!!
+        writeSave(pokemonX, bytes(2), minutesAgo = 20)
+        engine().sync(SaveSyncRequest.PUSH)
+        writeSave(pokemonX, bytes(1), minutesAgo = 10)
+
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(7)
+
+        val uploads = romm.uploads()
+        assertThat(uploads).hasSize(3)
+        assertThat(uploads[2].url.queryParameter("overwrite")).isEqualTo("false")
+        val head = romm.head(7)!!
+        assertThat(head.id).isEqualTo(older.id)
+        assertThat(head.hash).isEqualTo(first)
+        val baseline = saves.baseline(7, "autosave")!!
+        assertThat(baseline.serverSaveId).isEqualTo(older.id)
+        assertThat(baseline.serverUpdatedAt).isEqualTo(head.updatedAt.toString())
+        assertThat(romm.syncHashes["dev-thor" to older.id]).isEqualTo(first)
+
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).isEmpty()
+        assertThat(romm.uploads()).hasSize(3)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
     @Test fun aSaveWrittenMomentsAgoWaitsForAQuietMinute() = runBlocking<Unit> {
         install(pokemonX)
         writeSave(pokemonX, bytes(1), minutesAgo = 0)
@@ -579,7 +608,7 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
 
     // --- runs ---
 
-    /** Negotiate cancels the device's other sessions: two runs must never be open at once. */
+    /** Two runs could act on one save, and RomM before 5.4.0 cancels the device's other sessions: one run at a time. */
     @Test fun runsNeverOverlap() = runBlocking<Unit> {
         install(pokemonX)
         writeSave(pokemonX, bytes(1))
