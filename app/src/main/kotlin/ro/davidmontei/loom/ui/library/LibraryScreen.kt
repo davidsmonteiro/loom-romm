@@ -10,6 +10,7 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -425,7 +426,8 @@ private fun FolderQuestionDialog(q: FolderQuestion, actions: LibraryActions) {
                 runCatching { suggested.requestFocus() }
             }
             LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
+                // Two on a narrow screen, so folder names aren't cut short.
+                columns = GridCells.Fixed(if (rememberLoomLayout().compact) 2 else 3),
                 state = grid,
                 modifier = Modifier.fillMaxWidth().heightIn(max = 168.dp).testTag("folder-options"),
                 contentPadding = PaddingValues(4.dp),
@@ -774,6 +776,8 @@ private fun GameDialog(
             runCatching { firstButton.requestFocus() }
         }
     }
+    // On a narrow screen the buttons take the dialog's width: how the look goes is said under the save's line.
+    val compact = rememberLoomLayout().compact
     LoomDialog(
         title = game.title,
         onDismiss = onDismiss,
@@ -804,10 +808,17 @@ private fun GameDialog(
             game.progress?.let { LoomProgressBar(it) }
             game.save?.let { save ->
                 Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                    Text(saveLine(save), style = MaterialTheme.typography.bodyLarge, color = saveColor(save), maxLines = 2,
+                    // A line more on a narrow screen, so the reason a folder is asked for is there in full.
+                    Text(saveLine(save), style = MaterialTheme.typography.bodyLarge, color = saveColor(save), maxLines = if (compact) 3 else 2,
                         overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("save-line"))
+                    // A line kept for it while the save is looked at, so its words coming and going move nothing.
+                    if (compact && looksAtSave) {
+                        Text(lookLine(save.look), style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = 2,
+                            overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("save-look"))
+                    }
                     if (saveActions.isNotEmpty()) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                        // On one line where they fit, as on the Thor's top screen; wrapped on a narrower one.
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalArrangement = Arrangement.spacedBy(Space.s)) {
                             saveActions.forEach { action ->
                                 LoomButton(action.label, action.onClick,
                                     Modifier.onFocusChanged { if (it.isFocused) focusedSaveAction = action.label })
@@ -826,8 +837,10 @@ private fun GameDialog(
             val (main, other) = detailsButtons(game, onDismiss, onDownload, onOffload, onRetry, onCancel)
             // How the look at the save is going, left of the buttons, which set the row's height:
             // its words coming and going move nothing.
-            Text(lookLine(game.save?.look), style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = 2,
-                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).align(Alignment.CenterVertically).testTag("save-look"))
+            if (!compact) {
+                Text(lookLine(game.save?.look), style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = 2,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).align(Alignment.CenterVertically).testTag("save-look"))
+            }
             val notASave = Modifier.onFocusChanged { if (it.isFocused) focusedSaveAction = null }
             LoomButton(main.label, main.onClick, Modifier.focusRequester(first).focusRequester(firstButton).then(notASave), primary = main.primary)
             other?.let { LoomButton(it.label, it.onClick, notASave, destructive = it.destructive) }

@@ -40,6 +40,7 @@ import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.StatusBadge
 import ro.davidmontei.loom.ui.components.ago
 import ro.davidmontei.loom.ui.components.dateTime
+import ro.davidmontei.loom.ui.layout.rememberLoomLayout
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 import java.time.Instant
@@ -212,9 +213,19 @@ internal fun ConflictDialog(item: ConflictItem, onAnswer: (ConflictChoice) -> Un
         maxWidth = if (onChangeFolder != null) Dp.Unspecified else 680.dp,
         body = {
             Text(item.reason, style = MaterialTheme.typography.bodyLarge, color = LoomColors.TextMuted)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
-                SaveSide("On the Thor", thorSide(item), Modifier.weight(1f).testTag("thor-side"))
-                SaveSide("On RomM", serverSide(item), Modifier.weight(1f).testTag("server-side"))
+            if (rememberLoomLayout().compact) {
+                // Too narrow for the sides beside each other: one under the other, a line or two each, as in the queue's row.
+                Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                    Text("Thor: ${sideLine(thorSide(item))}", style = MaterialTheme.typography.bodyMedium.tabular(), color = LoomColors.Text,
+                        modifier = Modifier.testTag("thor-side"))
+                    Text("RomM: ${sideLine(serverSide(item))}", style = MaterialTheme.typography.bodyMedium.tabular(), color = LoomColors.Text,
+                        modifier = Modifier.testTag("server-side"))
+                }
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
+                    SaveSide("On the Thor", thorSide(item), Modifier.weight(1f).testTag("thor-side"))
+                    SaveSide("On RomM", serverSide(item), Modifier.weight(1f).testTag("server-side"))
+                }
             }
             Text(
                 "Keep both uploads the Thor's save to RomM as a separate copy, then takes RomM's. Skip leaves both as they are." +

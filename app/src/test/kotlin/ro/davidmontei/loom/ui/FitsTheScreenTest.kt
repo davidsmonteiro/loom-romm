@@ -239,11 +239,32 @@ class FitsTheScreenTest {
         assertThat(overflow("Files to download")).isEqualTo(0f)
     }
 
+    /** Whether every node holding [texts] lies wholly on the screen: buttons that wrap must not wrap off it. */
+    private fun onScreen(vararg texts: String) {
+        val root = rule.onRoot().fetchSemanticsNode().boundsInRoot
+        for (text in texts) {
+            val bounds = rule.onNodeWithText(text).fetchSemanticsNode().boundsInRoot
+            assertWithMessage(text).that(bounds.left).isAtLeast(root.left)
+            assertWithMessage(text).that(bounds.right).isAtMost(root.right)
+            assertWithMessage(text).that(bounds.top).isAtLeast(root.top)
+            assertWithMessage(text).that(bounds.bottom).isAtMost(root.bottom)
+        }
+    }
+
     /**
      * A 3DS game's details at their tallest: a title and install path long enough to wrap, the
      * save's line at its longest, and a row of save buttons above the dialog's own.
      */
-    @Test fun aGamesDetailsWithItsSaveFit() {
+    @Test fun aGamesDetailsWithItsSaveFit() = aGamesDetailsWithItsSaveFit("library-details-save")
+
+    /** The same on the bottom screen: the dialog takes its width, and the look's words go under the save's line. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun aGamesDetailsWithItsSaveFitTheBottomScreen() {
+        aGamesDetailsWithItsSaveFit("library-details-save-bottom-screen")
+        onScreen("Upload save", "Close", "Remove from device")
+    }
+
+    private fun aGamesDetailsWithItsSaveFit(screenshot: String) {
         val title = "Pokémon Omega Ruby (USA) (En,Ja,Fr,De,Es,It,Ko) (Rev 2) [Special Demo Edition]"
         val game = GameItem(30, title, 3_900_000_000, null, listOf("USA"), InstallState.INSTALLED, null, null, null, adopted = true,
             removedOnServer = false, installPath = "n3ds/$title.3ds", save = GameSave(true, SaveSyncState.SERVER_NEWER, null, "azahar"))
@@ -252,23 +273,35 @@ class FitsTheScreenTest {
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
         rule.onNodeWithTag("game-30").performClick()
         assertThat(overflow(title)).isEqualTo(0f)
-        rule.saveScreenshot("library-details-save")
+        rule.saveScreenshot(screenshot)
         val failed = GameSave(true, SaveSyncState.ERROR, "Couldn't read the save: /storage/6365-3230/ROMs/n3ds/sdmc/Nintendo 3DS/" +
             "00000000000000000000000000000000/00000000000000000000000000000000/title/00040000/0011c400/data (Permission denied)", "azahar")
         state = state.copy(games = listOf(game.copy(save = failed)))
         assertThat(overflow(title)).isEqualTo(0f)
-        // A look that couldn't ask RomM says so in full beside the buttons.
+        // A look that couldn't ask RomM says so in full beside the buttons (under the save's line on a narrow screen).
         state = state.copy(games = listOf(game.copy(save = failed.copy(look = SaveLook.ThorOnly("RomM rejected Loom's token")))))
         assertThat(overflow(title)).isEqualTo(0f)
-        assertThat(cutShort("checked the Thor's side only")).isFalse()
-        rule.saveScreenshot("library-details-save-look")
+        // In full: on one line, a text shorter than its room can report a width overflow it doesn't have.
+        assertThat(ellipsized("checked the Thor's side only")).isFalse()
+        rule.saveScreenshot("$screenshot-look")
     }
 
     /**
      * A Switch game's details at their tallest: a long title and path, the folder question's line
      * at its longest, then a chosen folder with all three save buttons in one row.
      */
-    @Test fun aSwitchGamesDetailsWithItsSaveFit() {
+    @Test fun aSwitchGamesDetailsWithItsSaveFit() = aSwitchGamesDetailsWithItsSaveFit("library-details-switch")
+
+    /** On the bottom screen the three save buttons wrap, all of them on the screen. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun aSwitchGamesSaveButtonsWrapOnTheBottomScreen() {
+        aSwitchGamesDetailsWithItsSaveFit("library-details-switch-bottom-screen")
+        onScreen("Upload save", "Restore server save", "Change save folder", "Close", "Remove from device")
+        val saveButtons = listOf("Upload save", "Restore server save", "Change save folder").map { rule.onNodeWithText(it).fetchSemanticsNode().boundsInRoot.top }
+        assertThat(saveButtons.distinct().size).isGreaterThan(1)
+    }
+
+    private fun aSwitchGamesDetailsWithItsSaveFit(screenshot: String) {
         val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"
         val ask = GameSave(true, SaveSyncState.NEEDS_FOLDER, EdenSaves.WRONG_KEY, "eden")
         val game = GameItem(40, title, 16_300_000_000, null, listOf("World"), InstallState.INSTALLED, null, null, null, adopted = true,
@@ -279,11 +312,11 @@ class FitsTheScreenTest {
         rule.onNodeWithTag("game-40").performClick()
         assertThat(overflow(title)).isEqualTo(0f)
         assertThat(cutShort(EdenSaves.WRONG_KEY)).isFalse()
-        rule.saveScreenshot("library-details-switch-folder")
+        rule.saveScreenshot("$screenshot-folder")
         // Missing on the Thor, with automatic upload off: Upload save, Restore server save and Change save folder.
         state = state.copy(games = listOf(game.copy(save = GameSave(true, SaveSyncState.LOCAL_MISSING, null, "eden", autoUpload = false, folderChosen = true))))
         assertThat(overflow(title)).isEqualTo(0f)
-        rule.saveScreenshot("library-details-switch-buttons")
+        rule.saveScreenshot("$screenshot-buttons")
     }
 
     /** Which Eden save folder is a game's: the explanation in full, and the folders in a list of their own. */
@@ -340,7 +373,16 @@ class FitsTheScreenTest {
     }
 
     /** The same, for a Switch game whose save folder the user picked: Change save folder fits beside the answers. */
-    @Test fun theSaveConflictChoiceWithChangeSaveFolderFits() {
+    @Test fun theSaveConflictChoiceWithChangeSaveFolderFits() = theSaveConflictChoiceWithChangeSaveFolderFits("queue-conflict-choice-change-folder")
+
+    /** On the bottom screen the five buttons wrap, every one of them on the screen. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theSaveConflictChoiceFitsTheBottomScreen() {
+        theSaveConflictChoiceWithChangeSaveFolderFits("queue-conflict-choice-bottom-screen")
+        onScreen("Change save folder", "Skip", "Keep Thor", "Keep server", "Keep both")
+    }
+
+    private fun theSaveConflictChoiceWithChangeSaveFolderFits(screenshot: String) {
         val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"
         val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = conflictReason(SyncDecision.SERVER_WENT_BACK.name),
             serverEmulator = "eden", emulator = "eden", serverDevice = "AYN Odin 2 Portal (Argosy)", folderChosen = true)
@@ -350,7 +392,7 @@ class FitsTheScreenTest {
         rule.onNodeWithText("Change save folder").assertExists()
         assertThat(overflow("$title: which save to keep?")).isEqualTo(0f)
         assertThat(cutShort("Change save folder picks again.")).isFalse()
-        rule.saveScreenshot("queue-conflict-choice-change-folder")
+        rule.saveScreenshot(screenshot)
     }
 
     /** The editor with arcade's other folders under the field, and what the card holds of each. */
@@ -508,7 +550,16 @@ class FitsTheScreenTest {
     }
 
     /** The question at a platform's first download, with its few options and with every folder of the Thor's ES-DE template. */
-    @Test fun theFolderQuestionFits() {
+    @Test fun theFolderQuestionFits() = theFolderQuestionFits("library-folder-question")
+
+    /** On a phone, two folders to a row, each name in full. */
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun theFolderQuestionFitsAPhone() {
+        theFolderQuestionFits("library-folder-question-phone")
+        onScreen("Cancel")
+    }
+
+    private fun theFolderQuestionFits(screenshot: String) {
         val options = listOf(SystemFolder("mame", 0, "Multiple Arcade Machine Emulator"), SystemFolder("arcade", 2, "Arcade"),
             SystemFolder("fbneo", 5, "FinalBurn Neo"), SystemFolder("fba", 0, "FinalBurn Alpha"))
         val game = GameItem(1, "Alley Master", 101_385, null, emptyList(), InstallState.NOT_INSTALLED, null, null, null, false, false, null)
@@ -516,7 +567,11 @@ class FitsTheScreenTest {
         var state by mutableStateOf(LibraryScreenTest().state.copy(folderQuestion = question))
         rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
         assertThat(overflow("Where does Cocoon look for Arcade games?")).isEqualTo(0f)
-        rule.saveScreenshot("library-folder-question")
+        for (folder in options) {
+            assertWithMessage(folder.name).that(ellipsized("${folder.name}/")).isFalse()
+            assertWithMessage(folder.name).that(lineCount("${folder.name}/")).isEqualTo(1)
+        }
+        rule.saveScreenshot(screenshot)
         state = state.copy(folderQuestion = question.copy(allFolders = (1..178).map { SystemFolder("system$it", 0, "Some System $it") }))
         assertThat(overflow("Where does Cocoon look for Arcade games?")).isEqualTo(0f)
     }

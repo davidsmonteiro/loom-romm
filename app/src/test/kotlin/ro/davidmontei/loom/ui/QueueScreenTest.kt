@@ -1,10 +1,16 @@
 package ro.davidmontei.loom.ui
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -13,6 +19,7 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -25,6 +32,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.data.db.RecentInstall
 import ro.davidmontei.loom.data.saves.ConflictChoice
 import ro.davidmontei.loom.storage.engine.JobPhase
@@ -497,6 +505,34 @@ class QueueScreenTest {
         press(Key.DirectionCenter)
         assertThat(calls).containsExactly("askSaveFolder:30:eden")
         rule.onNodeWithText("Super Mario Bros Wonder: which save to keep?").assertDoesNotExist()
+    }
+
+    /**
+     * On the bottom screen the five buttons wrap onto two lines: the pad still reaches every one. Native
+     * graphics measure the words as on the device, so they wrap as there; such a window starts in touch
+     * mode, so the pad's keyboard mode is provided.
+     */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test fun everyConflictAnswerIsReachableWhenTheyWrap() {
+        state = sample.copy(conflicts = listOf(wonder))
+        val pad = object : InputModeManager {
+            override val inputMode get() = InputMode.Keyboard
+            override fun requestInputMode(inputMode: InputMode) = inputMode == InputMode.Keyboard
+        }
+        rule.setContent { CompositionLocalProvider(LocalInputModeManager provides pad) { LoomTestTheme { QueueContent(state, actions) } } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        press(Key.DirectionCenter)
+        val tops = listOf("Skip", "Keep both").map { rule.onNodeWithText(it).fetchSemanticsNode().boundsInRoot.top }
+        assertThat(tops.distinct()).hasSize(2) // two lines of buttons
+        rule.onNodeWithText("Skip").assertIsFocused()
+        val reached = mutableSetOf<String>()
+        for (key in listOf(Key.DirectionRight, Key.DirectionDown, Key.DirectionLeft, Key.DirectionUp, Key.DirectionLeft, Key.DirectionLeft)) {
+            press(key)
+            rule.onAllNodes(isFocused()).fetchSemanticsNodes().single().config.getOrNull(SemanticsProperties.Text)?.let { reached += it.joinToString() }
+        }
+        assertThat(reached).containsAtLeast("Change save folder", "Keep Thor", "Keep server", "Keep both")
+        assertThat(calls).isEmpty() // moving answers nothing
     }
 
     @Test fun onlyAPickedSaveFolderIsOfferedThere() {

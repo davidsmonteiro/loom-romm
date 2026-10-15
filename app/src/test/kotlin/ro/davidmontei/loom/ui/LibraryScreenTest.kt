@@ -11,6 +11,7 @@ import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextContains
@@ -34,6 +35,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.PlatformSummary
@@ -795,6 +797,34 @@ class LibraryScreenTest {
         rule.onNodeWithText("Restore server save").assertIsFocused()
         press(Key.DirectionCenter)
         rule.onNodeWithText("Restore Chrono Trigger's save from RomM?").assertExists()
+    }
+
+    /**
+     * On the bottom screen the details' buttons wrap onto lines of their own: the pad still reaches
+     * every one. Native graphics measure the words as on the device, so they wrap as there; such a
+     * window starts in touch mode, so the pad's keyboard mode is provided.
+     */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test fun everyDetailsButtonIsReachableWhenTheyWrap() {
+        state = withSave(1, eden(SaveSyncState.LOCAL_MISSING, chosen = true).copy(autoUpload = false))
+        val pad = object : InputModeManager {
+            override val inputMode get() = InputMode.Keyboard
+            override fun requestInputMode(inputMode: InputMode) = inputMode == InputMode.Keyboard
+        }
+        rule.setContent { CompositionLocalProvider(LocalInputModeManager provides pad) { LoomTestTheme { LibraryContent(state, actions) } } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Close").assertIsFocused()
+        val tops = listOf("Upload save", "Change save folder", "Close").map { rule.onNodeWithText(it).fetchSemanticsNode().boundsInRoot.top }
+        assertThat(tops.distinct()).hasSize(3) // three lines of buttons
+        val reached = mutableSetOf<String>()
+        for (key in listOf(Key.DirectionRight, Key.DirectionLeft, Key.DirectionUp, Key.DirectionUp, Key.DirectionLeft, Key.DirectionRight, Key.DirectionDown)) {
+            press(key)
+            rule.onAllNodes(isFocused()).fetchSemanticsNodes().single().config.getOrNull(SemanticsProperties.Text)?.let { reached += it.joinToString() }
+        }
+        assertThat(reached).containsAtLeast("Remove from device", "Upload save", "Restore server save", "Change save folder")
+        assertThat(calls.filterNot { it.startsWith("look") || it.startsWith("query") }).isEmpty() // moving does nothing
     }
 
     /** Loom uploaded the save by itself while Upload save had focus: the button goes, and focus stays in the details. */

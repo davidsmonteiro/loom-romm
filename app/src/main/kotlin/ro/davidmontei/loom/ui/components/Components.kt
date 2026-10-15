@@ -508,7 +508,8 @@ fun DialogHost(content: @Composable () -> Unit) {
  * everything else; focus is trapped inside; B closes it.
  *
  * [maxWidth] can be raised (to [Dp.Unspecified]: the screen's width) for a form that would
- * otherwise not fit the screen's height.
+ * otherwise not fit the screen's height. On a narrow screen every dialog takes its width, with
+ * narrower margins and a smaller title, and its buttons wrap onto another line rather than squeeze.
  */
 @Composable
 fun LoomDialog(
@@ -545,6 +546,7 @@ private fun DialogSurface(
     val first = remember { FocusRequester() }
     BackHandler(onBack = onDismiss)
     InitialFocus(first, delayMs = 0)
+    val compact = rememberLoomLayout().compact
     Box(
         Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
@@ -552,20 +554,28 @@ private fun DialogSurface(
     ) {
         Column(
             modifier
-                .widthIn(max = maxWidth)
-                .padding(Space.xl)
+                .then(if (compact) Modifier.fillMaxWidth() else Modifier.widthIn(max = maxWidth))
+                .padding(if (compact) Space.s else Space.xl)
                 .background(LoomColors.Surface, RoundedCornerShape(16.dp))
                 .border(1.dp, LoomColors.Outline, RoundedCornerShape(16.dp))
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
                 .focusProperties { onExit = { cancelFocusChange() } }
                 .focusGroup()
                 .verticalScroll(rememberScrollState())
-                .padding(Space.xl),
+                .padding(if (compact) Space.l else Space.xl),
             verticalArrangement = Arrangement.spacedBy(Space.l),
         ) {
-            Text(title, style = MaterialTheme.typography.titleLarge)
+            Text(title, style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge)
             body()
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.m, Alignment.End)) { buttons(first) }
+            if (compact) {
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Space.m, Alignment.End),
+                    verticalArrangement = Arrangement.spacedBy(Space.s),
+                ) { buttons(first) }
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.m, Alignment.End)) { buttons(first) }
+            }
         }
     }
 }
