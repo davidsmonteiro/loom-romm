@@ -119,8 +119,8 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Pad A/B become confirm/back before Compose sees them, a pad button never falls back to
-     * another key (see [GamepadKeys]), and a press made in touch mode waits for focus (see
-     * [TouchModePress]).
+     * another key, the Shift AYN sends on a focus-mode change is dropped (see [GamepadKeys]), and
+     * a press made in touch mode waits for focus (see [TouchModePress]).
      *
      * Lint flags these because androidx.core re-declares the platform method as
      * library-restricted; it is the public Activity.dispatchKeyEvent.

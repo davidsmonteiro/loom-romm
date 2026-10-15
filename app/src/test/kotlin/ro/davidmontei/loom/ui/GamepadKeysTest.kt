@@ -1,5 +1,7 @@
 package ro.davidmontei.loom.ui
 
+import android.view.InputDevice
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
@@ -53,5 +55,30 @@ class GamepadKeysTest {
         assertThat(usedWhenNothingTakesIt(KeyEvent.KEYCODE_BUTTON_START)).isTrue()
         assertThat(usedWhenNothingTakesIt(KeyEvent.KEYCODE_BUTTON_MODE)).isFalse() // Home keeps its fallback
         assertThat(usedWhenNothingTakesIt(KeyEvent.KEYCODE_DPAD_DOWN)).isFalse() // Android still moves focus
+    }
+
+    private fun rightShift(action: Int, deviceId: Int) =
+        KeyEvent(0, 0, action, KeyEvent.KEYCODE_SHIFT_RIGHT, 0, 0, deviceId, 0, 0, InputDevice.SOURCE_KEYBOARD)
+
+    /** AYN runs `input keyevent 60` at every focus-mode change: a right Shift from the virtual keyboard. */
+    @Test fun theRightShiftAynSendsOnAFocusModeChangeIsDropped() {
+        val delivered = mutableListOf<KeyEvent>()
+        for (action in listOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
+            val used = GamepadKeys.dispatch(rightShift(action, KeyCharacterMap.VIRTUAL_KEYBOARD), swapConfirmBack = false) {
+                delivered += it
+                false
+            }
+            assertThat(used).isTrue()
+        }
+        assertThat(delivered).isEmpty()
+    }
+
+    @Test fun aKeyboardsRightShiftStillReachesLoom() {
+        val delivered = mutableListOf<Int>()
+        GamepadKeys.dispatch(rightShift(KeyEvent.ACTION_DOWN, deviceId = 7), swapConfirmBack = false) {
+            delivered += it.keyCode
+            true
+        }
+        assertThat(delivered).containsExactly(KeyEvent.KEYCODE_SHIFT_RIGHT)
     }
 }
