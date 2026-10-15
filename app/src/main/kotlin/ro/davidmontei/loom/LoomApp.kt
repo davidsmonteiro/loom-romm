@@ -12,7 +12,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.catalog.CatalogRefreshScheduler
-import ro.davidmontei.loom.data.catalog.CatalogSyncScheduler
 import ro.davidmontei.loom.data.catalog.CoverFetcher
 import ro.davidmontei.loom.data.catalog.CoverKeyer
 import ro.davidmontei.loom.data.catalog.CoverStore
@@ -42,7 +41,6 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
     @Inject lateinit var refresh: CatalogRefreshScheduler
     @Inject lateinit var reachability: ReachabilityWatch
     @Inject lateinit var sendToDevice: SendToDevice
-    @Inject lateinit var catalogSync: CatalogSyncScheduler
     @Inject lateinit var credentials: CredentialStore
 
     /** Cover art comes only from the [CoverStore], which keeps its own files on disk. */
@@ -66,11 +64,11 @@ class LoomApp : Application(), Configuration.Provider, SingletonImageLoader.Fact
         // done, changed or cancelled with them. A settings file that can't be read leaves it as it was.
         scope.launch { runCatching { refresh.follow(settings.settings) } }
         // An upgrade that stores more of each game (RomM's summary and genres, say) fills it in for every
-        // game with one full sync, queued on the first open after it.
+        // game with one full sync, queued at the first start after it by the background refresh's rules.
         scope.launch {
             runCatching {
                 credentials.awaitLoaded()
-                catalogSync.syncAfterUpgrade(settings.snapshot(), paired = credentials.current.value != null)
+                refresh.syncAfterUpgrade(settings.snapshot(), paired = credentials.current.value != null)
             }
         }
         // Whether RomM can be reached, for the library's offline note: looked at again when a network

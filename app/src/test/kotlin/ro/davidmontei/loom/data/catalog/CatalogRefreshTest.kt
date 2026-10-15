@@ -15,6 +15,7 @@ import androidx.work.WorkerParameters
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.testing.WorkManagerTestInitHelper
+import androidx.work.workDataOf
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -292,29 +293,107 @@ class CatalogRefreshTest {
         assertThat(syncWork().single().state).isEqualTo(WorkInfo.State.ENQUEUED)
     }
 
-    /**
-     * Opened for the first time after an upgrade that stores more of each game (RomM's summary and
-     * genres): one sync is queued by itself, which the syncer makes a full one. Opened again before it
-     * ran, the one queued stays.
-     */
-    @Test fun theFirstOpenAfterAnUpgradeQueuesASync() = runBlocking<Unit> {
-        finishSetup()
+    private fun upgradeWork(): WorkInfo? = workManager.getWorkInfosForUniqueWork(CatalogRefreshWorker.UPGRADE_NAME).get().singleOrNull()
+
+    /** The catalog as an older Loom left it: rows without what this one stores. */
+    private suspend fun catalogFromBeforeTheUpgrade() =
         settings.setCatalogSynced("2026-10-07T09:30:00.000000+00:00", now, CatalogSyncer.CATALOG_FIELDS - 1)
-        assertThat(sync.syncAfterUpgrade(settings.snapshot(), paired = true)).isTrue()
-        val queued = syncWork().single()
+
+    /** The sync after an upgrade, as WorkManager runs what [CatalogRefreshScheduler.syncAfterUpgrade] queued. */
+    private fun upgradeWorker(runAttempts: Int = 0, wifiOnly: Boolean = false) = TestListenableWorkerBuilder<CatalogRefreshWorker>(context)
+        .setWorkerFactory(object : WorkerFactory() {
+            override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) =
+                CatalogRefreshWorker(appContext, workerParameters, settings, credentials, server, sync, ServerInfo(settings, sendToDevice))
+        })
+        .setInputData(workDataOf(CatalogRefreshWorker.KEY_UPGRADE to true, CatalogRefreshWorker.KEY_WIFI_ONLY to wifiOnly))
+        .setRunAttemptCount(runAttempts)
+        .build()
+
+    /**
+     * Started for the first time after an upgrade that stores more of each game (RomM's summary and
+     * genres): one sync is queued by itself, which the syncer makes a full one. Nobody asked for it, so it
+     * waits as the background refresh does, unless the battery is low, and as its own work: the library
+     * doesn't say "Syncing…" meanwhile. Started again before it ran, the one queued stays.
+     */
+    @Test fun theFirstStartAfterAnUpgradeQueuesASyncByTheRefreshsRules() = runBlocking<Unit> {
+        finishSetup()
+        catalogFromBeforeTheUpgrade()
+        assertThat(refresh.syncAfterUpgrade(settings.snapshot(), paired = true)).isTrue()
+        val queued = upgradeWork()!!
         assertThat(queued.state).isEqualTo(WorkInfo.State.ENQUEUED)
-        assertThat(sync.syncAfterUpgrade(settings.snapshot(), paired = true)).isTrue()
-        assertThat(syncWork().single().id).isEqualTo(queued.id)
+        assertThat(queued.constraints.requiredNetworkType).isEqualTo(NetworkType.CONNECTED)
+        assertThat(queued.constraints.requiresBatteryNotLow()).isTrue()
+        assertThat(syncWork()).isEmpty()
+        assertThat(refresh.syncAfterUpgrade(settings.snapshot(), paired = true)).isTrue()
+        assertThat(upgradeWork()!!.id).isEqualTo(queued.id)
+    }
+
+    /**
+     * Found by review: the sync after an upgrade, a full one, was queued for any network, so with "Only on
+     * Wi-Fi" on it could fetch the whole catalog over a phone's hotspot as soon as Loom was started there,
+     * even in the background. It waits for Wi-Fi as the refresh does.
+     */
+    @Test fun afterAnUpgradeOnlyOnWifiWaitsForAnUnmeteredNetwork() = runBlocking<Unit> {
+        finishSetup()
+        settings.setRefreshOnWifiOnly(true)
+        catalogFromBeforeTheUpgrade()
+        assertThat(refresh.syncAfterUpgrade(settings.snapshot(), paired = true)).isTrue()
+        assertThat(upgradeWork()!!.constraints.requiredNetworkType).isEqualTo(NetworkType.UNMETERED)
+        assertThat(syncWork()).isEmpty()
     }
 
     /** Not before setup is done, nor signed out, where it could only fail; and not once a sync has filled the catalog in. */
     @Test fun noSyncAfterAnUpgradeUnlessItCanRunAndIsNeeded() = runBlocking<Unit> {
-        settings.setCatalogSynced("2026-10-07T09:30:00.000000+00:00", now, CatalogSyncer.CATALOG_FIELDS - 1)
-        assertThat(sync.syncAfterUpgrade(settings.snapshot(), paired = true)).isFalse()
+        catalogFromBeforeTheUpgrade()
+        assertThat(refresh.syncAfterUpgrade(settings.snapshot(), paired = true)).isFalse()
         finishSetup()
-        assertThat(sync.syncAfterUpgrade(settings.snapshot(), paired = false)).isFalse()
+        assertThat(refresh.syncAfterUpgrade(settings.snapshot(), paired = false)).isFalse()
         settings.setCatalogSynced("2026-10-15T09:30:00.000000+00:00", now, CatalogSyncer.CATALOG_FIELDS)
-        assertThat(sync.syncAfterUpgrade(settings.snapshot(), paired = true)).isFalse()
+        assertThat(refresh.syncAfterUpgrade(settings.snapshot(), paired = true)).isFalse()
+        assertThat(upgradeWork()).isNull()
         assertThat(syncWork()).isEmpty()
+    }
+
+    /** Its turn come, with RomM answering: the sync, even with the background refresh turned off. */
+    @Test fun theSyncAfterAnUpgradeRunsWithTheRefreshOff() = runBlocking<Unit> {
+        readyToRefresh()
+        settings.setCatalogRefresh(CatalogRefresh.OFF)
+        catalogFromBeforeTheUpgrade()
+        assertThat(upgradeWorker().doWork()).isEqualTo(ListenableWorker.Result.success())
+        assertThat(syncWork().single().state).isEqualTo(WorkInfo.State.ENQUEUED)
+    }
+
+    /**
+     * Found by review: away from RomM, the sync after an upgrade failed and left "Sync failed" in the library
+     * until the Thor was home again. It tries again a few times, then waits quietly for the next start.
+     */
+    @Test fun theSyncAfterAnUpgradeThatCantReachRommQueuesNoSync() = runBlocking<Unit> {
+        val gone = MockWebServer().apply { start() }
+        finishSetup(gone.url("/"))
+        gone.close() // nothing answers there any more
+        pair()
+        catalogFromBeforeTheUpgrade()
+        assertThat(upgradeWorker().doWork()).isEqualTo(ListenableWorker.Result.retry())
+        assertThat(upgradeWorker(runAttempts = 3).doWork()).isEqualTo(ListenableWorker.Result.success())
+        assertThat(syncWork()).isEmpty()
+    }
+
+    /** A sync the owner ran meanwhile filled the catalog in: nothing left to do. */
+    @Test fun theSyncAfterAnUpgradeIsntRunTwice() = runBlocking<Unit> {
+        readyToRefresh()
+        settings.setCatalogSynced("2026-10-15T09:30:00.000000+00:00", now, CatalogSyncer.CATALOG_FIELDS)
+        assertThat(upgradeWorker().doWork()).isEqualTo(ListenableWorker.Result.success())
+        assertThat(syncWork()).isEmpty()
+    }
+
+    /** Queued for any network, then "Only on Wi-Fi" turned on: it may be on a hotspot, so it leaves it to the next start. */
+    @Test fun theSyncAfterAnUpgradeFollowsOnlyOnWifiTurnedOnMeanwhile() = runBlocking<Unit> {
+        readyToRefresh()
+        catalogFromBeforeTheUpgrade()
+        settings.setRefreshOnWifiOnly(true)
+        assertThat(upgradeWorker(wifiOnly = false).doWork()).isEqualTo(ListenableWorker.Result.success())
+        assertThat(syncWork()).isEmpty()
+        assertThat(upgradeWorker(wifiOnly = true).doWork()).isEqualTo(ListenableWorker.Result.success())
+        assertThat(syncWork().single().state).isEqualTo(WorkInfo.State.ENQUEUED)
     }
 }
