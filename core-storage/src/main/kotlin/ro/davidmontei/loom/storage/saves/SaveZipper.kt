@@ -1,6 +1,7 @@
 package ro.davidmontei.loom.storage.saves
 
 import org.apache.commons.compress.archivers.zip.ZipFile
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -38,7 +39,14 @@ data class SaveRoot(val name: String, val folder: Path) {
 data class SaveEntry(val name: String, val file: Path)
 
 /** A save archive Loom refuses to restore: unsafe names, nothing to restore, or damaged entries. */
-class SaveArchiveException(message: String) : IOException(message)
+open class SaveArchiveException(message: String) : IOException(message)
+
+/**
+ * RomM's save for a game, which Loom refuses however often it tries: it isn't laid out as the
+ * game's emulator keeps its save. Unlike a download that failed, it stays so until the save on
+ * RomM changes.
+ */
+class UnrestorableSaveException(message: String) : SaveArchiveException(message)
 
 /**
  * Zips a save unit the same way every time and unzips one without letting it write anywhere else.
@@ -187,6 +195,33 @@ object SaveZipper {
     /** The root folders [zip]'s files sit in: what a restore of it can put in place. */
     fun rootsIn(zip: Path): Set<String> = ZipFile.builder().setPath(zip).get().use { archive ->
         archive.entries.toList().filterNot { it.isDirectory }.mapNotNull { rootOf(it.name) }.toSortedSet()
+    }
+
+    /**
+     * The bytes of [zip]'s file named [name], ignoring case as the SD card does; null when it has
+     * none, or that file is larger than [maxBytes].
+     *
+     * @throws IOException when the archive or the file can't be read.
+     */
+    fun readEntry(zip: Path, name: String, maxBytes: Int): ByteArray? = ZipFile.builder().setPath(zip).get().use { archive ->
+        val entry = archive.entries.toList().firstOrNull { !it.isDirectory && it.name.equals(name, ignoreCase = true) } ?: return null
+        if (entry.size > maxBytes) return null
+        val out = ByteArrayOutputStream()
+        archive.getInputStream(entry).use { input ->
+            val buffer = ByteArray(8192)
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                if (out.size() + n > maxBytes) return null
+                out.write(buffer, 0, n)
+            }
+        }
+        out.toByteArray()
+    }
+
+    /** How many bytes [zip]'s files under [roots] unpack to, as the archive declares their sizes. */
+    fun unpackedSize(zip: Path, roots: Set<String>): Long = ZipFile.builder().setPath(zip).get().use { archive ->
+        archive.entries.toList().filter { !it.isDirectory && rootOf(it.name) in roots }.sumOf { maxOf(it.size, 0L) }
     }
 
     /** The root folder an entry sits in; null for a file at the top of the archive. */

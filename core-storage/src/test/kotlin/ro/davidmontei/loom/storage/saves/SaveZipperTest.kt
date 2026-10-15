@@ -240,4 +240,25 @@ class SaveZipperTest {
         assertThrows(SaveArchiveException::class.java) { SaveZipper.unzip(zip, path("restore"), setOf("data")) }
         assertThat(Files.exists(path("restore"))).isFalse()
     }
+
+    /** A PSP save's PARAM.SFO, looked for as the SD card would find it once unpacked. */
+    @Test fun readEntryFindsAFileIgnoringCase() {
+        val zip = zipOf(path("psp.zip"), "ULUS10064DATA00/" to null, "ULUS10064DATA00/param.sfo" to byteArrayOf(1, 2, 3))
+        assertThat(SaveZipper.readEntry(zip, "ULUS10064DATA00/PARAM.SFO", 1024)).isEqualTo(byteArrayOf(1, 2, 3))
+        assertThat(SaveZipper.readEntry(zip, "ULUS10064DATA01/PARAM.SFO", 1024)).isNull()
+        assertThat(SaveZipper.readEntry(zip, "ULUS10064DATA00", 1024)).isNull()
+    }
+
+    @Test fun readEntryLeavesOutAFileOverItsLimit() {
+        val zip = zipOf(path("big.zip"), "A/PARAM.SFO" to ByteArray(65537))
+        assertThat(SaveZipper.readEntry(zip, "A/PARAM.SFO", 65536)).isNull()
+        assertThat(SaveZipper.readEntry(zip, "A/PARAM.SFO", 65537)).hasLength(65537)
+    }
+
+    @Test fun unpackedSizeCountsTheRootsFilesOnly() {
+        val zip = zipOf(path("sizes.zip"), "A/" to null, "A/one" to ByteArray(100), "A/sub/two" to ByteArray(20), "B/three" to ByteArray(5), "top" to ByteArray(7))
+        assertThat(SaveZipper.unpackedSize(zip, setOf("A"))).isEqualTo(120)
+        assertThat(SaveZipper.unpackedSize(zip, setOf("A", "B", "C"))).isEqualTo(125)
+        assertThat(SaveZipper.unpackedSize(zip, emptySet())).isEqualTo(0)
+    }
 }
