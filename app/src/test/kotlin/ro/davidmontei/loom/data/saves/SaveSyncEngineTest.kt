@@ -15,6 +15,7 @@ import mockwebserver3.MockResponse
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Test
 import org.junit.runner.RunWith
+import ro.davidmontei.loom.data.db.SaveConflictEntity
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.romm.RommException
@@ -677,6 +678,60 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         val conflict = saves.conflict(7)!!
         assertThat(conflict.reason).isEqualTo(SyncDecision.SERVER_ROLLED_BACK.name)
         assertThat(conflict.serverSaveId).isEqualTo(older.id)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(2))
+        assertThat(contentRequests()).isEmpty()
+    }
+
+    /** A conflict as Loom 0.3.1 left it, skipped: [reason] by the name it had then, both sides as they still are. */
+    private suspend fun skippedBeforeTheUpgrade(reason: SyncDecision, head: FakeRomm.Save?) = SaveConflictEntity(
+        romId = 7, slot = "autosave", reason = reason.name, localHash = saves.baseline(7, "autosave")!!.localHash,
+        localModifiedMs = null, localBytes = null, serverSaveId = head?.id, serverHash = head?.hash,
+        serverUpdatedAt = head?.updatedAt?.toString(), serverEmulator = head?.emulator, detectedAtMs = 1_000, skipped = true,
+    ).also { saves.upsertConflict(it) }
+
+    /**
+     * Found by review: a save deleted on RomM 5.4.0 that the owner skipped under Loom 0.3.1, which called it the
+     * slot gone, was asked about again after the upgrade, as RomM's `delete` gives it a new name. It stays skipped,
+     * in the new words.
+     */
+    @Test fun aDeletedSaveSkippedUnderItsOldNameStaysSkipped() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.deleteSave(romm.head(7)!!.id)
+        skippedBeforeTheUpgrade(SyncDecision.SERVER_SLOT_GONE, head = null)
+
+        val report = engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(romm.lastAnswer(7)).isEqualTo("delete")
+        assertThat(report.conflicts).isEmpty()
+        val conflict = saves.conflict(7)!!
+        assertThat(conflict.skipped).isTrue()
+        assertThat(conflict.detectedAtMs).isEqualTo(1_000)
+        assertThat(conflict.reason).isEqualTo(SyncDecision.SERVER_DELETED.name)
+        assertThat(romm.uploads()).hasSize(1)
+    }
+
+    /** Likewise a rolled-back save skipped while it was called RomM going back. */
+    @Test fun aRolledBackSaveSkippedUnderItsOldNameStaysSkipped() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1), minutesAgo = 30)
+        engine().sync(SaveSyncRequest.PUSH)
+        val older = romm.head(7)!!
+        writeSave(pokemonX, bytes(2), minutesAgo = 20)
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.deleteSave(romm.head(7)!!.id)
+        skippedBeforeTheUpgrade(SyncDecision.SERVER_WENT_BACK, head = older)
+
+        val report = engine().sync(SaveSyncRequest.PULL)
+
+        assertThat(romm.lastAnswer(7)).isEqualTo("download")
+        assertThat(report.conflicts).isEmpty()
+        val conflict = saves.conflict(7)!!
+        assertThat(conflict.skipped).isTrue()
+        assertThat(conflict.reason).isEqualTo(SyncDecision.SERVER_ROLLED_BACK.name)
         assertThat(localMain(pokemonX)).isEqualTo(bytes(2))
         assertThat(contentRequests()).isEmpty()
     }

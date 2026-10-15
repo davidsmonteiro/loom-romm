@@ -584,7 +584,7 @@ class SaveSyncEngine(
     ): SaveConflictEntity {
         val romId = save.romId
         val existing = saves.conflict(romId)
-        val same = existing != null && existing.reason == decision.name && existing.localHash == localHash &&
+        val same = existing != null && sameReason(existing.reason, decision) && existing.localHash == localHash &&
             existing.serverSaveId == head?.saveId && existing.serverHash == head?.contentHash
         val record = SaveConflictEntity(
             romId = romId, slot = SAVE_SLOT, reason = decision.name,
@@ -1114,6 +1114,18 @@ class SaveSyncEngine(
 
         /** The conflicts a lost baseline can make of a save restored here and RomM's, one save differing only by hash. */
         private val SAME_SAVE_MAYBE = setOf(SyncDecision.FIRST_SYNC_DIFFERS, SyncDecision.BOTH_CHANGED)
+
+        /**
+         * Whether a conflict recorded for [recorded] is [decision]'s. RomM 5.4.0's answers name two of Loom's
+         * own conflicts more exactly, which Loom 0.3.1 recorded by the old names: a save deleted on RomM was
+         * the slot gone (or, never synced from here, RomM disagreeing), and a deleted newest save was RomM
+         * going back. A Skip made then holds while neither side changes; the record takes the new name.
+         */
+        private fun sameReason(recorded: String, decision: SyncDecision): Boolean = recorded == decision.name || when (decision) {
+            SyncDecision.SERVER_DELETED -> recorded == SyncDecision.SERVER_SLOT_GONE.name || recorded == SyncDecision.DISAGREES_WITH_SERVER.name
+            SyncDecision.SERVER_ROLLED_BACK -> recorded == SyncDecision.SERVER_WENT_BACK.name
+            else -> false
+        }
 
         private val ARCHIVE_STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH-mm-ss 'UTC'").withZone(ZoneOffset.UTC)
     }
