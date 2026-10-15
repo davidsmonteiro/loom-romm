@@ -13,7 +13,8 @@ import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.ui.library.LibraryContent
 
 /**
- * Renders each screen at the Thor's top-screen size to app/build/screenshots/ for review.
+ * Renders each screen at the Thor's top-screen size (and the second screen at its bottom one's) to
+ * app/build/screenshots/ for review; docs/screenshots/ holds copies of a few.
  * Not assertions about pixels: a quick way to see layout, type and colour without a device.
  */
 @RunWith(AndroidJUnit4::class)
@@ -49,6 +50,29 @@ class ScreenshotTest {
         rule.setContent { LoomTestTheme { LibraryContent(library.state, NoopLibraryActions) } }
         settle()
         rule.saveScreenshot("library-phone")
+    }
+
+    /** The Thor's bottom screen beside the library: the focused game with what RomM says of it, and the queue's strip. */
+    @Config(qualifiers = THOR_BOTTOM_PRESENTATION)
+    @Test fun secondScreen() {
+        val game = library.state.games[0].copy(save = ro.davidmontei.loom.ui.library.GameSave(true, ro.davidmontei.loom.data.db.SaveSyncState.IN_SYNC,
+            null, null))
+        val details = ro.davidmontei.loom.ui.library.RomDetails(game.id,
+            "Crono, a boy from 1000 AD, wakes on the morning of the Millennial Fair and leaves on a journey through time. With friends " +
+                "found from prehistory to a ruined future, he sets out to stop the catastrophe that ends the world.",
+            1995, listOf("Role-playing (RPG)", "Adventure"), listOf("Square", "Nintendo"))
+        val downloading = QueueScreenTest.item(3, "Super Metroid", ro.davidmontei.loom.storage.engine.JobPhase.DOWNLOADING, done = 1_300_000, total = 4_194_304,
+            speed = 11_800_000)
+        rule.setContent {
+            LoomTestTheme {
+                ro.davidmontei.loom.ui.second.SecondScreenContent(
+                    ro.davidmontei.loom.ui.second.CompanionContent.Game(game, "Super Nintendo", null, details),
+                    ro.davidmontei.loom.ui.second.QueueStrip(downloading, waiting = 1, failed = 0, conflicts = 0),
+                )
+            }
+        }
+        settle()
+        rule.saveScreenshot("second-screen")
     }
 
     @Test fun libraryDetailsDialog() {

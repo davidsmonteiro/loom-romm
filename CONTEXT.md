@@ -85,6 +85,24 @@ _Avoid_: publish, commit, move
 **Install state**:
 What the catalog shows per ROM: not installed, queued, downloading, installed or failed.
 
+**RomM's details**:
+What RomM says of a ROM beyond its files, from its metadata sources: a summary (kept to about 1,000 characters), the year of its first release, and its genres and companies. Kept apart from the catalog's ROM rows and read only for the game the details panel shows.
+_Avoid_: metadata (RomM's word for all it gathers, most of which Loom doesn't keep), description
+
+### Screens
+
+**Second screen**:
+A display beside the one Loom is on, such as the Thor's bottom screen, where Loom draws the details panel while it is in front. Loom never puts the panel on its own screen, and it shows nothing there while it isn't in front.
+_Avoid_: bottom screen (the Thor's; Loom can be on it), companion screen, dual screen
+
+**Details panel**:
+What Loom shows of what the pad is on, without taking input: the focused game (its cover, state, save and RomM's details), the queue's focused download or save conflict, or the pairing code. Drawn on the second screen, or beside the games in a window wide enough when there is no second screen. The game's details dialog, opened with A, is where to act on it.
+_Avoid_: companion, preview, details (that is the dialog)
+
+**Hero cover**:
+The large cover the details panel draws, made from RomM's large art once the focus has rested on a game for half a second, following "Only on Wi-Fi". The newest 48 are kept; until one is there, the game's thumbnail is shown.
+_Avoid_: big cover, poster
+
 ### Games sent from RomM
 
 **Install request**:

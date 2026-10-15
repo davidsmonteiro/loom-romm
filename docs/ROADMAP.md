@@ -1,6 +1,6 @@
 # Loom roadmap
 
-Phase 1 (the MVP: pairing, catalog sync, offline browsing, platform mapping, download queue with atomic installs and checksum verification, offload and storage view) is built, and so are these parts of Phase 2: the scheduled catalog refresh, games sent from RomM's web UI, and save sync for 3DS games in Azahar, Switch games in Eden, DS games in melonDS and PSP games in PPSSPP, with RomM 5.4's save sync extras. This file plans the rest of Phase 2 and Phase 3; everything below that isn't marked built is not implemented yet.
+Phase 1 (the MVP: pairing, catalog sync, offline browsing, platform mapping, download queue with atomic installs and checksum verification, offload and storage view) is built, and so are these parts of Phase 2: the scheduled catalog refresh, games sent from RomM's web UI, and save sync for 3DS games in Azahar, Switch games in Eden, DS games in melonDS and PSP games in PPSSPP, with RomM 5.4's save sync extras; and of Phase 3, the dual-screen layout, with layouts for any screen size. This file plans the rest of Phase 2 and Phase 3; everything below that isn't marked built is not implemented yet.
 
 ## Phase 2: background refresh and save sync
 
@@ -96,10 +96,18 @@ Risks:
 - Emulators launched from another app's task may lose Cocoon's per-game overrides.
 - Detecting the return reliably needs either `UsageStatsManager` (a special permission) or the emulator finishing back into Loom's task.
 
-### Dual-screen layout
-- Use the `Presentation` API on the Thor's second display (`DisplayManager.getDisplays(DISPLAY_CATEGORY_PRESENTATION)`).
-- The top screen shows cover art and details for the focused game. The bottom screen shows the list and the queue.
-- With a single display, Loom falls back to today's layout.
+### Dual-screen layout (built)
+This section's first draft had the focused game's cover and details on the top screen and the list and queue on the bottom one. The owner reversed it (2026-10-15): the list and all input stay on the top screen, where Cocoon opens Loom, and the bottom screen shows a passive panel of what the pad is on ([ADR 0015](adr/0015-second-screen-presentation-and-adaptive-layout.md)).
+
+- **The panel.** An Android `Presentation` on the second display, picked from `DISPLAY_CATEGORY_PRESENTATION` by its flags (secure, not private, not off, not Loom's own), the built-in screen ahead of a monitor. It never takes the pad's focus; it stays touchable, so a tap doesn't fall through to Cocoon's bottom screen and take the pad, and a tap does nothing. Its Compose content is laid out for its own screen, and is only handed state: the screens on top publish what it shows.
+- **What it shows.** The library's focused game (cover, title, state, save, and what RomM says of it), with a strip of what the queue holds; the queue's focused download, or a save conflict's two sides; the pairing QR code during setup; the Loom mark otherwise.
+- **When it goes.** On Home or a game launch, when another app is resumed on the other screen, when the bottom screen turns off or goes, while Loom is on the bottom screen itself, with **Use the second screen** off (Settings → Controls & screens), and in AYN's Focus Mode "Bottom screen", where the top screen says why. It comes back as each of these undoes. It goes dark after 3 minutes without a button press or a touch.
+- **R3** hides it, so an app open on the bottom screen can be used while Loom stays in front, and brings it back; hidden, it stays hidden until R3 again or Loom is opened again (the owner's choice, after the plan).
+- **Any screen size.** Each screen reads its window's size and follows Material's breakpoints (600 and 840 dp): the Thor's top screen is the layout it was designed for; narrower windows (the bottom screen, phones in portrait) pick the platform from the header, show one Settings section at a time (below 800 dp) and give dialogs the full width; wider ones show the focused game beside the games. Content fits without scrolling on the Thor's screens, phones in portrait and tablets; a phone on its side may scroll a dialog or a Settings section.
+- **RomM's details.** The catalog (database v8) keeps each game's summary, cut to about 1,000 characters, release year, three genres and two companies in a table of its own, read only for the focused game. The first sync after the upgrade is a full one, queued on the first open.
+- **Hero covers.** The panel's cover is made from RomM's large art once the focus has rested on a game for half a second, under "Only on Wi-Fi"; the same fetch sharpens the game's thumbnail. The newest 48 are kept.
+
+Not built: anything on the panel for Settings (help for the focused section, say, or the card's storage), RomM's screenshots of the game, and a way to act from the bottom screen.
 
 ## Later: design refresh
 - Rework the logo and the overall look (palette, type, layout) so Loom sits naturally next to Cocoon. Phase 1's warp-and-weft logo and dark palette are placeholders until then.

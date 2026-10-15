@@ -31,13 +31,19 @@ Loom does not launch games, replace the home screen, or emulate anything. It doe
   - When Loom would ask which folder the platform's games go in, the game waits in the queue instead, with a notification: press A on it there.
   - **Receive games sent from RomM** in Settings → Downloads turns it off, and RomM stops offering the Thor. That line also says why games can't come when they can't, with **Pair again** beside it when only pairing again would fix it.
 - **Syncs 3DS, Switch, DS and PSP saves with RomM.** Changed saves go up by themselves; RomM's come down only when you ask, after a backup; when both changed, Loom asks which to keep.
+- **Uses the Thor's second screen.** The list and the pad stay on the top screen; while Loom is in front, the bottom one shows what the pad is on: the game's cover, where it stands (on the card, downloading, its save), and what RomM says of it (the year it came out, its genres and companies, and its summary, as much as fits), with a strip of what the queue holds below. In the queue it shows a download, or a save conflict's two sides; during setup, the pairing QR code, larger. It only shows: tapping it does nothing, and **R3** hides it ([Controls](#controls)). It goes dark after 3 minutes without a button press, and is gone whenever Loom isn't in front.
+  - The cover there is made from RomM's large cover art once you've rested on a game for half a second, and follows **Only on Wi-Fi** like every cover; the same download sharpens the game's thumbnail too. Loom keeps the newest 48 of these (a few MB); until one is there, the thumbnail is shown.
+  - RomM's summary, year, genres and companies come with the catalog. The first sync after upgrading to this version is a full one, which Loom starts by itself the first time it opens.
+- **Fits any screen.** The same app runs on the Thor's bottom screen (Cocoon can open apps there), on phones and on tablets: a narrow screen picks the platform from the header and shows one Settings section at a time, and a wide one shows the focused game's details beside the games.
+
+![The Thor's bottom screen while Loom is in front](docs/screenshots/second-screen.png)
 
 ## Requirements
 
 | | |
 |---|---|
 | RomM | 5.0 or newer. Built and tested against **5.4.0**. Sending games from RomM's web UI needs 5.4. |
-| Device | Android 11+ (minSdk 30). Designed for the AYN Thor's top screen, which runs Android 13. |
+| Device | Android 11+ (minSdk 30). Designed for the AYN Thor (Android 13): Loom on its top screen, a panel of what the pad is on on the bottom one. Runs on one screen too, any size, phones and tablets included. |
 | Permissions | **All files access**, to write into the folders Cocoon scans. Loom is sideloaded, so Play policy doesn't apply. Also notifications, and an optional battery-optimisation exemption so downloads restart in the background. |
 
 ## Install
@@ -167,7 +173,7 @@ Either way the choice is remembered for that platform; change it in Settings →
 | Select | Settings | | |
 | R3 | | | Hide or bring back the second screen's panel |
 
-With two screens, as on the Thor, the other one shows the game you're on, or the download or save conflict in the queue, while Loom is in front. It only shows: the pad stays with Loom, and tapping that screen does nothing. To use an app open on that screen, press R3: the panel goes, and stays gone, even once you've used that app and come back to Loom, until you press R3 again or next open Loom. Settings → Controls & screens → **Use the second screen** turns the panel off altogether.
+With two screens, as on the Thor, the other one shows the game you're on, or the download or save conflict in the queue, while Loom is in front. It only shows: the pad stays with Loom, and tapping that screen does nothing. To use an app open on that screen, press R3: the panel goes, and stays gone, even once you've used that app and come back to Loom, until you press R3 again or next open Loom. Settings → Controls & screens → **Use the second screen** turns the panel off altogether. The button hints don't mention R3.
 
 In a save conflict's choice, B is **Skip**. For Nintendo-layout pads, use Settings → Controls & screens → **Swap A and B**. Touch works too, and the first button press after a tap still acts (it doesn't just bring the focus ring back), except X, which only brings focus back so it never downloads a game you didn't pick. Loom runs full screen; swipe from an edge to see the system bars.
 
@@ -273,6 +279,12 @@ Long-press Loom's icon for the **Sync library** and **Downloads** shortcuts.
 | A PSP game's save says "choose its PPSSPP save folders" | Loom can't tell the game's disc ID: it's a `.chd` RomM didn't read (rescan the platform in RomM), or RomM and the game's file disagree. Press **Choose save folder** and pick the disc ID whose folders changed when the game last saved. |
 | A PSP game's save says "not synced" | The reason follows. Usually PPSSPP's memory stick isn't `ROMs/saves/PPSSPP` (set PPSSPP's Memory Stick folder there, or choose it in Settings → Saves), another installed game has the same disc ID, or its folders hold more than Loom syncs. |
 | A save conflict says "RomM's save … nothing was replaced" | RomM's newest save isn't laid out as the emulator keeps saves, or is over 256 MB, and the conflict says which: a zip where melonDS keeps one file, a DeSmuME save, another game's folders, a PSP save from RomM's web player, or one from an older Argosy holding the game's installed data. Keep Thor makes the Thor's save RomM's newest; Skip leaves both. A newer save on RomM ends the conflict. |
+| The bottom screen shows nothing from Loom, and the top one says "AYN's Focus Mode has the pad on the bottom screen" | AYN's Focus Mode (in the Thor's dual-screen settings) is set to **Bottom screen**, so the pad's buttons go to whatever is on the bottom screen, and Loom leaves it in view. Set Focus Mode to **Auto-lock** or **Top screen**. |
+| Loom says "AYN's Focus Mode has the pad on the top screen" | Loom is open on the bottom screen while Focus Mode is set to **Top screen**. Set it to Auto-lock or Bottom screen, or open Loom on the top screen. |
+| Loom opens on the bottom screen, narrow, with no panel | Cocoon opens each app on the screen set for it. In Cocoon, Settings → Library & Data, set Loom's launch display to **Top**. |
+| The bottom screen went black | Loom darkens it after 3 minutes without a button press or a touch, so the panel doesn't mark the OLED screen. Press any button. |
+| An app open on the bottom screen is hidden while Loom is open | Press R3 to hide Loom's panel, and again to bring it back; opening Loom again also brings it back. Or turn off Settings → Controls & screens → **Use the second screen**. |
+| The bottom screen's cover stays soft | It is made from RomM's large art once you rest on a game for half a second, on Wi-Fi only with **Only on Wi-Fi** on. A game without large art on RomM keeps its thumbnail. |
 | A restored save didn't stick | The emulator was still running in the background and saved over it, and Loom may have uploaded that as the newest save since. Nothing is lost: RomM keeps the older versions (pick one in its web UI), and the Thor's save from before the restore is in `.loom/save-backups`. Close the emulator completely before restoring. |
 
 ## Development
@@ -285,7 +297,7 @@ Long-press Loom's icon for the **Sync library** and **Downloads** shortcuts.
 LOOM_TOKEN=rmm_… ./gradlew :core-romm:liveCheck -Promm.url=https://romm.example.org   # …plus platforms and a page of ROMs
 ```
 
-`ScreenshotTest` renders each screen at the Thor's top-screen size into `app/build/screenshots/`.
+`ScreenshotTest` renders each screen into `app/build/screenshots/`, and the fit tests save what they check there too. UI tests run at exact sizes (`UiTestSupport.kt`): the Thor's top screen (832×468 dp at 369 dpi), its bottom one with Loom on it (538×468 dp) and as the second screen (538×444 dp), a phone in portrait and landscape, a small phone in landscape, and tablets in both orientations. `FitsTheScreenTest` checks with the real font that each screen fits them without scrolling (a phone on its side may scroll a dialog or a Settings section), and `CoverSizeTest` that covers are kept at the size they're drawn.
 
 Modules:
 - **`:core-romm`** (Kotlin/JVM): the RomM API client and pairing. DTOs are checked field by field against RomM 5.4.0's committed OpenAPI schema, and against 5.3.1's to keep older servers readable.
@@ -294,8 +306,8 @@ Modules:
 
 Further reading:
 - [`CONTEXT.md`](CONTEXT.md): the project's vocabulary.
-- [`docs/adr/`](docs/adr/): the decisions behind staging, per-file downloads, archive checks, pairing, the Keystore, Retrofit, the module split, save sync's baseline and backups, reading Switch title IDs on the Thor, receiving games sent from RomM, and DS and PSP saves.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md): Phases 2 and 3.
+- [`docs/adr/`](docs/adr/): the decisions behind staging, per-file downloads, archive checks, pairing, the Keystore, Retrofit, the module split, save sync's baseline and backups, reading Switch title IDs on the Thor, receiving games sent from RomM, DS and PSP saves, and the second screen and layouts for any screen size.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md): what's built of Phases 2 and 3, and what's next.
 
 ### Releases
 
