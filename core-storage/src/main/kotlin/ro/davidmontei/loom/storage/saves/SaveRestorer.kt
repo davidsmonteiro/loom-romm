@@ -159,10 +159,21 @@ class SaveRestorer(
         mover.move(from, to)
     }
 
-    /** Where the file named [name] ("data/00000001/main") lives in the unit. */
+    /**
+     * Where the file named [name] ("data/00000001/main") lives: in its root's folder. A root that
+     * isn't the unit's is another game's, whose restore Loom didn't finish in a folder several
+     * games share (Eden's profile folder). When the unit's roots are named after their folders,
+     * as Azahar's `data` and Eden's title folders are, so is that one, beside them.
+     */
     private fun live(unit: SaveUnit, name: String): Path {
-        val root = rootsOf(unit).firstOrNull { it.name == SaveZipper.rootOf(name) } ?: throw SaveArchiveException("No root for $name")
-        return root.folder.resolve(name.substringAfter('/'))
+        val rootName = SaveZipper.rootOf(name)
+        val roots = rootsOf(unit)
+        val root = roots.firstOrNull { it.name == rootName }
+        return when {
+            root != null -> root.folder.resolve(name.substringAfter('/'))
+            rootName != null && roots.all { it.folder.fileName.toString() == it.name } -> unit.anchor.resolve(name)
+            else -> throw SaveArchiveException("No root for $name")
+        }
     }
 
     /** The files a restore puts in place and the ones it moves aside, by their names in the unit. */

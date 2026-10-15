@@ -140,6 +140,34 @@ class SaveRestorerTest {
         }
     }
 
+    /**
+     * Eden keeps every game's save folder in one profile folder, so a restore Loom died in leaves
+     * its work folder where another game's restore looks too. Whichever game is read first undoes
+     * it, instead of failing to read its own save until the other game is read.
+     */
+    @Test fun anotherGamesUnfinishedRestoreInTheSameFolderIsUndone() {
+        val profile = path("user/save/0000000000000000/4E431822D6DEFD527268BA35B5C09533")
+        for (dieAt in 1..4) {
+            tmp.root.listFiles()!!.forEach { it.deleteRecursively() }
+            val wonder = listOf(SaveRoot("0100A0B00C0D0000", folderOf(profile.resolve("0100A0B00C0D0000"), "game_data.sav" to byteArrayOf(1))))
+            val arceus = listOf(SaveRoot("01002B300C1D2000",
+                folderOf(profile.resolve("01002B300C1D2000"), "game_data.sav" to byteArrayOf(2), "option_data.sav" to byteArrayOf(3))))
+            val before = contents(wonder + arceus)
+            val archive = zipOf(path("arceus.zip"), "01002B300C1D2000/game_data.sav" to byteArrayOf(9), "01002B300C1D2000/new.sav" to byteArrayOf(8))
+            var moves = 0
+            val dying = SaveRestorer { from, to ->
+                if (++moves == dieAt) throw ProcessDeath()
+                SaveRestorer.FileMover.Rename.move(from, to)
+            }
+            assertThrows(ProcessDeath::class.java) { dying.restore(archive, arceus, SaveHasher.hashUnit(arceus)) }
+
+            assertThat(SaveRestorer().recover(wonder)).isTrue()
+            assertThat(contents(wonder + arceus)).isEqualTo(before)
+            assertThat(Files.list(profile).use { l -> l.iterator().asSequence().map { it.fileName.toString() }.toList() })
+                .containsExactly("0100A0B00C0D0000", "01002B300C1D2000")
+        }
+    }
+
     /** A move never replaces a file: a mistake fails instead of overwriting part of a save. */
     @Test fun aMoveRefusesATargetThatExists() {
         val from = folderOf(path("a"), "main" to byteArrayOf(1)).resolve("main")

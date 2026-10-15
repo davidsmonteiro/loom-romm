@@ -503,6 +503,34 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         assertThat(File(edenFolder(wonder), "option_data.sav").exists()).isTrue()
     }
 
+    /**
+     * Loom died swapping a restored save in for one game, leaving its work folder in the profile
+     * folder every game's save is in. The next game read undoes that restore and syncs, instead of
+     * failing every run until the other game is read.
+     */
+    @Test fun aSwitchGameIsReadWhileAnotherGamesRestoreIsUnfinished() = runBlocking<Unit> {
+        putProdKeys()
+        installSwitch(wonder)
+        installSwitch(arceus)
+        writeEdenSave(wonder, bytes(1))
+        writeEdenSave(arceus, bytes(2))
+        engine().sync(SaveSyncRequest.PUSH)
+        val work = File(edenFolder(arceus).parentFile, ".loom-restore-1")
+        File(work, "old/${arceus.titleId}").mkdirs()
+        File(work, "journal").writeText("${arceus.titleId}/game_data.sav\n\n${arceus.titleId}/game_data.sav")
+        File(edenFolder(arceus), "game_data.sav").renameTo(File(work, "old/${arceus.titleId}/game_data.sav"))
+        File(edenFolder(arceus), "game_data.sav").writeBytes(bytes(9)) // the new file was in place
+        val changed = writeEdenSave(wonder, bytes(3), minutesAgo = 5)
+
+        val report = engine().sync(SaveSyncRequest.upload(wonder.romId))
+
+        assertThat(report.failed).isEmpty()
+        assertThat(report.uploaded).containsExactly(wonder.romId)
+        assertThat(romm.head(wonder.romId)!!.hash).isEqualTo(changed)
+        assertThat(File(edenFolder(arceus), "game_data.sav").readBytes()).isEqualTo(bytes(2))
+        assertThat(work.exists()).isFalse()
+    }
+
     /** A save larger than Loom restores for Eden isn't uploaded: it could never come back. */
     @Test fun aSaveTooLargeToRestoreIsntUploaded() = runBlocking<Unit> {
         edenMaxUnitBytes = 8 * 1024
