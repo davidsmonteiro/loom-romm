@@ -34,7 +34,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 @OptIn(DelicateCoilApi::class)
 @RunWith(AndroidJUnit4::class)
-@Config(qualifiers = THOR_TOP_SCREEN_EXACT)
+@Config(qualifiers = THOR_TOP_SCREEN)
 class CoverSizeTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
 

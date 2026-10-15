@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -416,9 +417,18 @@ fun StatusBadge(text: String, modifier: Modifier = Modifier, color: Color = Loom
 /** One button hint in the footer: a round glyph and what it does. */
 data class ButtonHint(val glyph: String, val label: String)
 
+/**
+ * The footer's hints, on one line where they fit: the library's six take about 740 of the 784 dp
+ * the Thor's top screen leaves them. On a narrower screen they wrap rather than squeeze the last one.
+ */
 @Composable
 fun ButtonHints(hints: List<ButtonHint>, modifier: Modifier = Modifier) {
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(Space.xl), verticalAlignment = Alignment.CenterVertically) {
+    FlowRow(
+        modifier.testTag("button-hints"),
+        horizontalArrangement = Arrangement.spacedBy(Space.l),
+        verticalArrangement = Arrangement.spacedBy(Space.s),
+        itemVerticalAlignment = Alignment.CenterVertically,
+    ) {
         hints.forEach { hint ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                 Box(

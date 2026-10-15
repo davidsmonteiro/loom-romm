@@ -4,15 +4,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
@@ -31,6 +35,7 @@ import ro.davidmontei.loom.data.saves.SaveSyncEngine
 import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.storage.saves.SyncDecision
+import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.data.saves.EdenSaves
 import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.ui.library.FolderQuestion
@@ -92,8 +97,11 @@ class FitsTheScreenTest {
     }
 
     /** How many lines the text holding [text] takes. */
-    private fun lineCount(text: String): Int {
-        val node = rule.onNode(hasText(text, substring = true), useUnmergedTree = true).fetchSemanticsNode()
+    private fun lineCount(text: String): Int =
+        lineCount(rule.onNode(hasText(text, substring = true), useUnmergedTree = true).fetchSemanticsNode())
+
+    /** How many lines the text [node] takes. */
+    private fun lineCount(node: SemanticsNode): Int {
         val layouts = mutableListOf<TextLayoutResult>()
         node.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
         return layouts.single().lineCount
@@ -399,6 +407,40 @@ class FitsTheScreenTest {
             assertWithMessage(line).that(lineCount(line)).isEqualTo(1)
         }
         rule.saveScreenshot("library-offline")
+    }
+
+    /**
+     * The library's hints, the most any screen shows, each checked to be whole: one line, inside the
+     * screen's margin. Returns how many lines of hints there are.
+     */
+    private fun libraryHintLines(): Int {
+        rule.setContent { LoomTestTheme { LibraryContent(LibraryScreenTest().state, NoopLibraryActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        val end = rule.onRoot().fetchSemanticsNode().boundsInRoot.right - with(rule.density) { Space.xl.toPx() }
+        val hints = listOf("Details", "Download / offload", "Search", "Platform", "Queue", "Settings").map { label ->
+            label to rule.onNode(hasText(label) and hasAnyAncestor(hasTestTag("button-hints")), useUnmergedTree = true).fetchSemanticsNode()
+        }
+        for ((label, hint) in hints) {
+            assertWithMessage(label).that(lineCount(hint)).isEqualTo(1)
+            assertWithMessage(label).that(hint.boundsInRoot.right).isAtMost(end)
+        }
+        return hints.map { it.second.boundsInRoot.top }.distinct().size
+    }
+
+    /**
+     * At the Thor's exact size, 832 dp wide, the six hints 24 dp apart took 781 of the 784 dp
+     * between the margins: a little more text and Settings would have been squeezed. 16 dp apart
+     * they leave about 40 dp, on one line.
+     */
+    @Test fun theLibrarysHintsFitOnOneLine() {
+        assertThat(libraryHintLines()).isEqualTo(1)
+    }
+
+    /** On a narrower screen, such as the Thor's bottom one, the hints wrap rather than squeeze the last one. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theHintsWrapToTwoLinesAtMost() {
+        assertThat(libraryHintLines()).isEqualTo(2)
+        rule.saveScreenshot("library-hints-bottom-screen")
     }
 
     /** The question at a platform's first download, with its few options and with every folder of the Thor's ES-DE template. */
