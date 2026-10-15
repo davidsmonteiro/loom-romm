@@ -60,23 +60,17 @@ import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.InputMode
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil3.compose.AsyncImage
-import coil3.request.ImageRequest
-import coil3.request.crossfade
 import kotlinx.coroutines.delay
 import okhttp3.HttpUrl
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
-import ro.davidmontei.loom.data.catalog.CoverRef
-import ro.davidmontei.loom.data.catalog.CoverStore
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.saves.emulatorName
@@ -92,17 +86,18 @@ import ro.davidmontei.loom.ui.components.LoomRow
 import ro.davidmontei.loom.ui.components.LoomTextField
 import ro.davidmontei.loom.ui.components.ScreenScaffold
 import ro.davidmontei.loom.ui.components.Space
-import ro.davidmontei.loom.ui.components.StatusBadge
 import ro.davidmontei.loom.ui.components.ago
 import ro.davidmontei.loom.ui.components.dateTime
 import ro.davidmontei.loom.ui.components.gameCount
 import ro.davidmontei.loom.ui.input.PadAction
 import ro.davidmontei.loom.ui.input.onPadAction
+import ro.davidmontei.loom.ui.layout.WidthClass
 import ro.davidmontei.loom.ui.layout.rememberLoomLayout
 import ro.davidmontei.loom.ui.saves.ReplaceSaveDialog
 import ro.davidmontei.loom.ui.saves.SaveFolderDialog
 import ro.davidmontei.loom.ui.saves.SaveFolderOption
 import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
+import ro.davidmontei.loom.ui.second.GamePanel
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 
@@ -248,6 +243,18 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
         }
     }
 
+    // A wide window has room for the focused game's details beside the games: the focused one, or the one
+    // last focused while focus is elsewhere (the search box, a dialog), as it is now: its download moves on
+    // as it shows. They are to read only, as A still opens the details to act on the game.
+    val shown = state.games.firstOrNull { it.id == (focusedId ?: lastGameId) }
+    val window = LocalWindowInfo.current.containerDpSize.width
+    val besideWidth = if (layout.width == WidthClass.EXPANDED) (window * 0.32f).coerceIn(280.dp, 420.dp) else 0.dp
+    // The three filter chips need about the room the Thor's top screen gives the games, 558 dp, to leave
+    // the search box room. With less (a phone on its side, with the details beside) they are one chip that
+    // cycles, as on a narrow screen. The games get what the margins, the rail and the details leave.
+    val gamesWidth = window - Space.xl * 2 - 210.dp - Space.l - if (besideWidth > 0.dp) besideWidth + Space.l else 0.dp
+    val oneFilterChip = layout.compact || gamesWidth < 540.dp
+
     // X does what the details offer; where that's nothing to download or retry, the details say why.
     fun toggle(game: GameItem) = when (game.state) {
         InstallState.NOT_INSTALLED -> if (game.removedOnServer) detailsFor = game else actions.download(game)
@@ -303,7 +310,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                             onEditingChange = { searchEditing = it },
                             onImeAction = { runCatching { entryGame.requestFocus() } },
                         )
-                        if (layout.compact) {
+                        if (oneFilterChip) {
                             val next = LibraryFilter.entries[(state.filter.ordinal + 1) % LibraryFilter.entries.size]
                             LoomChip(state.filter.label, state.filter != LibraryFilter.ALL, { actions.setFilter(next) },
                                 Modifier.onFocusChanged { filterFocused = it.isFocused }.testTag("filter"))
@@ -322,6 +329,14 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                             lastGameIndex = state.games.indexOfFirst { it.id == game.id }.coerceAtLeast(0)
                         } else if (focusedId == game.id) focusedId = null
                     }, onOpen = { detailsFor = it }, actions = actions)
+                }
+                if (besideWidth > 0.dp) {
+                    Box(
+                        Modifier.width(besideWidth).fillMaxHeight()
+                            .background(LoomColors.Surface, RoundedCornerShape(16.dp)).padding(Space.l).testTag("details-beside"),
+                    ) {
+                        shown?.let { GamePanel(it, state.selected?.platform?.displayName, state.coverBase, Modifier.fillMaxSize()) }
+                    }
                 }
             }
         }
@@ -702,44 +717,10 @@ private fun GameRowItem(game: GameItem, coverBase: HttpUrl?, modifier: Modifier,
 }
 
 @Composable
-private fun Cover(game: GameItem, coverBase: HttpUrl?, modifier: Modifier) {
-    val path = game.coverPath
-    if (path == null) {
-        Box(modifier, contentAlignment = Alignment.Center) {
-            Text(game.title.take(2).uppercase(), style = MaterialTheme.typography.headlineSmall, color = LoomColors.TextFaint)
-        }
-        return
-    }
-    AsyncImage(
-        // Stored covers show offline too; the address is only for ones not fetched yet. Decoded at the
-        // size they are stored, a focused card's: sized to the card, the focus would enlarge them again.
-        model = ImageRequest.Builder(LocalContext.current).data(CoverRef(path, coverBase, game.coverLarge))
-            .size(CoverStore.WIDTH, CoverStore.HEIGHT).crossfade(true).build(),
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = modifier,
-    )
-}
-
-@Composable
 private fun StateOverlay(game: GameItem, modifier: Modifier) {
     Column(modifier.fillMaxWidth().padding(Space.s), verticalArrangement = Arrangement.spacedBy(Space.xs), horizontalAlignment = Alignment.End) {
         StateBadge(game)
         if (game.progress != null) LoomProgressBar(game.progress, height = 5.dp)
-    }
-}
-
-@Composable
-private fun StateBadge(game: GameItem) {
-    when (game.state) {
-        InstallState.INSTALLED -> StatusBadge("On device")
-        InstallState.DOWNLOADING -> StatusBadge(
-            game.stateDetail.takeIf { game.finishing } ?: game.progress?.let { "${(it * 100).toInt()}%" } ?: (game.stateDetail ?: "Downloading"),
-            color = LoomColors.Accent, onColor = LoomColors.OnAccent,
-        )
-        InstallState.QUEUED -> StatusBadge(game.stateDetail ?: "Queued", color = LoomColors.SurfaceHighest, onColor = LoomColors.Text)
-        InstallState.FAILED -> StatusBadge("Failed", color = LoomColors.Error, onColor = LoomColors.OnError)
-        InstallState.NOT_INSTALLED -> if (game.removedOnServer) StatusBadge("Removed from RomM", color = LoomColors.SurfaceHighest, onColor = LoomColors.TextMuted)
     }
 }
 
@@ -782,47 +763,19 @@ private fun GameDialog(
         title = game.title,
         onDismiss = onDismiss,
         body = {
-            val lines = buildList {
-                add(listOfNotNull(platform?.platform?.displayName, formatBytes(game.sizeBytes), game.regions.takeIf { it.isNotEmpty() }?.joinToString())
-                    .joinToString(" · "))
-                when (game.state) {
-                    InstallState.INSTALLED -> add("On this device at ${game.installPath}" + when {
-                        game.matchedByName -> " (Loom found it there, by its name only)"
-                        game.adopted -> " (Loom found it there)"
-                        else -> ""
-                    })
-                    InstallState.QUEUED, InstallState.DOWNLOADING ->
-                        add(if (game.finishing) "Moving it into your ROMs folder" else game.stateDetail ?: "Downloading")
-                    InstallState.FAILED -> {
-                        add(game.stateDetail ?: "The last download failed")
-                        if (!game.retryable) add("Retrying won't help until this is fixed.")
-                    }
-                    InstallState.NOT_INSTALLED -> add(if (game.removedOnServer) "No longer on the RomM server" else "Not on this device")
+            // A line more for the save on a narrow screen, so the reason a folder is asked for is there in full.
+            GameFacts(game, platform?.platform?.displayName, saveLines = if (compact) 3 else 2) {
+                // A line kept for it while the save is looked at, so its words coming and going move nothing.
+                if (compact && looksAtSave) {
+                    Text(lookLine(game.save?.look), style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("save-look"))
                 }
-            }
-            // Grouped, rather than spaced like the dialog's parts: a 3DS game's details have to fit
-            // the screen with a long title and path, its save and a row of save buttons.
-            Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-                lines.forEach { Text(it, style = MaterialTheme.typography.bodyLarge, color = LoomColors.TextMuted) }
-            }
-            game.progress?.let { LoomProgressBar(it) }
-            game.save?.let { save ->
-                Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                    // A line more on a narrow screen, so the reason a folder is asked for is there in full.
-                    Text(saveLine(save), style = MaterialTheme.typography.bodyLarge, color = saveColor(save), maxLines = if (compact) 3 else 2,
-                        overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("save-line"))
-                    // A line kept for it while the save is looked at, so its words coming and going move nothing.
-                    if (compact && looksAtSave) {
-                        Text(lookLine(save.look), style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = 2,
-                            overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("save-look"))
-                    }
-                    if (saveActions.isNotEmpty()) {
-                        // On one line where they fit, as on the Thor's top screen; wrapped on a narrower one.
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                            saveActions.forEach { action ->
-                                LoomButton(action.label, action.onClick,
-                                    Modifier.onFocusChanged { if (it.isFocused) focusedSaveAction = action.label })
-                            }
+                if (saveActions.isNotEmpty()) {
+                    // On one line where they fit, as on the Thor's top screen; wrapped on a narrower one.
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                        saveActions.forEach { action ->
+                            LoomButton(action.label, action.onClick,
+                                Modifier.onFocusChanged { if (it.isFocused) focusedSaveAction = action.label })
                         }
                     }
                 }
@@ -903,13 +856,6 @@ private fun uploadCouldSend(save: GameSave): Boolean = when (save.state) {
     null, SaveSyncState.LOCAL_NEWER, SaveSyncState.WRITING, SaveSyncState.ERROR -> true
     SaveSyncState.SERVER_NEWER, SaveSyncState.CONFLICT, SaveSyncState.NEEDS_FOLDER, SaveSyncState.MOVED -> false
     SaveSyncState.IN_SYNC, SaveSyncState.NO_SAVE, SaveSyncState.LOCAL_MISSING, SaveSyncState.UNSUPPORTED -> !save.autoUpload
-}
-
-private fun saveColor(save: GameSave) = when (save.state) {
-    SaveSyncState.IN_SYNC -> LoomColors.Installed
-    SaveSyncState.CONFLICT, SaveSyncState.ERROR -> LoomColors.Error
-    SaveSyncState.SERVER_NEWER, SaveSyncState.LOCAL_MISSING, SaveSyncState.NEEDS_FOLDER, SaveSyncState.MOVED -> LoomColors.Accent
-    else -> LoomColors.TextMuted
 }
 
 private class DialogAction(val label: String, val primary: Boolean = false, val destructive: Boolean = false, val onClick: () -> Unit)

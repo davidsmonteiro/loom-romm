@@ -13,10 +13,16 @@ import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -572,6 +578,74 @@ class LibraryScreenTest {
         assertThat(calls).containsExactly("filter:ON_DEVICE", "filter:NOT_ON_DEVICE", "filter:ALL").inOrder()
         press(Key.DirectionDown)
         rule.onNodeWithTag("game-2").assertIsFocused() // the first of them
+    }
+
+    // --- a wide window: the focused game's details beside the games ---
+
+    /** Text in the details beside the games, not the game's card of the same name. */
+    private fun beside(text: String, substring: Boolean = false) =
+        rule.onNode(hasText(text, substring = substring) and hasAnyAncestor(hasTestTag("details-beside")))
+
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun aWideWindowShowsTheFocusedGameBesideTheGames() {
+        show()
+        rule.onNodeWithTag("game-1").assertIsFocused()
+        beside("Chrono Trigger").assertExists()
+        beside("On this device at snes/Chrono Trigger.sfc").assertExists()
+        beside("Super Nintendo", substring = true).assertExists() // its platform, size and regions
+        beside("On device").assertExists()
+        rule.onNodeWithTag("platform-rail").assertExists() // and the rest as on the Thor
+    }
+
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun theDetailsBesideFollowTheFocus() {
+        show()
+        press(listOf(Key.DirectionRight, Key.DirectionRight)) // Super Metroid, downloading
+        rule.onNodeWithTag("game-3").assertIsFocused()
+        beside("Super Metroid").assertExists()
+        beside("42%").assertExists()
+        beside("Chrono Trigger").assertDoesNotExist()
+        changeGame(3, games[2].copy(progress = 0.43f)) // its download moves on
+        beside("43%").assertExists()
+    }
+
+    /** Up to the search box, the details beside stay on the game left, as B or Down come back to it. */
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun theDetailsBesideKeepTheLastGameWhenFocusMovesUp() {
+        show()
+        press(Key.DirectionRight)
+        press(Key.DirectionUp)
+        rule.onNodeWithTag("game-2").assertIsNotFocused()
+        beside("EarthBound").assertExists()
+        press(Key.DirectionCenter) // the details too
+        beside("EarthBound").assertExists()
+    }
+
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun nothingBesideTheGamesTakesFocus() {
+        show()
+        val focusable = SemanticsMatcher.keyIsDefined(SemanticsProperties.Focused) and hasAnyAncestor(hasTestTag("details-beside"))
+        rule.onAllNodes(focusable, useUnmergedTree = true).assertCountEquals(0)
+        repeat(4) { press(Key.DirectionRight) } // to the end of the first row, and on
+        rule.onNode(isFocused() and hasAnyAncestor(hasTestTag("details-beside"))).assertDoesNotExist()
+        beside("The Legend of Zelda: A Link to the Past").assertExists() // the row's last game, still
+    }
+
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun aStillOpensTheDetailsOnAWideWindow() {
+        show()
+        press(Key.DirectionRight)
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Download").assertIsFocused() // the details' first button, to act on EarthBound
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("download:2")
+    }
+
+    /** The Thor's top screen, 832 dp wide, has no room for them: it stays as it was. */
+    @Test fun theThorsTopScreenShowsNoDetailsBeside() {
+        show()
+        rule.onNodeWithTag("details-beside").assertDoesNotExist()
+        rule.onNodeWithTag("game-panel").assertDoesNotExist()
     }
 
     /** Found by audit: a sync error was cut to one line in the header, and nothing there led to pairing again. */

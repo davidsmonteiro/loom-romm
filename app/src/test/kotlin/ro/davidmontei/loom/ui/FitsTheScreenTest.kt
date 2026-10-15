@@ -1,24 +1,28 @@
 package ro.davidmontei.loom.ui
 
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -658,6 +662,70 @@ class FitsTheScreenTest {
             assertThat(bounds.bottom).isAtMost(root.bottom)
         }
         rule.saveScreenshot("library-platform-picker")
+    }
+
+    /** The pad's keyboard mode, for a native-graphics window, which starts in touch mode where nothing takes focus. */
+    private val pad = object : InputModeManager {
+        override val inputMode get() = InputMode.Keyboard
+        override fun requestInputMode(inputMode: InputMode) = inputMode == InputMode.Keyboard
+    }
+
+    /**
+     * Whether everything in the node tagged [tag] is on the screen and inside it, every text there whole
+     * but for an ellipsis where its lines run out: none squeezed by a lack of room.
+     */
+    private fun fitsIn(tag: String) {
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        val root = rule.onRoot().fetchSemanticsNode().boundsInRoot
+        val pane = rule.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+        assertThat(pane.bottom).isAtMost(root.bottom)
+        assertThat(pane.right).isAtMost(root.right)
+        val texts = rule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text) and hasAnyAncestor(hasTestTag(tag)), useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        assertThat(texts).isNotEmpty()
+        for (node in texts) {
+            val text = node.config[SemanticsProperties.Text].joinToString()
+            assertWithMessage(text).that(node.boundsInRoot.bottom).isAtMost(pane.bottom)
+            assertWithMessage(text).that(node.boundsInRoot.right).isAtMost(pane.right)
+            val layouts = mutableListOf<TextLayoutResult>()
+            node.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+            val layout = layouts.single()
+            assertWithMessage(text).that(layout.didOverflowHeight && !layout.multiParagraph.didExceedMaxLines).isFalse()
+        }
+    }
+
+    /**
+     * The focused game's details beside the games at their tallest: a title and path long enough to wrap,
+     * a failed save sync's long reason, then a download being moved into place.
+     */
+    private fun theDetailsBesideFit(screenshot: String) {
+        val title = "Pokémon Omega Ruby (USA) (En,Ja,Fr,De,Es,It,Ko) (Rev 2) [Special Demo Edition]"
+        val failed = GameSave(true, SaveSyncState.ERROR, "Couldn't read the save: /storage/6365-3230/ROMs/n3ds/sdmc/Nintendo 3DS/" +
+            "00000000000000000000000000000000/00000000000000000000000000000000/title/00040000/0011c400/data (Permission denied)", "azahar")
+        val game = GameItem(30, title, 3_900_000_000, null, listOf("USA", "Europe", "Japan"), InstallState.INSTALLED, null, null, null,
+            adopted = true, removedOnServer = false, installPath = "n3ds/$title.3ds", save = failed, matchedByName = true)
+        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game) + LibraryScreenTest().state.games))
+        rule.setContent { CompositionLocalProvider(LocalInputModeManager provides pad) { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } } }
+        fitsIn("details-beside")
+        rule.onNode(hasText(title) and hasAnyAncestor(hasTestTag("details-beside"))).assertExists()
+        rule.saveScreenshot(screenshot)
+        val finishing = game.copy(state = InstallState.DOWNLOADING, stateDetail = "Finishing…", progress = 1f, jobId = 30, installPath = null,
+            save = null, finishing = true, adopted = false, matchedByName = false)
+        state = state.copy(games = listOf(finishing) + state.games.drop(1))
+        fitsIn("details-beside")
+        rule.onNode(hasText("Finishing…") and hasAnyAncestor(hasTestTag("details-beside"))).assertExists()
+        rule.saveScreenshot("$screenshot-finishing")
+    }
+
+    /** A phone on its side has the width for the details beside the games, but little height: a small cover beside the title. */
+    @Config(qualifiers = PHONE_LANDSCAPE)
+    @Test fun theDetailsBesideFitAPhoneInLandscape() = theDetailsBesideFit("library-details-beside-phone")
+
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun theDetailsBesideFitATablet() {
+        theDetailsBesideFit("library-details-beside-tablet")
+        val cover = rule.onNodeWithTag("panel-cover").fetchSemanticsNode().boundsInRoot
+        assertThat(with(rule.density) { cover.height.toDp() }).isAtLeast(240.dp) // above the words, and large
     }
 
     /** The question at a platform's first download, with its few options and with every folder of the Thor's ES-DE template. */
