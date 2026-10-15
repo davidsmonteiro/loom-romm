@@ -245,10 +245,11 @@ class SendToDevice(
 
     /**
      * The owner cancelled request [requestId] on RomM: its game leaves the queue, unless it's already
-     * being moved into place or installed.
+     * being moved into place or installed. Heard while a claim is being handled, it waits for that to
+     * end, as the request's game may not be in the queue yet.
      */
     suspend fun cancelled(requestId: String) {
-        downloads.jobForInstallRequest(requestId)?.let { downloads.cancel(it.id) }
+        lock.withLock { downloads.jobForInstallRequest(requestId)?.let { downloads.cancel(it.id) } }
     }
 
     private suspend fun inputs(): Inputs {
@@ -258,25 +259,26 @@ class SendToDevice(
 
     /** Queues [request]'s game and reports how that went. False when there's no use going on now. */
     private suspend fun handle(deviceId: String, token: String, request: InstallRequestDto): Boolean {
-        val report = when (val outcome = queue.queue(request.romId, QueueGame.WhenUnsure.WAIT_IN_QUEUE, request.id)) {
-            is QueueGame.Outcome.Queued, QueueGame.Outcome.AlreadyQueued -> InstallReportRequest(INSTALL_DONE)
-            is QueueGame.Outcome.WaitingForFolder -> {
-                // In the queue all the same: RomM says "Added to downloads", and the owner chooses its folder there.
-                val title = downloads.job(outcome.jobId)?.title ?: outcome.ask.platformName
-                notifications.chooseFolder(title, outcome.ask.platformName)
+        val outcome = queue.queue(request.romId, QueueGame.WhenUnsure.WAIT_IN_QUEUE, request.id)
+        val report = when (outcome) {
+            // A game waiting for its folder is in the queue all the same: RomM says "Added to downloads".
+            is QueueGame.Outcome.Queued, QueueGame.Outcome.AlreadyQueued, is QueueGame.Outcome.WaitingForFolder ->
                 InstallReportRequest(INSTALL_DONE)
-            }
             QueueGame.Outcome.AlreadyInstalled -> InstallReportRequest(INSTALL_ALREADY_INSTALLED)
             is QueueGame.Outcome.Failed ->
                 if (outcome.transient) return true // RomM out of reach or busy for now: the next claim returns it
                 else InstallReportRequest(INSTALL_FAILED, installReason(outcome.message))
             is QueueGame.Outcome.AskFolder -> return true // never, when it can wait in the queue
         }
-        return try {
+        val goOn = try {
             server.call { api -> rommCall { api.reportInstall(deviceId, request.id, report) } }
             true
         } catch (e: RommException.NotFound) {
-            true // cancelled or expired meanwhile, or reported before: it has ended either way
+            // RomM no longer has the request it just handed back: the owner cancelled it meanwhile (or deleted
+            // the device, or switched device installs off). Without the socket, this is the only sign of it.
+            // The game queued for it leaves the queue again; one already queued from the library stays.
+            downloads.jobForInstallRequest(request.id)?.let { downloads.cancel(it.id) }
+            return true
         } catch (e: RommException.Conflict) {
             true // not taken (any more): nothing to report on
         } catch (e: RommException.Unauthorized) {
@@ -290,6 +292,12 @@ class SendToDevice(
         } catch (e: RommException) {
             true // RomM didn't take the report (422, say): the request expires on its own
         }
+        if (outcome is QueueGame.Outcome.WaitingForFolder) {
+            // The owner chooses its folder in the queue.
+            val title = downloads.job(outcome.jobId)?.title ?: outcome.ask.platformName
+            notifications.chooseFolder(title, outcome.ask.platformName)
+        }
+        return goOn
     }
 
     /** Tells RomM what the device can do. A refused device needs pairing again; a passing problem, the next claim. */

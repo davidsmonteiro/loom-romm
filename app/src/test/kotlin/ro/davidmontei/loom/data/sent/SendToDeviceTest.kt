@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -87,6 +88,7 @@ import ro.davidmontei.loom.storage.engine.JobStatus
 import ro.davidmontei.loom.storage.engine.WaitReason
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -306,18 +308,82 @@ class SendToDeviceTest {
         assertThat(fake.reports).containsExactly("req-1" to """{"status":"done"}""")
     }
 
-    /** The owner cancelled one request as Loom reported it: that one has ended, and the next is still reported. */
-    @Test fun aReportOnAGoneRequestEndsThere() = runBlocking<Unit> {
+    /**
+     * The owner cancelled one request just as Loom claimed it: RomM says it's gone when Loom reports, so its
+     * game leaves the queue again, and the next request is still reported. Without the socket, as in the
+     * background, that 404 is the only sign of the cancel.
+     */
+    @Test fun aRequestCancelledAsLoomClaimedItLeavesTheQueue() = runBlocking<Unit> {
         folders("snes")
         fake.send("req-1", 10)
         fake.send("req-2", 11)
-        fake.gone += "req-1"
+        fake.goneAfterClaim += "req-1"
 
         sendToDevice.drain()
 
+        assertThat(fake.reportAttempts).containsExactly("req-1", "req-2").inOrder()
         assertThat(fake.reports).containsExactly("req-2" to """{"status":"done"}""")
+        assertThat(jobFor(10)!!.phase).isEqualTo(JobPhase.CANCELLING.name)
+        assertThat(jobFor(11)!!.phase).isEqualTo(JobPhase.QUEUED.name)
         sendToDevice.drain()
-        assertThat(fake.reports).hasSize(1) // RomM has nothing more to hand back
+        assertThat(fake.reportAttempts).hasSize(2) // RomM has nothing more to hand back
+    }
+
+    /** Picked in the library before RomM sent it: a 404 on the report leaves the owner's own pick alone. */
+    @Test fun aRequestGoneByTheReportLeavesAGameQueuedInTheLibrary() = runBlocking<Unit> {
+        folders("snes")
+        queue.queue(10, QueueGame.WhenUnsure.ASK)
+        fake.send("req-1", 10)
+        fake.goneAfterClaim += "req-1"
+
+        sendToDevice.drain()
+
+        assertThat(fake.reportAttempts).containsExactly("req-1")
+        assertThat(jobFor(10)!!.phase).isEqualTo(JobPhase.QUEUED.name)
+    }
+
+    /** RomM refusing the report is RomM refusing the device: Loom asks to pair again, and stops there. */
+    @Test fun aReportRommRefusesAsksToPairAgainAndStops() = runBlocking<Unit> {
+        folders("snes")
+        fake.send("req-1", 10)
+        fake.send("req-2", 11)
+        fake.reportAnswer = { MockResponse.Builder().code(403).body("""{"detail":"Only the device itself can do this"}""").build() }
+
+        sendToDevice.drain()
+
+        assertThat(fake.reportAttempts).containsExactly("req-1")
+        assertThat(store.snapshot().needsPairing).isTrue()
+    }
+
+    /** RomM out of reach as Loom reports: it stops there, and the next claim reports both, queueing neither twice. */
+    @Test fun aReportThatDoesntReachRommIsMadeAtTheNextClaim() = runBlocking<Unit> {
+        folders("snes")
+        fake.send("req-1", 10)
+        fake.send("req-2", 11)
+        fake.reportAnswer = { MockResponse.Builder().onResponseStart(SocketEffect.ShutdownConnection).build() }
+
+        sendToDevice.drain()
+
+        assertThat(fake.reportAttempts.toSet()).containsExactly("req-1")
+        assertThat(fake.reports).isEmpty()
+        fake.reportAnswer = null
+        sendToDevice.drain()
+        assertThat(fake.reports).containsExactly("req-1" to """{"status":"done"}""", "req-2" to """{"status":"done"}""").inOrder()
+        assertThat(db.downloadDao().jobsIn(JobPhase.QUEUED.name).map { it.romId }).containsExactly(10, 11)
+    }
+
+    /** A report RomM won't take (a 409 or 422) is let go: the game stays queued, and the next request is still reported. */
+    @Test fun aReportRommDoesntTakeIsLetGo() = runBlocking<Unit> {
+        folders("snes")
+        fake.send("req-1", 10)
+        fake.send("req-2", 11)
+        fake.reportAnswer = { id -> if (id == "req-1") MockResponse.Builder().code(422).body("""{"detail":"Bad status"}""").build() else null }
+
+        sendToDevice.drain()
+
+        assertThat(fake.reportAttempts).containsExactly("req-1", "req-2").inOrder()
+        assertThat(fake.reports).containsExactly("req-2" to """{"status":"done"}""")
+        assertThat(jobFor(10)!!.phase).isEqualTo(JobPhase.QUEUED.name)
     }
 
     /** The owner cancelled on RomM before the game started: it leaves the queue. */
@@ -499,6 +565,34 @@ class SendToDeviceTest {
         assertThat(store.snapshot().needsPairing).isFalse()
     }
 
+    /**
+     * The owner cancelled while Loom was queueing the game, before its job existed: the cancel waits for
+     * that, and the game still leaves the queue.
+     */
+    @Test fun aCancelHeardWhileTheGameIsBeingQueuedStillTakesItOut() = runBlocking<Unit> {
+        folders("snes")
+        inFront()
+        until { fake.claims.get() == 1 }
+        val fetching = CountDownLatch(1)
+        val answer = CountDownLatch(1)
+        fake.romAnswer = {
+            fetching.countDown()
+            answer.await(5, TimeUnit.SECONDS)
+            null
+        }
+        fake.send("req-1", 10)
+        socket.send(DeviceEvent.InstallQueued("req-1", 10))
+        withContext(Dispatchers.IO) { assertThat(fetching.await(5, TimeUnit.SECONDS)).isTrue() }
+
+        fake.gone += "req-1" // RomM drops a cancelled request, taken or not
+        socket.send(DeviceEvent.InstallCancelled("req-1", 10))
+        delay(300)
+        answer.countDown()
+
+        until { jobFor(10)?.phase == JobPhase.CANCELLING.name }
+        assertThat(fake.reports).isEmpty()
+    }
+
     /** The owner cancelled on RomM while the game waits for its folder: it leaves the queue. */
     @Test fun aCancelFromTheSocketTakesTheGameOutOfTheQueue() = runBlocking<Unit> {
         folders("snes", "sfc")
@@ -558,14 +652,23 @@ class SendToDeviceTest {
         /** Requests that ended meanwhile (cancelled, expired): a report on one is a 404. */
         val gone: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+        /** Requests the owner cancels just as Loom claims them: handed back by the claim, gone by the report. */
+        val goneAfterClaim: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+        /** Every report Loom tried, by request, whatever RomM answered. */
+        val reportAttempts = CopyOnWriteArrayList<String>()
+
         @Volatile var installsEnabled = true
         @Volatile var deviceDeleted = false
 
         /** The claim's answer when not the usual 200. */
         @Volatile var claimAnswer: Int? = null
 
-        /** `GET api/roms/{id}` when not the game RomM has. */
-        @Volatile var romAnswer: ((Int) -> MockResponse)? = null
+        /** `PUT …/installs/{id}`'s answer, by request, when not RomM's usual one (which a null answer gives). */
+        @Volatile var reportAnswer: ((String) -> MockResponse?)? = null
+
+        /** `GET api/roms/{id}` when not the game RomM has (which a null answer gives). */
+        @Volatile var romAnswer: ((Int) -> MockResponse?)? = null
 
         fun send(id: String, romId: Int) {
             requests[id] = romId
@@ -597,10 +700,13 @@ class SendToDeviceTest {
                 if (!installsEnabled) return error(404, "Installing on a device is disabled on this server")
                 if (deviceDeleted) return error(404, "Device not found")
                 val taken = order.filter { requests.containsKey(it) && it !in gone }
+                gone += goneAfterClaim
                 return json(taken.joinToString(",", "[", "]") { request(it, requests.getValue(it), "taken") })
             }
             Regex("""/api/devices/[^/]+/installs/([^/]+)$""").find(path)?.takeIf { method == "PUT" }?.let { m ->
                 val id = m.groupValues[1]
+                reportAttempts += id
+                reportAnswer?.invoke(id)?.let { return it }
                 val romId = requests[id]
                 if (romId == null || id in gone) return error(404, "Install request not found")
                 requests.remove(id)
