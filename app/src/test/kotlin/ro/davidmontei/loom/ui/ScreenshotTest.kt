@@ -51,6 +51,12 @@ class ScreenshotTest {
         rule.saveScreenshot("queue")
     }
 
+    @Test fun queueWithAGameWaitingForItsFolder() {
+        rule.setContent { LoomTestTheme { ro.davidmontei.loom.ui.queue.QueueContent(QueueScreenTest.withAFolderToChoose, NoopQueueActions) } }
+        settle()
+        rule.saveScreenshot("queue-folder")
+    }
+
     @Test fun queueWithSaves() {
         rule.setContent { LoomTestTheme { ro.davidmontei.loom.ui.queue.QueueContent(QueueScreenTest.withSaves, NoopQueueActions) } }
         settle()
@@ -139,4 +145,9 @@ object NoopQueueActions : ro.davidmontei.loom.ui.queue.QueueActions {
     override fun askSaveFolder(romId: Int, title: String, emulator: String?) = Unit
     override fun chooseSaveFolder(id: String) = Unit
     override fun dismissSaveFolderQuestion() = Unit
+    override fun askFolder(jobId: Long) = Unit
+    override fun chooseFolder(folder: String) = Unit
+    override fun showAllFolders() = Unit
+    override fun showSuggestedFolders() = Unit
+    override fun dismissFolderQuestion() = Unit
 }

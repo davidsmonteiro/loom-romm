@@ -99,6 +99,8 @@ class DrainWorkerTest {
     @Volatile private var later: Pair<Int, ByteArray>? = null
     /** RomM no longer has the game, from the second time it's asked. */
     @Volatile private var goneLater = false
+    /** RomM answers the game's details with 503 (its files still come). */
+    @Volatile private var detailsDown = false
 
     private fun rom(fileId: Int, data: ByteArray) = romJson(10, fileId, data)
 
@@ -114,6 +116,7 @@ class DrainWorkerTest {
             }
             if (path == "/api/roms/10") {
                 events += "rom"
+                if (detailsDown) return MockResponse.Builder().code(503).build()
                 val later = romCalls.incrementAndGet() > 1
                 if (later && goneLater) return MockResponse.Builder().code(404).body("""{"detail":"Rom not found"}""").build()
                 val (fileId, data) = (if (later) this@DrainWorkerTest.later else null) ?: original
@@ -266,6 +269,35 @@ class DrainWorkerTest {
         drain()
         assertThat(installedAt("snes").readBytes()).isEqualTo(original.second)
         assertThat(job()).isNull()
+    }
+
+    // --- a game sent from RomM, waiting in the queue for its platform's folder ---
+
+    /** Waiting for its folder, a game is neither downloaded nor paused by "Pause all": it stays waiting. */
+    @Test fun aGameWaitingForItsFolderIsLeftAlone() {
+        val id = runBlocking { (downloads.enqueue(10, waitForFolder = true) as EnqueueResult.Queued).jobId }
+        runBlocking { downloads.pauseAll() }
+        assertThat(drain()).isEqualTo(ListenableWorker.Result.success())
+        assertThat(job()!!.id).isEqualTo(id)
+        assertThat(job()!!.phase).isEqualTo(JobPhase.WAITING.name)
+        assertThat(events).containsExactly("rom") // queueing only
+    }
+
+    /**
+     * Released into the folder the owner chose, a game goes there even when RomM can't be asked about
+     * it again before downloading (the check then keeps the job's own plan).
+     */
+    @Test fun aReleasedGameGoesInTheChosenFolderEvenWithRommOutOfReach() {
+        runBlocking {
+            downloads.enqueue(10, waitForFolder = true)
+            mapping.chooseFolder("snes", "sfc")
+            downloads.releaseFolderWaits(listOf(1), "sfc")
+        }
+        detailsDown = true
+        drain()
+        assertThat(installedAt("sfc").readBytes()).isEqualTo(original.second)
+        assertThat(installedAt("snes").exists()).isFalse()
+        assertThat(events).containsExactly("rom", "rom", "file:400").inOrder()
     }
 
     // --- queueing a game: RomM is asked for its files first ---

@@ -33,7 +33,7 @@ import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.data.saves.EdenSaves
 import ro.davidmontei.loom.data.saves.SaveLook
-import ro.davidmontei.loom.ui.library.FolderQuestion
+import ro.davidmontei.loom.ui.folders.FolderQuestion
 import ro.davidmontei.loom.ui.saves.SaveFolderOption
 import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 import ro.davidmontei.loom.ui.library.GameSave
@@ -406,12 +406,27 @@ class FitsTheScreenTest {
         val options = listOf(SystemFolder("mame", 0, "Multiple Arcade Machine Emulator"), SystemFolder("arcade", 2, "Arcade"),
             SystemFolder("fbneo", 5, "FinalBurn Neo"), SystemFolder("fba", 0, "FinalBurn Alpha"))
         val game = GameItem(1, "Alley Master", 101_385, null, emptyList(), InstallState.NOT_INSTALLED, null, null, null, false, false, null)
-        val question = FolderQuestion(game, "Arcade", "arcade", "arcade", options, "mame")
+        val question = FolderQuestion(game.id, game.title, 1, "Arcade", "arcade", "arcade", options, "mame")
         var state by mutableStateOf(LibraryScreenTest().state.copy(folderQuestion = question))
         rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
         assertThat(overflow("Where does Cocoon look for Arcade games?")).isEqualTo(0f)
         rule.saveScreenshot("library-folder-question")
         state = state.copy(folderQuestion = question.copy(allFolders = (1..178).map { SystemFolder("system$it", 0, "Some System $it") }))
         assertThat(overflow("Where does Cocoon look for Arcade games?")).isEqualTo(0f)
+    }
+
+    /** The same question asked in the queue, for a game sent from RomM waiting for it, with the longest platform name. */
+    @Test fun theFolderQuestionFitsInTheQueue() {
+        val question = QueueScreenTest.megaDriveFolders.copy(
+            platformName = "Sega Mega Drive/Genesis 32X CD (Sega Mega-CD 32X)",
+            options = listOf(SystemFolder("megadrive", 12, "Sega Mega Drive"), SystemFolder("genesis", 3, "Sega Genesis"),
+                SystemFolder("sega32x", 0, "Sega 32X"), SystemFolder("megacd", 0, "Sega Mega-CD")),
+        )
+        var state by mutableStateOf(QueueScreenTest.withAFolderToChoose.copy(folderQuestion = question))
+        rule.setContent { LoomTestTheme { QueueContent(state, NoopQueueActions) } }
+        assertThat(overflow("Where does Cocoon look for ${question.platformName} games?")).isEqualTo(0f)
+        rule.saveScreenshot("queue-folder-question")
+        state = state.copy(folderQuestion = question.copy(allFolders = (1..178).map { SystemFolder("system$it", 0, "Some System $it") }))
+        assertThat(overflow("Where does Cocoon look for ${question.platformName} games?")).isEqualTo(0f)
     }
 }

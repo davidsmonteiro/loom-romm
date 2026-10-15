@@ -3,10 +3,12 @@ package ro.davidmontei.loom.ui.library
 import ro.davidmontei.loom.data.db.GameRow
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.db.SaveUnitEntity
+import ro.davidmontei.loom.data.download.waitWording
 import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.data.saves.SaveUnitResolver
 import ro.davidmontei.loom.data.saves.emulatorName
 import ro.davidmontei.loom.storage.engine.JobPhase
+import ro.davidmontei.loom.storage.engine.WaitReason
 
 /** What the catalog shows per ROM (the brief's five states). */
 enum class InstallState { NOT_INSTALLED, QUEUED, DOWNLOADING, INSTALLED, FAILED }
@@ -37,6 +39,8 @@ data class GameItem(
     val finishing: Boolean = false,
     /** RomM's large cover art, which the cover drawn is made from ([coverPath] names it). */
     val coverLarge: String? = null,
+    /** Waiting in the queue for its platform's folder to be chosen there. */
+    val needsFolder: Boolean = false,
 )
 
 /** Where an installed game's save stands, as its details show it. */
@@ -122,7 +126,7 @@ fun GameRow.toItem(liveBytes: Long? = null): GameItem {
     val done = liveBytes ?: bytesDone
     val detail = when (jobPhase) {
         JobPhase.PAUSED.name -> "Paused"
-        JobPhase.WAITING.name -> if (waitReason == "STORAGE") "Waiting for the SD card" else "Waiting for Loom to open"
+        JobPhase.WAITING.name -> waitWording(waitReason(), inLibrary = true)
         JobPhase.QUEUED.name -> "Queued"
         JobPhase.VERIFYING.name -> "Verifying"
         JobPhase.EXTRACTING.name -> "Unpacking"
@@ -150,5 +154,8 @@ fun GameRow.toItem(liveBytes: Long? = null): GameItem {
         matchedByName = installSource == "ADOPTED" && installVerifiedBy == "NAME",
         finishing = jobPhase == JobPhase.PROMOTING.name,
         coverLarge = coverLarge,
+        needsFolder = jobPhase == JobPhase.WAITING.name && waitReason() == WaitReason.FOLDER,
     )
 }
+
+private fun GameRow.waitReason(): WaitReason? = WaitReason.entries.firstOrNull { it.name == waitReason }

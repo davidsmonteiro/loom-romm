@@ -71,6 +71,37 @@ class JobMachineTest {
         }
     }
 
+    /**
+     * A game waiting for its folder leaves only when the folder is chosen, or by Cancel. Pause, from
+     * the queue or "Pause all", would let Resume queue it into the default folder unasked.
+     */
+    @Test fun waitingForAFolderAllowsOnlyItsReleaseAndCancel() {
+        val waiting = JobStatus(WAITING, waitReason = WaitReason.FOLDER)
+        val legalHere = mapOf<JobEvent, JobPhase>(JobEvent.ConditionRestored to QUEUED, JobEvent.Cancel to CANCELLING)
+        for (event in events) {
+            val expected = legalHere[event]
+            if (expected != null) {
+                assertWithMessage("WAITING(FOLDER) + $event").that(JobMachine.next(waiting, event)).isEqualTo(JobStatus(expected))
+            } else {
+                assertWithMessage("WAITING(FOLDER) + $event must be rejected").that(JobMachine.canApply(waiting, event)).isFalse()
+            }
+        }
+    }
+
+    @Test fun aGameWaitingForItsFolderCantBePausedButCanBeCancelled() {
+        val waiting = JobStatus(WAITING, waitReason = WaitReason.FOLDER)
+        assertThrows(IllegalTransitionException::class.java) { JobMachine.next(waiting, JobEvent.Pause) }
+        assertThat(JobMachine.next(waiting, JobEvent.Cancel).phase).isEqualTo(CANCELLING)
+        assertThat(JobMachine.next(JobStatus(WAITING, waitReason = WaitReason.STORAGE), JobEvent.Pause).phase).isEqualTo(PAUSED)
+    }
+
+    /** A running job already has its folder: nothing can send it back to wait for one. */
+    @Test fun aRunningJobNeverWaitsForAFolder() {
+        for (p in listOf(DOWNLOADING, VERIFYING, EXTRACTING, PROMOTING)) {
+            assertThat(JobMachine.canApply(JobStatus(p), JobEvent.Wait(WaitReason.FOLDER))).isFalse()
+        }
+    }
+
     @Test fun claimOnlyIntoActivePhases() {
         assertThrows(IllegalTransitionException::class.java) { JobMachine.next(JobStatus.Queued, JobEvent.Claimed(PAUSED)) }
     }

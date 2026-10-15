@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -55,10 +54,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,7 +72,9 @@ import ro.davidmontei.loom.data.catalog.CoverRef
 import ro.davidmontei.loom.data.catalog.CoverStore
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.data.db.SaveSyncState
+import ro.davidmontei.loom.data.download.waitWording
 import ro.davidmontei.loom.data.saves.emulatorName
+import ro.davidmontei.loom.storage.engine.WaitReason
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.ui.components.ButtonHint
 import ro.davidmontei.loom.ui.components.FocusRingIndication
@@ -84,7 +83,6 @@ import ro.davidmontei.loom.ui.components.LoomButton
 import ro.davidmontei.loom.ui.components.LoomChip
 import ro.davidmontei.loom.ui.components.LoomDialog
 import ro.davidmontei.loom.ui.components.LoomProgressBar
-import ro.davidmontei.loom.ui.components.LoomRow
 import ro.davidmontei.loom.ui.components.LoomTextField
 import ro.davidmontei.loom.ui.components.ScreenScaffold
 import ro.davidmontei.loom.ui.components.Space
@@ -92,6 +90,8 @@ import ro.davidmontei.loom.ui.components.StatusBadge
 import ro.davidmontei.loom.ui.components.ago
 import ro.davidmontei.loom.ui.components.dateTime
 import ro.davidmontei.loom.ui.components.gameCount
+import ro.davidmontei.loom.ui.folders.FolderQuestion
+import ro.davidmontei.loom.ui.folders.FolderQuestionDialog
 import ro.davidmontei.loom.ui.input.PadAction
 import ro.davidmontei.loom.ui.input.onPadAction
 import ro.davidmontei.loom.ui.saves.ReplaceSaveDialog
@@ -352,69 +352,11 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
         LaunchedEffect(state.folderQuestion != null) {
             if (state.folderQuestion != null) { detailsFor = null; confirmOffload = null; confirmRestore = null }
         }
-        state.folderQuestion?.let { FolderQuestionDialog(it, actions) }
+        state.folderQuestion?.let {
+            FolderQuestionDialog(it, actions::chooseFolder, actions::showAllFolders, actions::showSuggestedFolders, actions::dismissFolderQuestion)
+        }
         state.saveFolderQuestion?.let { SaveFolderDialog(it, actions::chooseSaveFolder, actions::dismissSaveFolderQuestion) }
     }
-}
-
-/**
- * Where a platform's games go, when the card has several folders that could be the one Cocoon reads.
- * Focus starts on the likeliest, so A takes it; "Another folder…" lists every folder in the ROMs folder.
- */
-@Composable
-private fun FolderQuestionDialog(q: FolderQuestion, actions: LibraryActions) {
-    LoomDialog(
-        title = "Where does Cocoon look for ${q.platformName} games?",
-        // B from every folder goes back to the likely ones; from those it drops the download.
-        onDismiss = if (q.allFolders != null) actions::showSuggestedFolders else actions::dismissFolderQuestion,
-        body = {
-            Text(
-                if (q.allFolders == null) "Your card has more than one folder these games could go in. Loom remembers your " +
-                    "answer; Settings › Platform folders can change it."
-                else "Every folder in your ROMs folder.",
-                style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted,
-            )
-            val folders = q.allFolders ?: q.options
-            val grid = rememberLazyGridState()
-            val suggested = remember { FocusRequester() }
-            // After the dialog's own first focus: scroll the likeliest into view, then focus it. Again when
-            // the pad is pressed after a tap (touch mode focuses nothing), before that press is replayed.
-            val keyboard = LocalInputModeManager.current.inputMode == InputMode.Keyboard
-            LaunchedEffect(folders, keyboard) {
-                val index = folders.indexOfFirst { it.name == q.suggested }.coerceAtLeast(0)
-                grid.scrollToItem(index)
-                delay(50)
-                runCatching { suggested.requestFocus() }
-            }
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
-                state = grid,
-                modifier = Modifier.fillMaxWidth().heightIn(max = 168.dp).testTag("folder-options"),
-                contentPadding = PaddingValues(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(Space.s),
-                verticalArrangement = Arrangement.spacedBy(Space.s),
-            ) {
-                items(folders, key = { it.name }) { folder ->
-                    LoomRow(
-                        title = "${folder.name}/",
-                        subtitle = folder.systemName,
-                        subtitleLines = 1,
-                        dense = true,
-                        trailing = {
-                            Text(if (folder.games == 0) "empty" else gameCount(folder.games),
-                                style = MaterialTheme.typography.labelMedium.tabular(), color = LoomColors.TextMuted)
-                        },
-                        onClick = { actions.chooseFolder(folder.name) },
-                        modifier = (if (folder.name == q.suggested) Modifier.focusRequester(suggested) else Modifier).testTag("folder-${folder.name}"),
-                    )
-                }
-            }
-        },
-        buttons = { first ->
-            if (q.allFolders == null) LoomButton("Another folder…", actions::showAllFolders, Modifier.focusRequester(first))
-            LoomButton("Cancel", actions::dismissFolderQuestion, if (q.allFolders == null) Modifier else Modifier.focusRequester(first))
-        },
-    )
 }
 
 @Composable
@@ -679,7 +621,9 @@ private fun StateBadge(game: GameItem) {
             game.stateDetail.takeIf { game.finishing } ?: game.progress?.let { "${(it * 100).toInt()}%" } ?: (game.stateDetail ?: "Downloading"),
             color = LoomColors.Accent, onColor = LoomColors.OnAccent,
         )
-        InstallState.QUEUED -> StatusBadge(game.stateDetail ?: "Queued", color = LoomColors.SurfaceHighest, onColor = LoomColors.Text)
+        // The badge is short; the details and the list's line say where the folder is chosen.
+        InstallState.QUEUED -> StatusBadge(if (game.needsFolder) waitWording(WaitReason.FOLDER) else game.stateDetail ?: "Queued",
+            color = LoomColors.SurfaceHighest, onColor = LoomColors.Text)
         InstallState.FAILED -> StatusBadge("Failed", color = LoomColors.Error, onColor = LoomColors.OnError)
         InstallState.NOT_INSTALLED -> if (game.removedOnServer) StatusBadge("Removed from RomM", color = LoomColors.SurfaceHighest, onColor = LoomColors.TextMuted)
     }

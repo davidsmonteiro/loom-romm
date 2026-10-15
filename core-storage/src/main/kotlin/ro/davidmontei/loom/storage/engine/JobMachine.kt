@@ -22,6 +22,12 @@ enum class WaitReason {
 
     /** Android refused to start the foreground service from the background; opening Loom resumes. */
     APP_OPEN,
+
+    /**
+     * Queued so from the start: several folders on the card could be its platform's, and nobody was
+     * there to ask (a game sent from RomM). Choosing the folder in the queue releases it.
+     */
+    FOLDER,
 }
 
 @Serializable
@@ -79,6 +85,7 @@ class IllegalTransitionException(from: JobStatus, event: JobEvent) :
  *    ├──Interrupted───────┤ (any active phase)                         │ the install is being
  *    ├──Resume── PAUSED ◀─┤ Pause (not PROMOTING)                      │ moved into place
  *    ├──Restored─ WAITING ◀┤ Wait(storage | app open)
+ *    ├──Restored─ WAITING(folder)   queued so; never paused, as resuming would skip choosing its folder
  *    └──Retry─── FAILED ◀─┘ Failed / checksum (2nd)
  * any non-active, non-terminal ──Cancel──▶ CANCELLING ──CleanedUp──▶ DONE
  * ```
@@ -99,11 +106,15 @@ object JobMachine {
             JobEvent.Extracted -> if (p == JobPhase.EXTRACTING) JobStatus(JobPhase.PROMOTING) else null
             JobEvent.Promoted -> if (p == JobPhase.PROMOTING) JobStatus(JobPhase.DONE) else null
             is JobEvent.Failed -> if (p.isActive) JobStatus(JobPhase.FAILED, failure = event.failure) else null
-            is JobEvent.Wait -> if (p.isActive) JobStatus(JobPhase.WAITING, waitReason = event.reason) else null
+            // A job waits for its folder only from the start: running, it already has one.
+            is JobEvent.Wait -> if (p.isActive && event.reason != WaitReason.FOLDER) {
+                JobStatus(JobPhase.WAITING, waitReason = event.reason)
+            } else null
             JobEvent.Interrupted -> if (p.isActive) JobStatus.Queued else null
             JobEvent.Pause -> when (p) {
-                JobPhase.QUEUED, JobPhase.WAITING, JobPhase.DOWNLOADING, JobPhase.VERIFYING, JobPhase.EXTRACTING ->
-                    JobStatus(JobPhase.PAUSED)
+                // Resume would queue it, into the default folder, without the question it waits for.
+                JobPhase.WAITING -> if (from.waitReason == WaitReason.FOLDER) null else JobStatus(JobPhase.PAUSED)
+                JobPhase.QUEUED, JobPhase.DOWNLOADING, JobPhase.VERIFYING, JobPhase.EXTRACTING -> JobStatus(JobPhase.PAUSED)
                 JobPhase.PAUSED -> from
                 else -> null
             }

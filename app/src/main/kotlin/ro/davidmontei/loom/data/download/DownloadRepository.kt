@@ -60,14 +60,18 @@ class DownloadRepository(
     val jobs = dao.observeJobs()
     val recentInstalls = dao.observeRecentInstalls()
 
+    suspend fun job(jobId: Long): DownloadJobEntity? = dao.job(jobId)
+
     /** Whether [romId] has a job in the queue, failed ones included. */
     suspend fun hasJob(romId: Int): Boolean = dao.jobForRom(romId) != null
 
     /**
      * Queues [romId], planned from what RomM has now ([known], when the caller just asked RomM for it).
-     * [installRequestId]: the RomM install request that sent the game, kept on its job.
+     * [installRequestId]: the RomM install request that sent the game, kept on its job. With
+     * [waitForFolder] the job waits in the queue until its platform's folder is chosen
+     * ([releaseFolderWaits]); it is planned for the default folder meanwhile.
      */
-    suspend fun enqueue(romId: Int, installRequestId: String? = null, known: RomDto? = null): EnqueueResult {
+    suspend fun enqueue(romId: Int, installRequestId: String? = null, waitForFolder: Boolean = false, known: RomDto? = null): EnqueueResult {
         dao.jobForRom(romId)?.let { existing ->
             if (existing.phase == JobPhase.FAILED.name) {
                 retry(existing.id)
@@ -95,16 +99,36 @@ class DownloadRepository(
         }
         val title = catalog.rom(romId)?.title ?: rom.name ?: rom.fsNameNoTags
         val now = nowMs()
+        val status = if (waitForFolder) JobStatus(JobPhase.WAITING, waitReason = WaitReason.FOLDER) else JobStatus.Queued
         val id = dao.insertJobWithParts(
             DownloadJobEntity(
-                romId = romId, platformId = rom.platformId, title = title, phase = JobPhase.QUEUED.name,
+                romId = romId, platformId = rom.platformId, title = title, phase = status.phase.name, waitReason = status.waitReason?.name,
                 planJson = EngineJson.encodeToString(DownloadPlan.serializer(), plan), fingerprint = plan.fingerprint,
                 volumeUuid = volume.id, stagingRoot = volume.stagingRoot.path, romsRoot = romsRoot,
                 bytesTotal = plan.totalBytes, queueOrder = now, updatedAt = now, installRequestId = installRequestId,
             ),
         ) { jobId -> partsFor(jobId, plan).map { it.toEntity() } }
-        kicker.kick()
+        if (!waitForFolder) kicker.kick()
         return EnqueueResult.Queued(id)
+    }
+
+    /** The jobs waiting for their platform's folder to be chosen. */
+    suspend fun waitingForFolder(): List<DownloadJobEntity> =
+        dao.jobsIn(JobPhase.WAITING.name).filter { it.waitReason == WaitReason.FOLDER.name }
+
+    /**
+     * The folder of the platforms [platformIds] was chosen: their games waiting for it join the queue,
+     * planned for [folder]. Written into the job, so it holds even when RomM can't be asked again
+     * before the download (which keeps the plan it has then).
+     */
+    suspend fun releaseFolderWaits(platformIds: Collection<Int>, folder: String) {
+        var any = false
+        for (job in waitingForFolder()) {
+            if (job.platformId !in platformIds) continue
+            dao.setPlanJson(job.id, EngineJson.encodeToString(DownloadPlan.serializer(), job.plan().copy(systemFolder = folder)))
+            if (apply(job.id, JobEvent.ConditionRestored)) any = true
+        }
+        if (any) kicker.kick()
     }
 
     /** The game as RomM has it now. Throws [NotPairedException] or [RommException], which [whyNot] puts in words. */

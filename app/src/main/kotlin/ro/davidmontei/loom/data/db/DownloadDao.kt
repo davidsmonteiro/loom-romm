@@ -112,6 +112,10 @@ interface DownloadDao {
     )
     suspend fun replacePlan(id: Long, planJson: String, fingerprint: String, bytesTotal: Long)
 
+    /** The same plan with one field changed (its folder): its parts and what's on disk still hold. */
+    @Query("UPDATE download_jobs SET plan_json = :planJson WHERE id = :id")
+    suspend fun setPlanJson(id: Long, planJson: String)
+
     @Transaction
     suspend fun replan(id: Long, planJson: String, fingerprint: String, bytesTotal: Long, parts: List<DownloadPartEntity>) {
         replacePlan(id, planJson, fingerprint, bytesTotal)

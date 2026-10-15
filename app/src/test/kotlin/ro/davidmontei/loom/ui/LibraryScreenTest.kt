@@ -41,7 +41,7 @@ import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.saves.EdenSaves
 import ro.davidmontei.loom.data.saves.SaveLook
-import ro.davidmontei.loom.ui.library.FolderQuestion
+import ro.davidmontei.loom.ui.folders.FolderQuestion
 import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.InstallState
@@ -998,7 +998,7 @@ class LibraryScreenTest {
     // --- the folder question, at a platform's first download when the card has several candidates ---
 
     private val arcadeQuestion = FolderQuestion(
-        game = games[1], platformName = "Arcade", slug = "arcade", fsSlug = "arcade",
+        romId = games[1].id, title = games[1].title, platformId = 1, platformName = "Arcade", slug = "arcade", fsSlug = "arcade",
         options = listOf(SystemFolder("mame", 0, "Multiple Arcade Machine Emulator"), SystemFolder("arcade", 0, "Arcade"),
             SystemFolder("fbneo", 0, "FinalBurn Neo"), SystemFolder("fba", 0, "FinalBurn Alpha")),
         suggested = "mame",

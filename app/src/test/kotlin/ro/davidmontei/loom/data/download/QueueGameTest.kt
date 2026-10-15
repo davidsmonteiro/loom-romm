@@ -50,6 +50,8 @@ import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.romm.pairing.PairedCredentials
 import ro.davidmontei.loom.storage.engine.JobPhase
+import ro.davidmontei.loom.storage.engine.JobStatus
+import ro.davidmontei.loom.storage.engine.WaitReason
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -127,6 +129,12 @@ class QueueGameTest {
 
     private suspend fun job() = db.downloadDao().jobForRom(10)
 
+    /** X in the library: someone is there to answer. */
+    private suspend fun fromLibrary(romId: Int) = queue.queue(romId, QueueGame.WhenUnsure.ASK)
+
+    /** Sent from RomM's web UI, by install request [request]: nobody is there to ask. */
+    private suspend fun fromRomm(romId: Int, request: String = "req-$romId") = queue.queue(romId, QueueGame.WhenUnsure.WAIT_IN_QUEUE, request)
+
     private fun syncsStarted() = WorkManager.getInstance(context).getWorkInfosForUniqueWork(CatalogSyncWorker.UNIQUE_NAME).get().size
 
     /** SNES games already in sfc/, none in snes/: they go in sfc/, said the one time it's decided, and kept. */
@@ -134,7 +142,7 @@ class QueueGameTest {
         folders("snes", "sfc")
         File(roms, "sfc/Super Metroid.sfc").writeBytes(ByteArray(8))
 
-        val outcome = queue.queue(10)
+        val outcome = fromLibrary(10)
 
         assertThat(outcome).isEqualTo(QueueGame.Outcome.Queued(job()!!.id, "Super Nintendo games go in sfc/"))
         assertThat(job()!!.plan().systemFolder).isEqualTo("sfc")
@@ -145,10 +153,10 @@ class QueueGameTest {
     @Test fun anAmbiguousCardAsksWhenAskingIsWanted() = runBlocking<Unit> {
         folders("snes", "sfc")
 
-        val outcome = queue.queue(10)
+        val outcome = fromLibrary(10)
 
         assertThat(outcome).isEqualTo(QueueGame.Outcome.AskFolder(
-            FolderAsk(10, "Super Nintendo", "snes", "snes", listOf(SystemFolder("snes", 0), SystemFolder("sfc", 0)), "snes"),
+            FolderAsk(10, 1, "Super Nintendo", "snes", "snes", listOf(SystemFolder("snes", 0), SystemFolder("sfc", 0)), "snes"),
         ))
         assertThat(job()).isNull()
         assertThat(mapping.currentMapper().resolve("snes", "snes").folderChosen).isFalse()
@@ -156,7 +164,7 @@ class QueueGameTest {
 
     @Test fun theAnswerIsRememberedAndTheGameQueued() = runBlocking<Unit> {
         folders("snes", "sfc")
-        queue.queue(10)
+        fromLibrary(10)
 
         val outcome = queue.folderChosen("snes", "sfc", thenQueue = 10)
 
@@ -174,25 +182,25 @@ class QueueGameTest {
             VerifiedBy.SIZE, InstallSource.ADOPTED, null, 0,
         ))
 
-        assertThat(queue.queue(10)).isEqualTo(QueueGame.Outcome.AlreadyInstalled)
+        assertThat(fromLibrary(10)).isEqualTo(QueueGame.Outcome.AlreadyInstalled)
         assertThat(romm.requestCount).isEqualTo(0)
     }
 
     @Test fun aQueuedGameIsAlreadyQueued() = runBlocking<Unit> {
         folders("snes")
-        queue.queue(10)
+        fromLibrary(10)
 
-        assertThat(queue.queue(10)).isEqualTo(QueueGame.Outcome.AlreadyQueued)
+        assertThat(fromLibrary(10)).isEqualTo(QueueGame.Outcome.AlreadyQueued)
         assertThat(romm.requestCount).isEqualTo(1)
     }
 
     /** Queued again after it failed: the same job goes back in the queue, now carrying the request RomM sent it with. */
     @Test fun aFailedDownloadIsRetried() = runBlocking<Unit> {
         folders("snes")
-        val id = (queue.queue(10) as QueueGame.Outcome.Queued).jobId
+        val id = (fromLibrary(10) as QueueGame.Outcome.Queued).jobId
         db.downloadDao().setPhase(id, JobPhase.QUEUED.name, JobPhase.FAILED.name, null, "NETWORK", "Timed out", true, 1)
 
-        assertThat(queue.queue(10, installRequestId = "req-1")).isEqualTo(QueueGame.Outcome.Queued(id))
+        assertThat(fromRomm(10, "req-1")).isEqualTo(QueueGame.Outcome.Queued(id))
         assertThat(job()!!.phase).isEqualTo(JobPhase.QUEUED.name)
         assertThat(job()!!.installRequestId).isEqualTo("req-1")
     }
@@ -202,7 +210,7 @@ class QueueGameTest {
         folders("snes")
         romm.close()
 
-        assertThat(queue.queue(10)).isEqualTo(QueueGame.Outcome.Failed("Can't reach the RomM server", transient = true))
+        assertThat(fromLibrary(10)).isEqualTo(QueueGame.Outcome.Failed("Can't reach the RomM server", transient = true))
         assertThat(job()).isNull()
     }
 
@@ -210,12 +218,12 @@ class QueueGameTest {
     @Test fun rommFailingForNowIsTransientButAGameItNoLongerHasIsNot() = runBlocking<Unit> {
         folders("snes")
         answer = { MockResponse.Builder().code(503).build() }
-        assertThat((queue.queue(10) as QueueGame.Outcome.Failed).transient).isTrue()
+        assertThat((fromLibrary(10) as QueueGame.Outcome.Failed).transient).isTrue()
         answer = { MockResponse.Builder().code(409).body("""{"detail":"Busy"}""").build() }
-        assertThat((queue.queue(10) as QueueGame.Outcome.Failed).transient).isTrue()
+        assertThat((fromLibrary(10) as QueueGame.Outcome.Failed).transient).isTrue()
 
         answer = { MockResponse.Builder().code(404).body("""{"detail":"Rom not found"}""").build() }
-        assertThat(queue.queue(10)).isEqualTo(QueueGame.Outcome.Failed("RomM no longer has this game. Sync the library to update it."))
+        assertThat(fromLibrary(10)).isEqualTo(QueueGame.Outcome.Failed("RomM no longer has this game. Sync the library to update it."))
         assertThat(job()).isNull()
     }
 
@@ -223,11 +231,88 @@ class QueueGameTest {
     @Test fun aGameNotInTheLibraryYetIsPlacedByWhatRommSaysAndTheLibrarySyncs() = runBlocking<Unit> {
         folders("sfc")
 
-        val outcome = queue.queue(77)
+        val outcome = fromLibrary(77)
 
         assertThat(outcome).isEqualTo(QueueGame.Outcome.Queued(db.downloadDao().jobForRom(77)!!.id, "snes games go in sfc/"))
         assertThat(db.downloadDao().jobForRom(77)!!.plan().systemFolder).isEqualTo("sfc")
         assertThat(romm.requestCount).isEqualTo(1) // asked once, for its platform and its files
         assertThat(syncsStarted()).isEqualTo(1)
+    }
+
+    // --- a sent game waits in the queue for its folder ---
+
+    /** Nobody to ask: the game waits in the queue, from RomM's request, planned for the default folder until it's chosen. */
+    @Test fun anAmbiguousSentGameWaitsInTheQueue() = runBlocking<Unit> {
+        folders("snes", "sfc")
+
+        val outcome = fromRomm(10)
+
+        val job = job()!!
+        assertThat(outcome).isEqualTo(QueueGame.Outcome.WaitingForFolder(job.id,
+            FolderAsk(10, 1, "Super Nintendo", "snes", "snes", listOf(SystemFolder("snes", 0), SystemFolder("sfc", 0)), "snes")))
+        assertThat(job.status()).isEqualTo(JobStatus(JobPhase.WAITING, waitReason = WaitReason.FOLDER))
+        assertThat(job.installRequestId).isEqualTo("req-10")
+        assertThat(job.plan().systemFolder).isEqualTo("snes")
+        assertThat(mapping.currentMapper().resolve("snes", "snes").folderChosen).isFalse()
+        // "Pause all" from the notification leaves it waiting: resuming would put it in the default folder unasked.
+        downloads.pauseAll()
+        assertThat(job()!!.status().waitReason).isEqualTo(WaitReason.FOLDER)
+    }
+
+    /** One answer, asked about one of them, settles the platform: every game of it waiting goes in the chosen folder. */
+    @Test fun answeringReleasesEveryWaitingGameOfThatPlatformIntoTheChosenFolder() = runBlocking<Unit> {
+        folders("snes", "sfc")
+        db.catalogDao().upsertRoms(listOf(rom(11)))
+        val first = (fromRomm(10) as QueueGame.Outcome.WaitingForFolder).jobId
+        val second = (fromRomm(11) as QueueGame.Outcome.WaitingForFolder).jobId
+
+        val ask = (queue.askFolder(first) as QueueGame.Outcome.AskFolder).ask
+        assertThat(queue.folderChosen(ask.fsSlug, "sfc", thenQueue = null, platformId = ask.platformId)).isNull()
+
+        for (id in listOf(first, second)) {
+            val job = db.downloadDao().job(id)!!
+            assertThat(job.phase).isEqualTo(JobPhase.QUEUED.name)
+            assertThat(job.plan().systemFolder).isEqualTo("sfc")
+        }
+        assertThat(mapping.currentMapper().resolve("snes", "snes").folder).isEqualTo("sfc")
+    }
+
+    /** The library's own question, answered, releases the platform's waiting games too. */
+    @Test fun theLibrarysAnswerReleasesWaitingGamesAsWell() = runBlocking<Unit> {
+        folders("snes", "sfc")
+        db.catalogDao().upsertRoms(listOf(rom(11)))
+        val sent = (fromRomm(10) as QueueGame.Outcome.WaitingForFolder).jobId
+        val ask = (fromLibrary(11) as QueueGame.Outcome.AskFolder).ask
+
+        val outcome = queue.folderChosen(ask.fsSlug, "sfc", thenQueue = 11, platformId = ask.platformId)
+
+        assertThat(outcome).isEqualTo(QueueGame.Outcome.Queued(db.downloadDao().jobForRom(11)!!.id))
+        assertThat(db.downloadDao().job(sent)!!.let { it.phase to it.plan().systemFolder }).isEqualTo(JobPhase.QUEUED.name to "sfc")
+    }
+
+    /** A folder chosen meanwhile in Settings › Platform folders: the waiting game goes there, and asking it does that too. */
+    @Test fun aFolderChosenInSettingsReleasesWaitingGames() = runBlocking<Unit> {
+        folders("snes", "sfc")
+        db.catalogDao().upsertRoms(listOf(rom(11)))
+        val first = (fromRomm(10) as QueueGame.Outcome.WaitingForFolder).jobId
+        mapping.chooseFolder("snes", "sfc")
+
+        queue.releaseDecided()
+
+        assertThat(db.downloadDao().job(first)!!.let { it.phase to it.plan().systemFolder }).isEqualTo(JobPhase.QUEUED.name to "sfc")
+
+        // Sent once the choice was made: it goes in at once.
+        assertThat(fromRomm(11)).isEqualTo(QueueGame.Outcome.Queued(db.downloadDao().jobForRom(11)!!.id))
+    }
+
+    /** Asked about after its folder was settled some other way: there's nothing to ask, and it goes ahead. */
+    @Test fun askingAboutAGameWhoseFolderWasSettledLetsItGo() = runBlocking<Unit> {
+        folders("snes", "sfc")
+        val id = (fromRomm(10) as QueueGame.Outcome.WaitingForFolder).jobId
+        File(roms, "sfc/Super Metroid.sfc").writeBytes(ByteArray(8)) // the card now says where SNES games go
+
+        assertThat(queue.askFolder(id)).isEqualTo(QueueGame.Outcome.Queued(id, "Super Nintendo games go in sfc/"))
+        assertThat(job()!!.let { it.phase to it.plan().systemFolder }).isEqualTo(JobPhase.QUEUED.name to "sfc")
+        assertThat(queue.askFolder(id)).isNull() // no longer waiting
     }
 }

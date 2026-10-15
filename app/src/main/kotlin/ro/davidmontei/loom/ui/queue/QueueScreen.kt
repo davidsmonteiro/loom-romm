@@ -57,7 +57,10 @@ import kotlinx.coroutines.launch
 import ro.davidmontei.loom.data.db.RecentInstall
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.download.DownloadRepository
+import ro.davidmontei.loom.data.download.QueueGame
 import ro.davidmontei.loom.data.download.status
+import ro.davidmontei.loom.data.download.waitWording
+import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.saves.ConflictChoice
 import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.ServerSaveInfo
@@ -75,6 +78,9 @@ import ro.davidmontei.loom.ui.components.ScreenScaffold
 import ro.davidmontei.loom.ui.components.SectionHeader
 import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.StatusBadge
+import ro.davidmontei.loom.ui.folders.FolderQuestion
+import ro.davidmontei.loom.ui.folders.FolderQuestionDialog
+import ro.davidmontei.loom.ui.folders.toQuestion
 import ro.davidmontei.loom.ui.input.PadAction
 import ro.davidmontei.loom.ui.input.onPadAction
 import ro.davidmontei.loom.ui.saves.ReplaceSaveDialog
@@ -98,9 +104,11 @@ data class QueueItem(
     val bytesTotal: Long,
     val bytesPerSecond: Long,
     val retryable: Boolean,
+    /** Waiting for its platform's folder to be chosen: A asks, and it can't be paused (resuming would skip the question). */
+    val needsFolder: Boolean = false,
 ) {
-    val canPause get() = phase == JobPhase.QUEUED || phase == JobPhase.WAITING || phase == JobPhase.DOWNLOADING ||
-        phase == JobPhase.VERIFYING || phase == JobPhase.EXTRACTING
+    val canPause get() = !needsFolder && (phase == JobPhase.QUEUED || phase == JobPhase.WAITING || phase == JobPhase.DOWNLOADING ||
+        phase == JobPhase.VERIFYING || phase == JobPhase.EXTRACTING)
     val failed get() = phase == JobPhase.FAILED
     /** Moving into place (finishing) can't be stopped half way. */
     val canCancel get() = phase != JobPhase.PROMOTING
@@ -115,6 +123,8 @@ data class QueueUiState(
     val recentSaves: List<RecentSave> = emptyList(),
     /** Which save folder is a conflicting game's, asked from its conflict ([QueueActions.askSaveFolder]). */
     val saveFolderQuestion: SaveFolderQuestion? = null,
+    /** Where a waiting game's platform's games go, asked from its row ([QueueActions.askFolder]). */
+    val folderQuestion: FolderQuestion? = null,
 )
 
 /** A row of the queue: a section header, a save to settle or restore, or a job. */
@@ -141,15 +151,28 @@ interface QueueActions {
     /** The answer to [QueueUiState.saveFolderQuestion]: a [SaveFolderOption.id]. The game's save is looked at again. */
     fun chooseSaveFolder(id: String)
     fun dismissSaveFolderQuestion()
+    /** A on game [jobId], waiting for its platform's folder: asks where its games go ([QueueUiState.folderQuestion]). */
+    fun askFolder(jobId: Long)
+    /** The answer to [QueueUiState.folderQuestion]: remembered, and every game of the platform waiting for it goes there. */
+    fun chooseFolder(folder: String)
+    fun showAllFolders()
+    fun showSuggestedFolders()
+    fun dismissFolderQuestion()
 }
 
 @HiltViewModel
-class QueueViewModel @Inject constructor(private val downloads: DownloadRepository, private val saves: SaveRepository) : ViewModel(), QueueActions {
+class QueueViewModel @Inject constructor(
+    private val downloads: DownloadRepository,
+    private val saves: SaveRepository,
+    private val queueGame: QueueGame,
+    private val folders: FolderChooser,
+) : ViewModel(), QueueActions {
     /** What RomM said about each conflict's server save (Loom doesn't keep its size or origin), by save id. */
     private val serverSaves = MutableStateFlow<Map<Int, ServerSaveInfo>>(emptyMap())
     /** Games an answer or a restore is being carried out for. */
     private val busy = MutableStateFlow<Set<Int>>(emptySet())
     private val saveFolderQuestion = MutableStateFlow<SaveFolderQuestion?>(null)
+    private val folderQuestion = MutableStateFlow<FolderQuestion?>(null)
 
     /** What the queue's saves need besides the rows themselves. */
     private class SaveExtras(val server: Map<Int, ServerSaveInfo>, val busy: Set<Int>, val chosen: Set<Int>, val question: SaveFolderQuestion?)
@@ -157,7 +180,7 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages: Flow<String> = _messages.receiveAsFlow()
 
-    private val jobRows = combine(downloads.jobs, downloads.progress, downloads.recentInstalls) { jobs, live, recent ->
+    private val jobRows = combine(downloads.jobs, downloads.progress, downloads.recentInstalls, folderQuestion) { jobs, live, recent, question ->
         val items = jobs.filter { it.phase != JobPhase.CANCELLING.name }.map { job ->
             val status = job.status()
             val p = live[job.id]
@@ -167,7 +190,7 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
                 phase = status.phase,
                 label = when (status.phase) {
                     JobPhase.QUEUED -> "Queued"
-                    JobPhase.WAITING -> if (status.waitReason == WaitReason.STORAGE) "Waiting for the SD card" else "Waiting for Loom to open"
+                    JobPhase.WAITING -> waitWording(status.waitReason)
                     JobPhase.PAUSED -> "Paused"
                     JobPhase.DOWNLOADING -> "Downloading"
                     JobPhase.VERIFYING -> "Checking files"
@@ -181,9 +204,11 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
                 bytesTotal = job.bytesTotal,
                 bytesPerSecond = if (status.phase == JobPhase.DOWNLOADING) p?.bytesPerSecond ?: 0 else 0,
                 retryable = status.failure?.retryable ?: true,
+                needsFolder = status.phase == JobPhase.WAITING && status.waitReason == WaitReason.FOLDER,
             )
         }
-        QueueUiState(items.filterNot { it.failed }, items.filter { it.failed }, recent)
+        // Games waiting for their folder first, so the queue opens on what only the owner can settle.
+        QueueUiState(items.filterNot { it.failed }.sortedByDescending { it.needsFolder }, items.filter { it.failed }, recent, folderQuestion = question)
     }
 
     val state: StateFlow<QueueUiState> = combine(
@@ -201,6 +226,8 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), QueueUiState(emptyList(), emptyList(), emptyList()))
 
     init {
+        // Games whose platform got its folder while they waited (in Settings › Platform folders, say) go ahead.
+        viewModelScope.launch { queueGame.releaseDecided() }
         // Each conflict's server save is asked about once; a conflict that changes names a new one.
         viewModelScope.launch {
             val asked = mutableSetOf<Int>()
@@ -235,6 +262,40 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
     }
 
     override fun dismissSaveFolderQuestion() { saveFolderQuestion.value = null }
+
+    override fun askFolder(jobId: Long) {
+        viewModelScope.launch {
+            val title = downloads.job(jobId)?.title
+            when (val outcome = queueGame.askFolder(jobId)) {
+                is QueueGame.Outcome.AskFolder -> folderQuestion.value = outcome.ask.toQuestion(romId = null, title)
+                // Settled meanwhile: the game goes ahead.
+                is QueueGame.Outcome.Queued -> outcome.folderNote?.let { _messages.send(it) }
+                is QueueGame.Outcome.Failed -> _messages.send(outcome.message)
+                else -> Unit
+            }
+        }
+    }
+
+    override fun chooseFolder(folder: String) {
+        val q = folderQuestion.value ?: return
+        folderQuestion.value = null
+        viewModelScope.launch {
+            queueGame.folderChosen(q.fsSlug, folder, thenQueue = q.romId, platformId = q.platformId)
+            _messages.send("${q.platformName} games go in $folder/")
+        }
+    }
+
+    override fun showAllFolders() {
+        viewModelScope.launch {
+            val all = folders.allFolders()
+            folderQuestion.update { it?.copy(allFolders = all) }
+        }
+    }
+
+    /** B in the list of every folder: back to the likely ones. */
+    override fun showSuggestedFolders() = folderQuestion.update { it?.copy(allFolders = null) }
+
+    override fun dismissFolderQuestion() { folderQuestion.value = null }
 
     /** One request per game at a time: a second press while it runs does nothing. */
     private fun carryOut(romId: Int, request: suspend () -> String) {
@@ -313,6 +374,7 @@ fun QueueContent(
     LaunchedEffect(focusedLeft) { if (focusedLeft) runCatching { entry.requestFocus() } }
 
     fun primary(item: QueueItem) = when {
+        item.needsFolder -> actions.askFolder(item.jobId)
         item.failed -> if (item.retryable) actions.retry(item.jobId) else Unit
         item.phase == JobPhase.PAUSED -> actions.resume(item.jobId)
         item.canPause -> actions.pause(item.jobId)
@@ -323,11 +385,12 @@ fun QueueContent(
         .then(if (key == startKey) Modifier.focusRequester(first) else Modifier)
         .then(if (key == entryKey) Modifier.focusRequester(entry) else Modifier)
 
-    val hasSaves = state.conflicts.isNotEmpty() || state.restorable.isNotEmpty()
+    // Something A chooses for: a save to keep or restore, or a game's folder.
+    val hasChoices = state.conflicts.isNotEmpty() || state.restorable.isNotEmpty() || state.active.any { it.needsFolder }
     // A job being moved into place can't be paused or cancelled: on its row, A and X aren't offered.
     val finishingFocused = jobs.any { it.jobId == focusedKey && !it.canCancel }
     val hints = if (finishingFocused) listOf(ButtonHint("B", "Back"))
-        else listOf(ButtonHint("A", if (hasSaves) "Choose / pause / resume / retry" else "Pause / resume / retry"),
+        else listOf(ButtonHint("A", if (hasChoices) "Choose / pause / resume / retry" else "Pause / resume / retry"),
             ButtonHint("X", "Cancel"), ButtonHint("B", "Back"))
 
     // Focus coming into the screen from outside (a dialog's button that just went away) lands on the
@@ -470,6 +533,10 @@ fun QueueContent(
         }
         // B or Cancel closes it, back on the conflict's row.
         state.saveFolderQuestion?.let { SaveFolderDialog(it, actions::chooseSaveFolder, actions::dismissSaveFolderQuestion) }
+        // Cancel leaves the game waiting, back on its row.
+        state.folderQuestion?.let {
+            FolderQuestionDialog(it, actions::chooseFolder, actions::showAllFolders, actions::showSuggestedFolders, actions::dismissFolderQuestion)
+        }
     }
 }
 

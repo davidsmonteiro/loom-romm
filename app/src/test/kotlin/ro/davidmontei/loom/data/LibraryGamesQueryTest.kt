@@ -16,6 +16,7 @@ import ro.davidmontei.loom.data.db.LoomDatabase
 import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.RomEntity
 import ro.davidmontei.loom.storage.engine.JobPhase
+import ro.davidmontei.loom.storage.engine.WaitReason
 import ro.davidmontei.loom.ui.library.InstallState
 import ro.davidmontei.loom.ui.library.toItem
 
@@ -31,12 +32,14 @@ class LibraryGamesQueryTest {
 
     @After fun tearDown() = db.close()
 
-    private suspend fun download(phase: JobPhase, failureCode: String? = null, failureDetail: String? = null, retryable: Boolean = true) {
+    private suspend fun download(
+        phase: JobPhase, failureCode: String? = null, failureDetail: String? = null, retryable: Boolean = true, waitReason: WaitReason? = null,
+    ) {
         db.catalogDao().upsertPlatforms(listOf(PlatformEntity(1, "psx", "psx", "PlayStation", "PlayStation", 1, "t")))
         db.catalogDao().upsertRoms(listOf(RomEntity(10, 1, "psx", "psx", "Gran Turismo 2", "gran turismo 2", "gran turismo 2",
             "GT2.chd", "GT2", "chd", 5_000_000_000, true, false, false, null, null, "USA", "t", false)))
         db.downloadDao().insertJobWithParts(
-            DownloadJobEntity(romId = 10, platformId = 1, title = "Gran Turismo 2", phase = phase.name,
+            DownloadJobEntity(romId = 10, platformId = 1, title = "Gran Turismo 2", phase = phase.name, waitReason = waitReason?.name,
                 failureCode = failureCode, failureDetail = failureDetail,
                 failureRetryable = retryable, planJson = "{}", fingerprint = "f", volumeUuid = "9C33-6BBD",
                 stagingRoot = "/staging", romsRoot = "/roms", bytesTotal = 5_000_000_000, queueOrder = 1, updatedAt = 1),
@@ -76,6 +79,20 @@ class LibraryGamesQueryTest {
             "G$id.chd", "G$id", "chd", 1, true, false, false, small, large, "USA", "t", false)
         db.catalogDao().upsertRoms(listOf(rom(10, "/c/10/small.png", "/c/10/big.png"), rom(11, null, null)))
         assertThat(db.catalogDao().observeGames(1, 0, "").first().first { it.id == 10 }.toItem().coverLarge).isEqualTo("/c/10/big.png")
+    }
+
+    /** A game sent from RomM, waiting for its platform's folder: the library says where that's chosen. */
+    @Test fun aGameWaitingForItsFolderSaysToChooseItInTheQueue() = runBlocking<Unit> {
+        download(JobPhase.WAITING, waitReason = WaitReason.FOLDER)
+        val game = db.catalogDao().observeGames(1, 0, "").first().single().toItem()
+        assertThat(game.state).isEqualTo(InstallState.QUEUED)
+        assertThat(game.stateDetail).isEqualTo("Choose its folder in the queue")
+        assertThat(game.needsFolder).isTrue()
+    }
+
+    @Test fun aGameWaitingForTheCardSaysSo() = runBlocking<Unit> {
+        download(JobPhase.WAITING, waitReason = WaitReason.STORAGE)
+        assertThat(db.catalogDao().observeGames(1, 0, "").first().single().toItem().stateDetail).isEqualTo("Waiting for the SD card")
     }
 
     @Test fun aGameStillDownloadingIsNotFinishing() = runBlocking<Unit> {

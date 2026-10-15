@@ -37,8 +37,8 @@ import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.net.ServerReachability
 import ro.davidmontei.loom.storage.engine.formatBytes
-import ro.davidmontei.loom.storage.mapping.FolderDecision
-import ro.davidmontei.loom.storage.mapping.SystemFolder
+import ro.davidmontei.loom.ui.folders.FolderQuestion
+import ro.davidmontei.loom.ui.folders.toQuestion
 import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 import ro.davidmontei.loom.ui.saves.answer
 import ro.davidmontei.loom.ui.saves.toQuestion
@@ -61,21 +61,6 @@ data class LibraryHeader(
     val activeDownloads: Int,
     /** RomM couldn't be reached the last time Loom tried: the library is the copy kept on the Thor. */
     val offline: Boolean = false,
-)
-
-/**
- * Asked at a platform's first download when the card has several folders its games could go in
- * ([FolderDecision.Ask]). The answer is remembered as the platform's folder.
- */
-data class FolderQuestion(
-    val game: GameItem,
-    val platformName: String,
-    val slug: String,
-    val fsSlug: String,
-    val options: List<SystemFolder>,
-    val suggested: String,
-    /** Every folder in the ROMs folder, once the user asks for one that isn't among [options]. */
-    val allFolders: List<SystemFolder>? = null,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
@@ -161,13 +146,13 @@ class LibraryViewModel @Inject constructor(
      * X on a game. A platform's first download settles its system folder: from what is on the card
      * when that's clear, else by asking ([folderQuestion]). Either way the choice is remembered.
      */
-    fun download(game: GameItem) = viewModelScope.launch { say(game, queueGame.queue(game.id)) }
+    fun download(game: GameItem) = viewModelScope.launch { say(game.id, game.title, queueGame.queue(game.id, QueueGame.WhenUnsure.ASK)) }
 
     /** The answer to [folderQuestion]: remembered for the platform, then the game is queued. */
     fun chooseFolder(folder: String) = viewModelScope.launch {
         val q = _folderQuestion.value ?: return@launch
         _folderQuestion.value = null
-        queueGame.folderChosen(q.fsSlug, folder, thenQueue = q.game.id)?.let { say(q.game, it) }
+        queueGame.folderChosen(q.fsSlug, folder, thenQueue = q.romId, platformId = q.platformId)?.let { say(q.romId, q.title.orEmpty(), it) }
     }
 
     fun showAllFolders() = viewModelScope.launch {
@@ -180,14 +165,14 @@ class LibraryViewModel @Inject constructor(
 
     fun dismissFolderQuestion() { _folderQuestion.value = null }
 
-    /** How queueing [game] went, in a message, or the folder question to answer first. */
-    private suspend fun say(game: GameItem, outcome: QueueGame.Outcome) = when (outcome) {
-        is QueueGame.Outcome.AskFolder -> outcome.ask.let {
-            _folderQuestion.value = FolderQuestion(game, it.platformName, it.slug, it.fsSlug, it.options, it.suggested)
-        }
-        is QueueGame.Outcome.Queued -> _messages.send("${game.title} added to the queue" + outcome.folderNote?.let { ". $it" }.orEmpty())
-        QueueGame.Outcome.AlreadyQueued -> _messages.send("${game.title} is already in the queue")
-        QueueGame.Outcome.AlreadyInstalled -> _messages.send("${game.title} is already on your device")
+    /** How queueing game [romId] went, in a message, or the folder question to answer first. */
+    private suspend fun say(romId: Int?, title: String, outcome: QueueGame.Outcome) = when (outcome) {
+        is QueueGame.Outcome.AskFolder -> _folderQuestion.value = outcome.ask.toQuestion(romId, title)
+        is QueueGame.Outcome.Queued -> _messages.send("$title added to the queue" + outcome.folderNote?.let { ". $it" }.orEmpty())
+        // Not from the library, which asks; listed to be complete.
+        is QueueGame.Outcome.WaitingForFolder -> _messages.send("$title is in the queue, waiting for its folder")
+        QueueGame.Outcome.AlreadyQueued -> _messages.send("$title is already in the queue")
+        QueueGame.Outcome.AlreadyInstalled -> _messages.send("$title is already on your device")
         is QueueGame.Outcome.Failed -> _messages.send(outcome.message)
     }
 

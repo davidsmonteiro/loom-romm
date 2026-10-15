@@ -29,7 +29,9 @@ import ro.davidmontei.loom.data.db.RecentInstall
 import ro.davidmontei.loom.data.saves.ConflictChoice
 import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.formatBytes
+import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.ui.components.dateTime
+import ro.davidmontei.loom.ui.folders.FolderQuestion
 import ro.davidmontei.loom.ui.queue.ConflictItem
 import ro.davidmontei.loom.ui.queue.RecentSave
 import ro.davidmontei.loom.ui.queue.RestorableSave
@@ -57,6 +59,11 @@ class QueueScreenTest {
         override fun askSaveFolder(romId: Int, title: String, emulator: String?) { calls += "askSaveFolder:$romId:$emulator" }
         override fun chooseSaveFolder(id: String) { calls += "saveFolder:$id" }
         override fun dismissSaveFolderQuestion() { calls += "dismissSaveFolder" }
+        override fun askFolder(jobId: Long) { calls += "askFolder:$jobId" }
+        override fun chooseFolder(folder: String) { calls += "folder:$folder" }
+        override fun showAllFolders() { calls += "allFolders" }
+        override fun showSuggestedFolders() { calls += "suggestedFolders" }
+        override fun dismissFolderQuestion() { calls += "dismissFolder" }
     }
 
     companion object {
@@ -83,6 +90,15 @@ class QueueScreenTest {
         val withSaves = sample.copy(
             conflicts = listOf(pokemonX), restorable = listOf(omegaRuby),
             recentSaves = listOf(RecentSave(9, "Pokemon Y", System.currentTimeMillis() - 3 * 60_000)),
+        )
+
+        /** A game sent from RomM, waiting for the folder its platform's games go in: first in the queue. */
+        val sonic = item(10, "Sonic the Hedgehog (USA, Europe)", JobPhase.WAITING, total = 524_288)
+            .copy(label = "Choose its folder", needsFolder = true)
+        val withAFolderToChoose = sample.copy(active = listOf(sonic) + sample.active)
+        val megaDriveFolders = FolderQuestion(
+            romId = null, title = sonic.title, platformId = 2, platformName = "Sega Mega Drive/Genesis", slug = "genesis", fsSlug = "genesis",
+            options = listOf(SystemFolder("megadrive", 0, "Sega Mega Drive"), SystemFolder("genesis", 0, "Sega Genesis")), suggested = "megadrive",
         )
     }
 
@@ -527,6 +543,47 @@ class QueueScreenTest {
         update { it.copy(saveFolderQuestion = null) }
         rule.onNodeWithText("Which Eden save folder is Super Mario Bros Wonder's?").assertDoesNotExist()
         rule.onNodeWithTag("conflict-30").assertIsFocused()
+    }
+
+    // --- a game waiting for its platform's folder ---
+
+    /** A asks where its platform's games go, rather than pausing it; the answer is the folder focused. */
+    @Test fun aGameWaitingForItsFolderAsksWhereOnA() {
+        show(withAFolderToChoose)
+        rule.onNodeWithText("Choose / pause / resume / retry").assertExists()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("askFolder:10")
+        update { it.copy(folderQuestion = megaDriveFolders) }
+        rule.onNodeWithText("Where does Cocoon look for Sega Mega Drive/Genesis games?").assertExists()
+        rule.onNodeWithTag("folder-megadrive", useUnmergedTree = true).assertIsFocused()
+        press(Key.DirectionRight); press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("askFolder:10", "folder:genesis").inOrder()
+    }
+
+    /** B leaves the question, and the game waits on: focus is back on its row. */
+    @Test fun bLeavesTheFolderQuestionWithTheGameStillWaiting() {
+        show(withAFolderToChoose)
+        press(Key.DirectionCenter)
+        update { it.copy(folderQuestion = megaDriveFolders) }
+        back()
+        assertThat(calls).containsExactly("askFolder:10", "dismissFolder").inOrder()
+        update { it.copy(folderQuestion = null) }
+        rule.onNodeWithTag("job-10").assertIsFocused()
+    }
+
+    @Test fun xStillCancelsAGameWaitingForItsFolder() {
+        show(withAFolderToChoose)
+        press(Key.ButtonX)
+        rule.onNodeWithText("Cancel downloading Sonic the Hedgehog (USA, Europe)?").assertExists()
+        press(Key.DirectionRight); press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("cancel:10")
+    }
+
+    /** The queue opens on what only the owner can settle, even with downloads running. */
+    @Test fun focusStartsOnAGameWaitingForItsFolder() {
+        show(withAFolderToChoose)
+        rule.onNodeWithTag("job-10").assertIsFocused()
+        rule.onNodeWithText("Choose its folder", useUnmergedTree = true).assertExists()
     }
 
     @Test fun aMessageSaysHowAnAnswerWent() {
