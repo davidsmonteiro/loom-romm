@@ -19,7 +19,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SwitchTitleEntity::class,
         SyncedFolderEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class LoomDatabase : RoomDatabase() {
@@ -92,5 +92,15 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
             "CREATE TABLE IF NOT EXISTS `synced_folders` (`rom_id` INTEGER NOT NULL, `folder` TEXT NOT NULL, " +
                 "`chosen_at` INTEGER NOT NULL, PRIMARY KEY(`rom_id`))",
         )
+    }
+}
+
+/**
+ * Version 6 (RomM 5.4's send to device): a download job remembers the RomM install request it came
+ * from. Jobs already queued came from the library, so they have none.
+ */
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `download_jobs` ADD COLUMN `install_request_id` TEXT")
     }
 }

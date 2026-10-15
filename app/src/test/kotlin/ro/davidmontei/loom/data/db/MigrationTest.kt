@@ -123,6 +123,42 @@ class MigrationTest {
         }
     }
 
+    /**
+     * Version 5 (Loom 0.3.1) keeps its queue, mid-download parts included; those games came from the
+     * library, not from a RomM install request. A job queued afterwards can remember its request.
+     */
+    @Test fun version5DownloadsCarryOnAndCameFromNoRommRequest() = runBlocking<Unit> {
+        val file = context.getDatabasePath(DB).apply { parentFile!!.mkdirs(); delete() }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            createFromSchema(db, version = 5)
+            db.execSQL(
+                "INSERT INTO download_jobs (id, rom_id, platform_id, title, phase, wait_reason, failure_code, failure_detail, " +
+                    "failure_retryable, lease_id, attempt, generation, checksum_retries, plan_json, fingerprint, volume_uuid, " +
+                    "staging_root, roms_root, final_rel_path, final_key, final_kind, bytes_done, bytes_total, queue_order, updated_at) " +
+                    "VALUES (3, 7, 1, 'Pokemon X', 'PAUSED', NULL, NULL, NULL, 1, NULL, 1, 1, 0, '{}', 'fp', '6365-3230', " +
+                    "'/storage/6365-3230/.loom-staging', '/storage/6365-3230/ROMs', NULL, NULL, NULL, 50, 100, 1, 1)",
+            )
+            db.execSQL("INSERT INTO download_parts VALUES (3, 70, '{}', 'api/roms/7/content/x', 50, 'etag', NULL, 'PARTIAL')")
+        }
+
+        val room = DataModule.database(context)
+        try {
+            val downloads = room.downloadDao()
+            val job = downloads.jobForRom(7)!!
+            assertThat(job.phase).isEqualTo("PAUSED")
+            assertThat(job.bytesDone).isEqualTo(50)
+            assertThat(job.installRequestId).isNull()
+            assertThat(downloads.parts(3).single().durableBytes).isEqualTo(50)
+
+            val sent = downloads.insertJob(job.copy(id = 0, romId = 8, title = "Pokemon Y", queueOrder = 2, installRequestId = "req-1"))
+            assertThat(downloads.jobForInstallRequest("req-1")!!.id).isEqualTo(sent)
+            downloads.setInstallRequest(3, "req-2")
+            assertThat(downloads.jobForInstallRequest("req-2")!!.romId).isEqualTo(7)
+        } finally {
+            room.close()
+        }
+    }
+
     /** Creates the tables, indices and Room's identity row of an exported schema version. */
     private fun createFromSchema(db: SQLiteDatabase, version: Int) {
         val name = "ro.davidmontei.loom.data.db.LoomDatabase/$version.json"

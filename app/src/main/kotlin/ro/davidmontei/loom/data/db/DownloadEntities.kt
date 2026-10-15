@@ -10,6 +10,8 @@ import androidx.room.PrimaryKey
  * A download job: one ROM on its way to becoming an install. Deleted when it finishes (the
  * install row takes over) or when a cancel is cleaned up. Phase/wait/failure mirror
  * [ro.davidmontei.loom.storage.engine.JobStatus]; [leaseId] is set while a worker owns it.
+ * [installRequestId] is the RomM install request the job came from, when RomM sent the game; it
+ * stays after the request is reported, so the queue can say where the game came from.
  */
 @Entity(
     tableName = "download_jobs",
@@ -42,6 +44,7 @@ data class DownloadJobEntity(
     @ColumnInfo(name = "bytes_total") val bytesTotal: Long,
     @ColumnInfo(name = "queue_order") val queueOrder: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "install_request_id") val installRequestId: String? = null,
 )
 
 /** One ROM file of a job. The immutable plan is JSON; the rest tracks what's safely on disk. */

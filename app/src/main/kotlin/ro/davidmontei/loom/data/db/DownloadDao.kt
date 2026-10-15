@@ -34,6 +34,14 @@ interface DownloadDao {
 
     @Query("SELECT * FROM download_jobs WHERE rom_id = :romId") suspend fun jobForRom(romId: Int): DownloadJobEntity?
 
+    /** The job RomM's install request [requestId] became, if it is still in the queue. */
+    @Query("SELECT * FROM download_jobs WHERE install_request_id = :requestId")
+    suspend fun jobForInstallRequest(requestId: String): DownloadJobEntity?
+
+    /** Records that [jobId] is what RomM's install request [requestId] asked for. */
+    @Query("UPDATE download_jobs SET install_request_id = :requestId WHERE id = :jobId")
+    suspend fun setInstallRequest(jobId: Long, requestId: String)
+
     @Query("SELECT * FROM download_jobs WHERE id = :id") fun observeJob(id: Long): Flow<DownloadJobEntity?>
 
     @Query("SELECT * FROM download_jobs ORDER BY queue_order") fun observeJobs(): Flow<List<DownloadJobEntity>>
