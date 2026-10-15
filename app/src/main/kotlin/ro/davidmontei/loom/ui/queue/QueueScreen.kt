@@ -460,8 +460,9 @@ fun QueueContent(
         ScreenScaffold(title = "Downloads", hints = hints) {
             message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = LoomColors.Accent, modifier = Modifier.padding(horizontal = 8.dp)) }
             if (state.rommNeedsPairing) {
+                // On one line on the Thor's top screen; a narrower one wraps it rather than cut where to go.
                 Text("RomM can't send games here until Loom pairs again (Settings › Downloads)", style = MaterialTheme.typography.bodySmall,
-                    color = LoomColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
+                    color = LoomColors.TextMuted, modifier = Modifier.padding(horizontal = 8.dp))
             }
             if (startKey == null && readOnlyFirst == null) {
                 Text("Nothing downloading. Press X on a game in the library to add it here.", color = LoomColors.TextMuted)

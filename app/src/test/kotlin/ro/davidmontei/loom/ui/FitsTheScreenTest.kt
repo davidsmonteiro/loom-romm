@@ -1139,4 +1139,23 @@ class FitsTheScreenTest {
         assertThat(rule.onNodeWithTag("job-${sent.jobId}").getBoundsInRoot().let { it.bottom - it.top }.value)
             .isWithin(0.01f).of(rule.onNodeWithTag("job-1").getBoundsInRoot().let { it.bottom - it.top }.value)
     }
+
+    /**
+     * Found by review: the note that RomM can't send games until Loom pairs again was kept to one line, so on
+     * the bottom screen or a phone its end, where to pair again, was cut off. It wraps there instead, to two lines.
+     */
+    private fun theNoteToPairAgainFits(screenshot: String) {
+        val state = QueueScreenTest.sample.copy(rommNeedsPairing = true)
+        rule.setContent { LoomTestTheme { QueueContent(state, NoopQueueActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        assertThat(cutShort("RomM can't send games here")).isFalse()
+        assertThat(lineCount("RomM can't send games here")).isAtMost(2)
+        rule.saveScreenshot(screenshot)
+    }
+
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theNoteToPairAgainFitsTheBottomScreen() = theNoteToPairAgainFits("queue-pair-again-bottom-screen")
+
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun theNoteToPairAgainFitsAPhoneInPortrait() = theNoteToPairAgainFits("queue-pair-again-phone")
 }
