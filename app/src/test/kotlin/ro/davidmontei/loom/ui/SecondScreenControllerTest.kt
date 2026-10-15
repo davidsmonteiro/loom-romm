@@ -97,15 +97,32 @@ class SecondScreenControllerTest {
         assertShownOn(bottom)
     }
 
+    /**
+     * Stopping alone hides it. Android says Loom lost the top before it stops, so on the device the
+     * panel has gone by then; this is what still hides it should that word not come.
+     */
     @Test fun hidesWhenLoomStops() {
         val bottom = addBottomScreen()
         val activity = open()
-        controller.onTopResumedChanged(false)
         activity.pause().stop()
         idle()
         assertShownOn(null)
         activity.restart().start().resume()
         controller.onTopResumedChanged(true)
+        idle()
+        assertShownOn(bottom)
+    }
+
+    /** Told it's on top while stopped (out of order, as a vendor's screens might): it stays hidden until Loom starts. */
+    @Test fun aStoppedLoomOnTopShowsNothing() {
+        val bottom = addBottomScreen()
+        val activity = open(top = false)
+        activity.pause().stop()
+        idle()
+        controller.onTopResumedChanged(true)
+        idle()
+        assertShownOn(null)
+        activity.restart().start().resume()
         idle()
         assertShownOn(bottom)
     }
