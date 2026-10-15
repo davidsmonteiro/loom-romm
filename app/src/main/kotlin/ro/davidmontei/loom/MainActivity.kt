@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -135,10 +136,14 @@ class MainActivity : ComponentActivity() {
         secondScreen.onConfigurationChanged()
     }
 
-    /** A button pressed or the screen touched: the second screen stays lit, or lights up again. */
-    override fun onUserInteraction() {
-        super.onUserInteraction()
-        app.companion.poke()
+    /**
+     * A touch on the screen: the second screen stays lit, or lights up again (a tap on that screen is
+     * heard by its panel). Not onUserInteraction, which Android also calls for every move of a stick
+     * or trigger: one resting a little off centre would keep the second screen lit for good.
+     */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) app.companion.poke()
+        return super.dispatchTouchEvent(ev)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -167,14 +172,16 @@ class MainActivity : ComponentActivity() {
     /**
      * Pad A/B become confirm/back before Compose sees them, a pad button never falls back to
      * another key, the Shift AYN sends on a focus-mode change is dropped (see [GamepadKeys]), and
-     * a press made in touch mode waits for focus (see [TouchModePress]).
+     * a press made in touch mode waits for focus (see [TouchModePress]). Any other key is someone
+     * using Loom: the second screen stays lit, or lights up again, even for an X that only brings
+     * focus back after a tap.
      *
      * Lint flags these because androidx.core re-declares the platform method as
      * library-restricted; it is the public Activity.dispatchKeyEvent.
      */
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        GamepadKeys.dispatch(event, app.state.value?.swapConfirmBack ?: false, touchModePress::dispatch)
+        GamepadKeys.dispatch(event, app.state.value?.swapConfirmBack ?: false) { key -> app.companion.poke(); touchModePress.dispatch(key) }
 
     @SuppressLint("RestrictedApi")
     private fun deliver(key: KeyEvent): Boolean = super.dispatchKeyEvent(key)
