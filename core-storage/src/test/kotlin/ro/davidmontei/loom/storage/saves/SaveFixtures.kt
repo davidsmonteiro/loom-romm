@@ -2,6 +2,9 @@ package ro.davidmontei.loom.storage.saves
 
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -50,6 +53,34 @@ object SaveFixtures {
 
     /** Python's `zipfile` hash of `data/00000001/main` + `data/00000001.metadata` above. */
     const val AZAHAR_UNIT_HASH = "c43ef632a43368c6ec5e23a4e9653a50"
+
+    /**
+     * A PARAM.SFO holding [entries] in this order, laid out as PPSSPP writes one: the header, the
+     * index, the keys, then the values, each padded to 4 bytes. A String is text (format 0x0204,
+     * with its NUL), an Int a u32 (0x0404), a ByteArray raw bytes (0x0004).
+     */
+    fun sfoOf(vararg entries: Pair<String, Any>): ByteArray {
+        val keys = ByteArrayOutputStream()
+        val data = ByteArrayOutputStream()
+        val index = ByteBuffer.allocate(16 * entries.size).order(ByteOrder.LITTLE_ENDIAN)
+        for ((key, value) in entries) {
+            val (format, bytes) = when (value) {
+                is String -> 0x0204 to value.toByteArray() + byteArrayOf(0)
+                is Int -> 0x0404 to ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(0, value).array()
+                is ByteArray -> 0x0004 to value
+                else -> error("No SFO format for $value")
+            }
+            val room = (bytes.size + 3) / 4 * 4
+            index.putShort(keys.size().toShort()).putShort(format.toShort()).putInt(bytes.size).putInt(room).putInt(data.size())
+            keys.write(key.toByteArray() + byteArrayOf(0))
+            data.write(bytes.copyOf(room))
+        }
+        while (keys.size() % 4 != 0) keys.write(0)
+        val keyStart = 0x14 + 16 * entries.size
+        val header = ByteBuffer.allocate(0x14).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(0x46535000).putInt(0x0101).putInt(keyStart).putInt(keyStart + keys.size()).putInt(entries.size)
+        return header.array() + index.array() + keys.toByteArray() + data.toByteArray()
+    }
 
     /** A DS game's raw `.sav`, 8 KiB as a small cartridge's save is. */
     val RAW_SAVE = ByteArray(8192) { ((it * 31 + 7) % 251).toByte() }
