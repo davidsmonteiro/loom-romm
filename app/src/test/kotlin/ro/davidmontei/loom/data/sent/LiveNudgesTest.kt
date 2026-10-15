@@ -22,6 +22,7 @@ import okhttp3.WebSocketListener
 import org.junit.After
 import org.junit.Test
 import ro.davidmontei.loom.di.NetworkModule
+import ro.davidmontei.loom.net.AuthInterceptor
 import ro.davidmontei.loom.net.AuthSource
 import ro.davidmontei.loom.net.ReachabilityInterceptor
 import ro.davidmontei.loom.net.ServerReachability
@@ -148,22 +149,30 @@ class LiveNudgesTest {
         assertThat(romm.upgrades).hasSize(6)
     }
 
-    /** A proxy's 502 to the upgrade isn't RomM out of reach: the library mustn't say "Offline" for it. */
+    /**
+     * A proxy's 502 to the upgrade isn't RomM out of reach: the library mustn't say "Offline" for it, nor
+     * the token go in a header. The socket's client leaves the API's interceptors out even when made from
+     * a client that has them, as the API's does, reporting to the library's [ServerReachability].
+     */
     @Test fun aRefusedUpgradeDoesntMakeTheLibrarySayOffline() = runBlocking<Unit> {
         romm.refuseUpgradesWith = 502
         val reachability = ServerReachability()
-        // As Loom's API client reports on RomM: a heartbeat answered.
-        val api = NetworkModule.bareClient().newBuilder().addInterceptor(ReachabilityInterceptor(reachability, RommAt(romm.server.url("/")))).build()
-        api.newCall(Request.Builder().url(romm.server.url("/api/heartbeat")).build()).execute().close()
+        val server = RommAt(romm.server.url("/"))
+        val api = NetworkModule.bareClient().newBuilder()
+            .addInterceptor(AuthInterceptor(server))
+            .addInterceptor(ReachabilityInterceptor(reachability, server))
+            .build()
+        api.newCall(Request.Builder().url(romm.server.url("/api/heartbeat")).build()).execute().close() // RomM answered
         assertThat(reachability.current.value).isEqualTo(ServerReachability.State.REACHABLE)
+        val fromApi = NetworkModule.socketClient(api)
+        val live = LiveNudges({ base, token -> DeviceSocket(fromApi, base, token).events() }, pollEveryMs = 200, waitBeforeReconnecting = { delay(20) })
         target.value = at(romm.server)
-        running()
+        scope.launch { live.run(target, heard) }
         live.inFront(true)
 
-        until { romm.server.requestCount >= 1 + LiveNudges.GIVE_UP_AFTER }
+        until { romm.upgrades.size >= LiveNudges.GIVE_UP_AFTER }
 
         assertThat(reachability.current.value).isEqualTo(ServerReachability.State.REACHABLE)
-        assertThat(client.interceptors.none { it is ReachabilityInterceptor }).isTrue()
         assertThat(romm.upgrades.map { it.headers["Authorization"] }.toSet()).containsExactly(null)
     }
 

@@ -89,10 +89,13 @@ object NetworkModule {
      * RomM's device socket ([ro.davidmontei.loom.data.sent.LiveNudges]), without the API's interceptors:
      * no Authorization header, as the token goes only in the namespace's connect payload, and no
      * reachability reports, as a proxy in front of RomM that won't pass WebSockets answers the upgrade
-     * with a 502 while RomM itself is fine, which mustn't make the library say it's offline.
+     * with a 502 while RomM itself is fine, which mustn't make the library say it's offline. Made from a
+     * client that has them (the API's, say), it leaves them out all the same.
      */
     @Provides @Singleton @SocketHttp
-    fun socketClient(@BareHttp bare: OkHttpClient): OkHttpClient = bare.newBuilder().build()
+    fun socketClient(@BareHttp bare: OkHttpClient): OkHttpClient = bare.newBuilder()
+        .apply { interceptors().removeAll { it is AuthInterceptor || it is ReachabilityInterceptor } }
+        .build()
 
     /** Breaks the ActiveServer ↔ OkHttpClient construction cycle. */
     private class LazyAuthSource(private val server: dagger.Lazy<ActiveServer>) : ro.davidmontei.loom.net.AuthSource {
