@@ -129,6 +129,8 @@ interface SettingsActions {
     fun setEdenFolder(dir: java.io.File?)
     /** Whose saves Loom syncs when Eden has several profiles. */
     fun setEdenProfile(profile: String)
+    /** melonDS's save folder; null goes back to the ROMs folder's saves/melonDS. */
+    fun setMelonDsFolder(dir: java.io.File?)
     fun setSwap(swap: Boolean)
     fun openBatterySettings()
     fun licenseText(): String
@@ -165,6 +167,7 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
             override fun setAzaharFolder(dir: java.io.File?) { vm.setAzaharFolder(dir) }
             override fun setEdenFolder(dir: java.io.File?) { vm.setEdenFolder(dir) }
             override fun setEdenProfile(profile: String) { vm.setEdenProfile(profile) }
+            override fun setMelonDsFolder(dir: java.io.File?) { vm.setMelonDsFolder(dir) }
             override fun setSwap(swap: Boolean) { vm.setSwap(swap) }
             override fun openBatterySettings() {
                 runCatching {
@@ -801,10 +804,11 @@ private enum class SaveFolderFor(
     val system: String,
     val tag: String,
     val highlighted: Set<String>,
-    val note: (List<java.io.File>) -> FolderNote,
+    val note: (folder: java.io.File, children: List<java.io.File>) -> FolderNote,
 ) {
-    AZAHAR("Azahar", "3DS", "azahar", AZAHAR_FOLDERS, ::azaharNote),
-    EDEN("Eden", "Switch", "eden", setOf("user"), ::edenNote),
+    AZAHAR("Azahar", "3DS", "azahar", AZAHAR_FOLDERS, { _, children -> azaharNote(children) }),
+    EDEN("Eden", "Switch", "eden", setOf("user"), { _, children -> edenNote(children) }),
+    MELONDS("melonDS", "DS", "melonds", emptySet(), { folder, _ -> melonDsNote(folder) }),
 }
 
 /** One emulator's save folder as Saves shows it: on its card in a few words, and in full in its details. */
@@ -878,6 +882,31 @@ private fun emulatorFolder(which: SaveFolderFor, state: SettingsUiState): Emulat
                 useDefault = "Use saves/Eden".takeIf { chosen != null },
                 onUseDefault = { it.setEdenFolder(null) },
                 onPick = { actions, dir -> actions.setEdenFolder(dir) },
+            )
+        }
+        SaveFolderFor.MELONDS -> {
+            val chosen = settings?.melonDsSaveDir
+            val folder = (chosen ?: storage.melonDsFound)?.let { java.io.File(it) }
+            val missing = chosen != null && !java.io.File(chosen).isDirectory
+            EmulatorFolder(
+                which, folder,
+                card = when {
+                    missing -> "Chosen, but it isn't there"
+                    chosen != null -> "Your chosen folder"
+                    folder != null -> "Found in ROMs/saves/melonDS"
+                    else -> "Not found yet"
+                },
+                status = when {
+                    missing -> "You chose this folder, but it isn't there."
+                    chosen != null -> "You chose this folder."
+                    folder != null -> "Found in ROMs/saves/melonDS."
+                    else -> "Not found in ROMs/saves/melonDS."
+                },
+                steps = "In melonDS's Save Files settings, turn off Save next to ROM file and set the Save file directory to " +
+                    "ROMs/saves/melonDS, where Loom looks by itself, or choose the folder you set. melonDS keeps one .sav per game there.",
+                useDefault = "Use saves/melonDS".takeIf { chosen != null },
+                onUseDefault = { it.setMelonDsFolder(null) },
+                onPick = { actions, dir -> actions.setMelonDsFolder(dir) },
             )
         }
     }
@@ -1012,6 +1041,13 @@ private fun azaharNote(children: List<java.io.File>): FolderNote =
 private fun edenNote(children: List<java.io.File>): FolderNote =
     if (children.any { it.name == "user" && java.io.File(it, "save").isDirectory }) FolderNote("Eden's saves are here (user/save).", true)
     else FolderNote("Eden's save folder holds user/save; it isn't here.", false)
+
+/** melonDS's folder holds a .sav per game it has run, and nothing else Loom could tell it by. */
+private fun melonDsNote(folder: java.io.File): FolderNote {
+    val saves = folder.listFiles { f -> f.isFile && f.extension.equals("sav", ignoreCase = true) }.orEmpty().size
+    return if (saves > 0) FolderNote("melonDS's saves are here (${if (saves == 1) "1 .sav file" else "$saves .sav files"}).", true)
+    else FolderNote("No .sav files here: melonDS makes one for each game it runs.", false)
+}
 
 @Composable
 private fun AboutSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {

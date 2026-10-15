@@ -19,6 +19,7 @@ import ro.davidmontei.loom.data.db.TitledSaveUnit
 import ro.davidmontei.loom.romm.RommException
 import ro.davidmontei.loom.storage.saves.AzaharSaveLocator
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
+import ro.davidmontei.loom.storage.saves.MelonDsSaveLocator
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import java.nio.file.Path
 
@@ -249,6 +250,7 @@ class SaveRepository(
 fun emulatorName(id: String?): String = when (id) {
     AzaharSaveLocator.EMULATOR_ID -> "Azahar"
     EdenSaveLocator.EMULATOR_ID -> "Eden"
+    MelonDsSaveLocator.EMULATOR_ID -> "melonDS"
     null -> "the emulator"
     else -> id
 }

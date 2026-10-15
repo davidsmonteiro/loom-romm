@@ -14,6 +14,7 @@ import ro.davidmontei.loom.data.db.LoomDatabase
 import ro.davidmontei.loom.data.db.SaveDao
 import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.saves.EdenSaves
+import ro.davidmontei.loom.data.saves.MelonDsSaves
 import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.SaveSyncEngine
 import ro.davidmontei.loom.data.saves.SaveSyncNotifications
@@ -34,7 +35,11 @@ object SaveModule {
     fun edenSaves(settings: SettingsStore, catalog: CatalogDao, saves: SaveDao) = EdenSaves(settings, catalog, saves)
 
     @Provides @Singleton
-    fun saveUnitResolver(settings: SettingsStore, volumes: StorageVolumes, eden: EdenSaves) = SaveUnitResolver(settings, volumes, eden)
+    fun melonDsSaves(settings: SettingsStore, catalog: CatalogDao) = MelonDsSaves(settings, catalog)
+
+    @Provides @Singleton
+    fun saveUnitResolver(settings: SettingsStore, volumes: StorageVolumes, eden: EdenSaves, melonDs: MelonDsSaves) =
+        SaveUnitResolver(settings, volumes, eden, melonDs)
 
     @Provides @Singleton
     fun saveSyncEngine(

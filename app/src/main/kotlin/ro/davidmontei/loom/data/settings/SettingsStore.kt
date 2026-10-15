@@ -66,6 +66,11 @@ data class Settings(
     val edenSaveDir: String? = null,
     /** The Eden profile (user ID folder) whose saves Loom syncs, when Eden has several; null until chosen. */
     val edenProfile: String? = null,
+    /**
+     * melonDS's save folder (its Save file directory) when the user set one; null means
+     * `<ROMs root>/saves/melonDS`, when there is such a folder.
+     */
+    val melonDsSaveDir: String? = null,
     /** Null until a background save sync has run. */
     val lastSaveSync: SaveSyncOutcome? = null,
     val catalogRefresh: CatalogRefresh = CatalogRefresh.DEFAULT,
@@ -98,6 +103,7 @@ class SettingsStore(
             azaharUserDir = p[AZAHAR_USER_DIR],
             edenSaveDir = p[EDEN_SAVE_DIR],
             edenProfile = p[EDEN_PROFILE],
+            melonDsSaveDir = p[MELONDS_SAVE_DIR],
             lastSaveSync = p[SAVE_SYNC_AT]?.let { at ->
                 SaveSyncOutcome(at, p[SAVE_SYNC_SUMMARY].orEmpty(), p[SAVE_SYNC_FAILED] ?: false, p[SAVE_SYNC_NEEDS_PAIRING] ?: false)
             },
@@ -135,6 +141,11 @@ class SettingsStore(
 
     suspend fun setEdenProfile(profile: String?) = dataStore.edit {
         if (profile.isNullOrBlank()) it.remove(EDEN_PROFILE) else it[EDEN_PROFILE] = profile
+    }
+
+    /** [path] null goes back to looking for melonDS's saves in `<ROMs root>/saves/melonDS`. */
+    suspend fun setMelonDsSaveDir(path: String?) = dataStore.edit {
+        if (path.isNullOrBlank()) it.remove(MELONDS_SAVE_DIR) else it[MELONDS_SAVE_DIR] = path
     }
 
     suspend fun setLastSaveSync(outcome: SaveSyncOutcome) = dataStore.edit {
@@ -197,6 +208,7 @@ class SettingsStore(
         val AZAHAR_USER_DIR = stringPreferencesKey("azahar_user_dir")
         val EDEN_SAVE_DIR = stringPreferencesKey("eden_save_dir")
         val EDEN_PROFILE = stringPreferencesKey("eden_profile")
+        val MELONDS_SAVE_DIR = stringPreferencesKey("melonds_save_dir")
         val SAVE_SYNC_AT = longPreferencesKey("save_sync_last_ms")
         val SAVE_SYNC_SUMMARY = stringPreferencesKey("save_sync_last_summary")
         val SAVE_SYNC_FAILED = booleanPreferencesKey("save_sync_last_failed")

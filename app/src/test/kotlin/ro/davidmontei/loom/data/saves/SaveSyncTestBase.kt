@@ -48,7 +48,8 @@ import java.time.Instant
 
 /**
  * The Thor as save sync sees it: the SD card `6365-3230` with `ROMs/n3ds` holding the games and
- * Azahar's user directory, a paired Loom, and [FakeRomm] behind a MockWebServer.
+ * Azahar's user directory, Eden's and melonDS's save folders in `ROMs/saves`, a paired Loom, and
+ * [FakeRomm] behind a MockWebServer.
  */
 abstract class SaveSyncTestBase {
     @get:Rule val tmp = TemporaryFolder()
@@ -62,6 +63,8 @@ abstract class SaveSyncTestBase {
     protected lateinit var n3ds: File
     /** Eden's save folder, moved to the card: `ROMs/saves/Eden`, with one profile. */
     protected lateinit var eden: File
+    /** melonDS's save folder, as the owner sets it in melonDS: `ROMs/saves/melonDS`. */
+    protected lateinit var melonDs: File
 
     /** The Thor's clock. Save files are dated [settle] minutes before it. */
     protected var clock: Instant = Instant.parse("2026-10-14T12:00:00Z")
@@ -102,9 +105,12 @@ abstract class SaveSyncTestBase {
         eden = File(volume, "ROMs/saves/Eden")
         File(eden, "user/save/0000000000000000/$PROFILE").mkdirs()
         File(eden, "system/save/8000000000000010").mkdirs()
+        melonDs = File(volume, "ROMs/saves/melonDS").apply { mkdirs() }
         db.catalogDao().upsertPlatforms(listOf(
             PlatformEntity(1, "3ds", "3ds", "Nintendo 3DS", "Nintendo 3DS", 2, "t"),
             PlatformEntity(2, "switch", "switch", "Nintendo Switch", "Nintendo Switch", 2, "t"),
+            PlatformEntity(3, "nds", "nds", "Nintendo DS", "Nintendo DS", 2, "t"),
+            PlatformEntity(4, "nintendo-dsi", "nintendo-dsi", "Nintendo DSi", "Nintendo DSi", 2, "t"),
         ))
     }
 
@@ -124,9 +130,13 @@ abstract class SaveSyncTestBase {
 
     protected fun eden() = EdenSaves(settings, db.catalogDao(), db.saveDao(), now = { clock.toEpochMilli() }, maxUnitBytes = edenMaxUnitBytes)
 
+    protected fun melonDsSaves() = MelonDsSaves(settings, db.catalogDao())
+
+    protected fun resolver() = SaveUnitResolver(settings, volumes, eden(), melonDsSaves())
+
     protected fun engine(chunkSize: Int = 500, maxDownloadBytes: Long = SaveSyncEngine.MAX_DOWNLOAD_BYTES) = SaveSyncEngine(
         db.catalogDao(), db.saveDao(), ActiveServer(settings, credentials, OkHttpClient(), scope), credentials, settings,
-        SaveUnitResolver(settings, volumes, eden()), volumes, File(tmp.root, "cache"),
+        resolver(), volumes, File(tmp.root, "cache"),
         now = { clock }, pause = { onPause() }, restorer = SaveRestorer(mover = mover), chunkSize = chunkSize,
         maxDownloadBytes = maxDownloadBytes, lock = lock,
     )
@@ -262,6 +272,48 @@ abstract class SaveSyncTestBase {
         val zip = dir.resolve("unit.zip")
         SaveZipper.zip(listOf(SaveRoot(game.titleId, dir.resolve(game.titleId))), zip)
         return Files.readAllBytes(zip)
+    }
+
+    // --- DS games in melonDS ---
+
+    protected class DsGame(val romId: Int, val title: String)
+
+    protected val marioDs = DsGame(40, "New Super Mario Bros")
+    protected val zeldaDs = DsGame(41, "The Legend of Zelda Phantom Hourglass")
+
+    /**
+     * Installs [game] as [file] in the folder of [platform] (`nds`, or `nintendo-dsi` in `ndsi`):
+     * a ROM whose header has a cartridge's game code, or DSiWare's game code and category.
+     */
+    protected suspend fun installDs(game: DsGame, file: String = "${game.title}.nds", platform: String = "nds", dsiWare: Boolean = false) {
+        val folder = if (platform == "nds") "nds" else "ndsi"
+        val rom = File(volume, "ROMs/$folder/$file")
+        rom.parentFile!!.mkdirs()
+        val header = ByteBuffer.allocate(0x1000).order(ByteOrder.LITTLE_ENDIAN)
+        header.position(0x0C); header.put((if (dsiWare) "KQ9E" else "A2DE").toByteArray())
+        if (dsiWare) header.putInt(0x234, 0x0003_0004)
+        rom.writeBytes(header.array())
+        val platformId = if (platform == "nds") 3 else 4
+        val dao = db.catalogDao()
+        dao.upsertRoms(listOf(RomEntity(
+            id = game.romId, platformId = platformId, platformSlug = platform, platformFsSlug = platform, title = game.title,
+            searchKey = game.title.lowercase(), sortKey = game.title.lowercase(), fsName = file, fsNameNoExt = file.substringBeforeLast('.'),
+            fsExtension = file.substringAfterLast('.'), sizeBytes = rom.length(), hasSimpleSingleFile = true, hasNestedSingleFile = false,
+            hasMultipleFiles = false, coverSmall = null, coverLarge = null, regions = "", updatedAt = "t", missingFromFs = false,
+        )))
+        dao.upsertInstall(InstallEntity(game.romId, "6365-3230", File(volume, "ROMs").path, "$folder/$file", "$folder/${file.lowercase()}",
+            platformId, InstallKind.FILE, rom.length(), VerifiedBy.SIZE, InstallSource.ADOPTED, null, 0))
+    }
+
+    /** melonDS's save of a game installed as [rom]: the ROM's name with its last extension replaced by .sav. */
+    protected fun dsSave(rom: String): File = File(melonDs, rom.replaceAfterLast('.', "sav", "$rom.sav"))
+
+    protected fun dsSave(game: DsGame): File = dsSave("${game.title}.nds")
+
+    /** melonDS's save of [game] as it writes it, last touched [minutesAgo] before [clock]. */
+    protected fun writeDsSave(game: DsGame, data: ByteArray, minutesAgo: Long = 10): File = dsSave(game).apply {
+        writeBytes(data)
+        Files.setLastModifiedTime(toPath(), FileTime.from(clock.minus(Duration.ofMinutes(minutesAgo))))
     }
 
     companion object {

@@ -32,6 +32,7 @@ import ro.davidmontei.loom.romm.dto.SyncNegotiateRequest
 import ro.davidmontei.loom.romm.dto.SyncOperationDto
 import ro.davidmontei.loom.romm.rommCall
 import ro.davidmontei.loom.storage.engine.formatBytes
+import ro.davidmontei.loom.storage.saves.ArgosyTrailer
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import ro.davidmontei.loom.storage.saves.NegotiatedAction
 import ro.davidmontei.loom.storage.saves.SAVE_SLOT
@@ -50,6 +51,7 @@ import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.storage.saves.SyncOutcome
 import ro.davidmontei.loom.storage.saves.UnitSnapshot
 import ro.davidmontei.loom.storage.saves.UnrestorableSaveException
+import ro.davidmontei.loom.storage.saves.isDesmumeSave
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -759,9 +761,10 @@ class SaveSyncEngine(
     private suspend fun uploadArchival(api: RommApi, deviceId: String, save: ResolvedSave.Ready, file: File, hash: String) {
         val taken = rommCall { api.saves(romId = save.romId) }.map { it.fileName }.toSet()
         val stem = "${save.fileName.substringBeforeLast('.')} (Thor ${ARCHIVE_STAMP.format(now())})"
-        var name = "$stem.zip"
+        val extension = save.extension()
+        var name = "$stem.$extension"
         var n = 2
-        while (name in taken) name = "$stem ${n++}.zip"
+        while (name in taken) name = "$stem ${n++}.$extension"
         rommCall {
             api.uploadSave(
                 romId = save.romId, emulator = save.emulator, slot = null, deviceId = deviceId, sessionId = null,
@@ -775,7 +778,9 @@ class SaveSyncEngine(
      * (what the decision was made on), is backed up, and the download must match RomM's hash
      * before [SaveRestorer] swaps it in. RomM hears about it (`/downloaded`) only once the save is
      * in place, and only then is the baseline written. [UnrestorableSaveException] when the save
-     * isn't laid out as the unit is, so it never could be restored here.
+     * isn't laid out as the unit is, so it never could be restored here. A raw save loses Argosy's
+     * hardcore trailer on the way: the baseline then holds the hash of what the Thor has, and
+     * RomM's of what it has.
      */
     private suspend fun download(
         api: RommApi, deviceId: String, sessionId: Int?, romId: Int, save: ResolvedSave.Ready, head: ServerHead, expectedLocal: String?,
@@ -783,7 +788,7 @@ class SaveSyncEngine(
         val current = save.unit.hash()
         if (current != expectedLocal) throw SaveChangedException("The save on the Thor changed since Loom looked; nothing was replaced")
         if (current != null) backups(save.unit).backUp(romId.toString(), save.title, save.unit, current)
-        val file = File(workDir, "download-$romId-${UUID.randomUUID()}.zip")
+        val file = File(workDir, "download-$romId-${UUID.randomUUID()}.${save.extension()}")
         try {
             rommCall { api.saveContent(head.saveId, deviceId, sessionId) }.use { body ->
                 body.byteStream().use { input -> copyCapped(input, file) }
@@ -795,9 +800,7 @@ class SaveSyncEngine(
             when (val unit = save.unit) {
                 is SaveUnit.Folders -> checkFolders(save, unit.roots, file)
                 is SaveUnit.Prefixed -> checkFolders(save, unit.roots, file)
-                is SaveUnit.SingleFile -> if (SaveHasher.isZip(file.toPath())) {
-                    throw UnrestorableSaveException("RomM's save for this game is an archive, and ${emulatorName(save.emulator)} keeps one file; nothing was replaced")
-                }
+                is SaveUnit.SingleFile -> checkRaw(save, file)
             }
             val restored = restorer.restore(file.toPath(), save.unit, current, save.maxUnitBytes)
             // The hash the download was checked against: RomM 5.4.0 keeps it as this device's baseline.
@@ -820,6 +823,24 @@ class SaveSyncEngine(
     }
 
     /**
+     * RomM's save for a single-file unit must be one raw save the emulator reads as it is: not an
+     * archive, not DeSmuME's `.dsv` (its footer would be read as part of the save), and not empty
+     * once Argosy's hardcore trailer is cut off [file]. Anything else can never be restored, whatever
+     * the Thor holds: [UnrestorableSaveException].
+     */
+    private fun checkRaw(save: ResolvedSave.Ready, file: File) {
+        val emulator = emulatorName(save.emulator)
+        if (SaveHasher.isZip(file.toPath())) {
+            throw UnrestorableSaveException("RomM's save for this game is an archive, and $emulator keeps one file; nothing was replaced")
+        }
+        if (isDesmumeSave(file.toPath())) {
+            throw UnrestorableSaveException("RomM's save is DeSmuME's, whose footer $emulator would read as part of the save; nothing was replaced")
+        }
+        ArgosyTrailer.strip(file.toPath())
+        if (file.length() == 0L) throw UnrestorableSaveException("RomM's save for this game is empty; nothing was replaced")
+    }
+
+    /**
      * Packs the unit for upload once it has settled, and runs [block] with the archive. Settled:
      * left alone for [QUIET_PERIOD], hashing as [expected] (what the decision was made on), and
      * hashing the same again when it is zipped [SECOND_HASH_DELAY_MS] later (the archive's hash,
@@ -833,7 +854,7 @@ class SaveSyncEngine(
         if (save.unit.hash() != expected) return null
         pause(SECOND_HASH_DELAY_MS)
         workDir.mkdirs()
-        val file = File(workDir, "upload-${save.romId}-${UUID.randomUUID()}.zip")
+        val file = File(workDir, "upload-${save.romId}-${UUID.randomUUID()}.${save.extension()}")
         try {
             if (save.unit.pack(file.toPath()) != expected || save.unit.snapshot() != before) return null
             return block(file)
@@ -985,6 +1006,9 @@ class SaveSyncEngine(
     /** Why [save], holding [bytes], isn't synced: more than Loom restores for its emulator. */
     private fun tooLarge(save: ResolvedSave.Ready, bytes: Long): String =
         "${emulatorName(save.emulator)} keeps ${formatBytes(bytes)} in this game's save, more than Loom syncs (${formatBytes(save.maxUnitBytes)})"
+
+    /** The extension of what Loom uploads for the save, from the name it goes up under: `sav` for a DS save, `zip` for an archive. */
+    private fun ResolvedSave.Ready.extension() = fileName.substringAfterLast('.', "zip")
 
     private fun stillWriting(save: ResolvedSave.Ready) = "${emulatorName(save.emulator)} is still writing this save. Close it and try again in a minute."
 

@@ -123,6 +123,7 @@ class SettingsScreenTest {
         override fun setAzaharFolder(dir: File?) { calls += "azahar:$dir" }
         override fun setEdenFolder(dir: File?) { calls += "eden:$dir" }
         override fun setEdenProfile(profile: String) { calls += "edenProfile:$profile" }
+        override fun setMelonDsFolder(dir: File?) { calls += "melonds:$dir" }
         override fun setSwap(swap: Boolean) { calls += "swap:$swap" }
         override fun openBatterySettings() { calls += "battery" }
         override fun licenseText() = (1..120).joinToString("\n\n") { "GNU GENERAL PUBLIC LICENSE, paragraph $it" }
@@ -724,14 +725,17 @@ class SettingsScreenTest {
 
     // --- each emulator's card, its details and its folder browser ---
 
-    /** The Thor's card with Azahar's data in ROMs/n3ds and Eden's saves in ROMs/saves/Eden. */
+    /** The Thor's card with Azahar's data in ROMs/n3ds, and Eden's and melonDS's saves in ROMs/saves. */
     private fun thorCard(): Pair<File, File> {
         val card = tmp.newFolder("6365-3230")
         val n3ds = File(card, "ROMs/n3ds").apply { File(this, "sdmc/Nintendo 3DS").mkdirs(); File(this, "nand").mkdirs() }
         val eden = File(card, "ROMs/saves/Eden").apply { File(this, "user/save/0000000000000000").mkdirs() }
+        val melonDs = File(card, "ROMs/saves/melonDS").apply { mkdirs(); File(this, "Mario.sav").writeBytes(ByteArray(512)) }
         File(card, "ROMs/snes").mkdirs()
         File(card, "ROMs/saves/Other").mkdirs()
-        state = sample.copy(storage = sample.storage.copy(romsRoot = File(card, "ROMs").path, azaharFound = n3ds.path, edenFound = eden.path))
+        state = sample.copy(storage = sample.storage.copy(
+            romsRoot = File(card, "ROMs").path, azaharFound = n3ds.path, edenFound = eden.path, melonDsFound = melonDs.path,
+        ))
         return n3ds to eden
     }
 
@@ -739,6 +743,7 @@ class SettingsScreenTest {
     private fun openDetails(tag: String) {
         press(Key.DirectionDown)
         if (tag == "eden") press(Key.DirectionRight)
+        if (tag == "melonds") press(Key.DirectionDown)
         rule.onNodeWithTag("$tag-card").assertIsFocused()
         press(Key.DirectionCenter)
     }
@@ -773,6 +778,10 @@ class SettingsScreenTest {
         press(Key.DirectionRight)
         rule.onNodeWithTag("eden-card").assertIsFocused()
         press(Key.DirectionLeft)
+        rule.onNodeWithTag("azahar-card").assertIsFocused()
+        press(Key.DirectionDown)
+        rule.onNodeWithTag("melonds-card").assertIsFocused()
+        press(Key.DirectionUp)
         rule.onNodeWithTag("azahar-card").assertIsFocused()
         press(Key.DirectionUp)
         rule.onNodeWithText("Upload saves automatically").assertIsFocused()
@@ -989,6 +998,51 @@ class SettingsScreenTest {
         rule.onNodeWithText(eden.parentFile!!.path).assertExists() // the browser is in saves, beside Eden
         rule.onNodeWithText("Eden").assertIsFocused()
         rule.onNodeWithText("n3ds").assertDoesNotExist()
+    }
+
+    /** melonDS's card is below Azahar's; its browser says whether the open folder holds melonDS's saves. */
+    @Test fun melonDsFolderIsChosenWithTheFolderBrowser() {
+        val (_, eden) = thorCard()
+        val melonDs = File(eden.parentFile, "melonDS")
+        show()
+        toTheSaveSwitch()
+        rule.onNodeWithTag("melonds-card").assertTextEquals("melonDS · DS", "Found in ROMs/saves/melonDS")
+        openDetails("melonds")
+        rule.onNodeWithText("melonDS's saves").assertExists()
+        rule.onNodeWithTag("melonds-folder-path", useUnmergedTree = true).assertTextEquals(melonDs.path)
+        rule.onNodeWithTag("melonds-folder-status", useUnmergedTree = true).assertTextEquals("Found in ROMs/saves/melonDS.")
+        rule.onNodeWithText("turn off Save next to ROM file", substring = true).assertExists()
+        press(Key.DirectionCenter) // Change folder: the browser opens in saves, on melonDS
+        rule.onNodeWithText("melonDS").assertIsFocused()
+        rule.onNodeWithText("No .sav files here: melonDS makes one for each game it runs.").assertExists()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("melonDS's saves are here (1 .sav file).").assertExists()
+        rule.onNodeWithText("Use this folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("melonds:${melonDs.path}")
+        rule.onNodeWithTag("melonds-card").assertIsFocused()
+    }
+
+    /** A chosen melonDS folder that isn't there says so; going back to saves/melonDS closes the details, back on its card. */
+    @Test fun aChosenMelonDsFolderCanGoBackToSavesMelonDs() {
+        state = sample.copy(settings = sample.settings!!.copy(melonDsSaveDir = "/storage/6365-3230/Emulation/melonDS"))
+        show(object : SettingsActions by actions {
+            override fun setMelonDsFolder(dir: File?) {
+                actions.setMelonDsFolder(dir)
+                state = state.copy(settings = state.settings!!.copy(melonDsSaveDir = dir?.path))
+            }
+        })
+        toTheSaveSwitch()
+        rule.onNodeWithTag("melonds-card").assertTextEquals("melonDS · DS", "Chosen, but it isn't there")
+        openDetails("melonds")
+        rule.onNodeWithTag("melonds-folder-status", useUnmergedTree = true).assertTextEquals("You chose this folder, but it isn't there.")
+        press(Key.DirectionLeft)
+        rule.onNodeWithText("Use saves/melonDS").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("melonds:null")
+        rule.onNodeWithText("melonDS's saves").assertDoesNotExist()
+        rule.onNodeWithTag("melonds-card").assertIsFocused()
+        rule.onNodeWithTag("melonds-card").assertTextEquals("melonDS · DS", "Not found yet")
     }
 
     /** Whether Loom can read Switch title IDs, in Eden's details, without a word of the key itself. */

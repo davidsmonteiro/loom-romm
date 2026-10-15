@@ -40,7 +40,7 @@ class FolderNote(val text: String, val looksRight: Boolean)
  * Browses folders with the D-pad (the system picker is touch-first and returns SAF URIs Loom
  * doesn't need with all-files access). Shows how many of the folders inside look like Cocoon
  * system folders, so picking the right ROMs root is easy to confirm; [note] says something else
- * about the open folder's [children] when it isn't a ROMs root being picked, and the folders in
+ * about the open folder and its children when it isn't a ROMs root being picked, and the folders in
  * [knownSystemFolders] are the ones to highlight.
  *
  * With [focusOnOpen] false the screen around it keeps focus (onboarding puts it on its suggested
@@ -61,7 +61,7 @@ fun FolderPicker(
     modifier: Modifier = Modifier,
     focusOnOpen: Boolean = true,
     focusOn: File? = null,
-    note: ((children: List<File>) -> FolderNote)? = null,
+    note: ((folder: File, children: List<File>) -> FolderNote)? = null,
 ) {
     var current by remember { mutableStateOf(initial?.takeIf { it.isDirectory }) }
     // The folder (or volume) just left by going up, or [focusOn] at first.
@@ -96,7 +96,7 @@ fun FolderPicker(
     Column(modifier.onFocusChanged { hasFocus = it.hasFocus }, verticalArrangement = Arrangement.spacedBy(Space.m)) {
         Text(current?.path ?: "Choose a storage", style = MaterialTheme.typography.titleSmall, color = LoomColors.TextMuted)
         if (current != null) {
-            val said = note?.invoke(children) ?: FolderNote(
+            val said = note?.invoke(current!!, children) ?: FolderNote(
                 if (systems > 0) "$systems folders here look like Cocoon systems (${children.filter(::looksLikeSystem).take(6).joinToString { it.name }}…)"
                 else "No system folders (snes, psx, gba…) here yet.",
                 looksRight = systems > 0,

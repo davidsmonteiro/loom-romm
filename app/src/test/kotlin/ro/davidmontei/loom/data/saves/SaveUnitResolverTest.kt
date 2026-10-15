@@ -11,7 +11,7 @@ import java.io.File
 /** From an installed 3DS game to its Azahar save folder, or why not. */
 @RunWith(AndroidJUnit4::class)
 class SaveUnitResolverTest : SaveSyncTestBase() {
-    private val resolver get() = SaveUnitResolver(settings, volumes, eden())
+    private val resolver get() = resolver()
 
     private suspend fun resolve(game: Game): ResolvedSave {
         val dao = db.catalogDao()
@@ -66,12 +66,12 @@ class SaveUnitResolverTest : SaveSyncTestBase() {
     @Test fun otherPlatformsSayWhyTheirSavesArentSynced() {
         assertThat(SaveUnitResolver.supportsPlatform("3ds")).isTrue()
         assertThat(SaveUnitResolver.supportsPlatform("new-nintendo-3ds")).isTrue()
-        assertThat(SaveUnitResolver.supportsPlatform("nds")).isFalse()
+        assertThat(SaveUnitResolver.supportsPlatform("gba")).isFalse()
         assertThat(SaveUnitResolver.unsupportedReason("psx")).isEqualTo("DuckStation keeps its memory cards in Android/data, where Loom can't reach them")
         assertThat(SaveUnitResolver.unsupportedReason("ngc")).startsWith("Dolphin")
         assertThat(SaveUnitResolver.unsupportedReason("wiiu")).startsWith("Cemu")
         assertThat(SaveUnitResolver.unsupportedReason("psp")).isEqualTo("Loom doesn't sync PPSSPP saves yet")
-        assertThat(SaveUnitResolver.unsupportedReason("snes")).isEqualTo("Loom syncs 3DS (Azahar) and Switch (Eden) saves only, for now")
+        assertThat(SaveUnitResolver.unsupportedReason("snes")).isEqualTo("Loom syncs 3DS, Switch and DS saves only, for now")
     }
 
     /** Eden's save folder moved to the card makes Switch games syncable, under Eden's emulator id (Argosy's too). */
@@ -87,6 +87,22 @@ class SaveUnitResolverTest : SaveSyncTestBase() {
         assertThat(ready.roots.single().name).isEqualTo(wonder.titleId)
         assertThat(ready.roots.single().folder.toFile()).isEqualTo(edenFolder(wonder))
         assertThat(ready.fileName).isEqualTo("Super Mario Bros Wonder.zip")
+    }
+
+    /** melonDS's save folder in ROMs/saves makes DS games syncable, a DSi game on cartridge too, under melonDS's id. */
+    @Test fun dsGamesAreSyncedThroughMelonDs() = runBlocking<Unit> {
+        assertThat(SaveUnitResolver.emulatorForPlatform("nds")).isEqualTo("melonds")
+        assertThat(SaveUnitResolver.emulatorForPlatform("nintendo-dsi")).isEqualTo("melonds")
+        installDs(marioDs, file = "Mario (USA).nds")
+        installDs(zeldaDs, file = "Zelda.zip", platform = "nintendo-dsi")
+        val dao = db.catalogDao()
+        for ((game, save) in listOf(marioDs to "Mario (USA).sav", zeldaDs to "Zelda.sav")) {
+            val ready = resolver.resolve(dao.rom(game.romId)!!, dao.install(game.romId)!!) as ResolvedSave.Ready
+            assertThat(ready.emulator).isEqualTo("melonds")
+            assertThat((ready.unit as SaveUnit.SingleFile).file.toFile()).isEqualTo(File(melonDs, save))
+            assertThat(ready.fileName).isEqualTo(save) // raw, under the save's own name, as Argosy uploads it
+            assertThat(ready.unitPath).isEqualTo(File(melonDs, save).path)
+        }
     }
 
     @Test fun azaharsFolderIsTheOneHoldingItsSdCard() {

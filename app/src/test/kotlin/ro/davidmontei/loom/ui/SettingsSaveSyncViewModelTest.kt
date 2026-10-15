@@ -47,6 +47,7 @@ import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.romm.pairing.RommConnector
 import ro.davidmontei.loom.ui.settings.SettingsViewModel
 import ro.davidmontei.loom.ui.settings.edenFolderSaved
+import ro.davidmontei.loom.ui.settings.melonDsFolderSaved
 import java.io.File
 
 /** Settings' save sync: where Azahar's data is found, choosing its folder, and the automatic upload switch. */
@@ -183,6 +184,24 @@ class SettingsSaveSyncViewModelTest {
         val empty = tmp.newFolder("Empty")
         assertThat(edenFolderSaved(empty)).isEqualTo("Saved, but there's no user/save in ${empty.path} yet. Choose the folder Eden saves in.")
         assertThat(edenFolderSaved(null)).isEqualTo("Loom looks for Eden's saves in the ROMs folder's saves/Eden again")
+    }
+
+    /** melonDS's folder is found in the ROMs folder's saves/melonDS; one chosen is kept, and Settings says whether it is there. */
+    @Test fun melonDsFolderIsFoundOrChosen() = runBlocking<Unit> {
+        File(roms, "saves/melonDS").mkdirs()
+        val vm = viewModel()
+        assertThat(withTimeout(5_000) { vm.state.first { it.storage.romsRoot != null } }.storage.melonDsFound)
+            .isEqualTo(File(roms, "saves/melonDS").path)
+        val chosen = tmp.newFolder("melonDS saves")
+        val message = async { vm.messages.first() }
+        vm.setMelonDsFolder(chosen).join()
+        assertThat(settings.snapshot().melonDsSaveDir).isEqualTo(chosen.path)
+        assertThat(withTimeout(5_000) { message.await() }).isEqualTo("Saved. Loom finds DS saves in ${chosen.path}: set melonDS's Save file directory to it too")
+        vm.setMelonDsFolder(null).join()
+        assertThat(settings.snapshot().melonDsSaveDir).isNull()
+        assertThat(melonDsFolderSaved(File(tmp.root, "nowhere"))).isEqualTo("Saved, but there's no folder at ${File(tmp.root, "nowhere").path}. Choose the folder melonDS saves in.")
+        assertThat(melonDsFolderSaved(null)).isEqualTo("Loom looks for melonDS's saves in the ROMs folder's saves/melonDS again")
+        vm.viewModelScope.cancel()
     }
 
     @Test fun theAutomaticUploadSwitchStartsAndStopsThePeriodicScan() = runBlocking<Unit> {

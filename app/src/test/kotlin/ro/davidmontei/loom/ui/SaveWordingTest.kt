@@ -119,6 +119,7 @@ class SaveWordingTest {
 
     @Test fun emulatorsAreNamedAsTheUserKnowsThem() {
         assertThat(emulatorName("azahar")).isEqualTo("Azahar")
+        assertThat(emulatorName("melonds")).isEqualTo("melonDS")
         assertThat(emulatorName("citra")).isEqualTo("citra")
         assertThat(emulatorName(null)).isEqualTo("the emulator")
     }

@@ -55,6 +55,7 @@ import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.saves.EdenSaves
+import ro.davidmontei.loom.data.saves.MelonDsSaves
 import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.SaveSyncEngine
@@ -112,8 +113,8 @@ class LibraryViewModelTest {
             rom(20, 2, "genesis", "Sonic the Hedgehog", "Sonic the Hedgehog (USA, Europe).zip"),
         ))
         val eden = EdenSaves(settings, db.catalogDao(), db.saveDao())
-        val engine = SaveSyncEngine(db.catalogDao(), db.saveDao(), server, credentials, settings, SaveUnitResolver(settings, volumes, eden), volumes,
-            File(tmp.root, "cache"))
+        val units = SaveUnitResolver(settings, volumes, eden, MelonDsSaves(settings, db.catalogDao()))
+        val engine = SaveSyncEngine(db.catalogDao(), db.saveDao(), server, credentials, settings, units, volumes, File(tmp.root, "cache"))
         vm = LibraryViewModel(
             db.catalogDao(),
             DownloadRepository(db.downloadDao(), db.catalogDao(), server, mapping, settings, volumes, QueueKicker(workManager)),
@@ -223,7 +224,7 @@ class LibraryViewModelTest {
         vm.selectPlatform(2)
         val genesis = gamesOnScreen { games -> games.any { it.id == 20 && it.save != null } }
         assertThat(genesis.single().save)
-            .isEqualTo(GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Loom syncs 3DS (Azahar) and Switch (Eden) saves only, for now", null))
+            .isEqualTo(GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Loom syncs 3DS, Switch and DS saves only, for now", null))
     }
 
     /**
