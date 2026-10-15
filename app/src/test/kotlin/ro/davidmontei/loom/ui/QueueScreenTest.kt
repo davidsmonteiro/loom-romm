@@ -154,6 +154,52 @@ class QueueScreenTest {
         assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(pokemonX))
     }
 
+    private val sun = pokemonX.copy(romId = 10, title = "Pokemon Sun")
+    private val moon = pokemonX.copy(romId = 11, title = "Pokemon Moon")
+
+    /**
+     * Found by review: the second screen kept the place in the list, not the conflict: one settled
+     * above (a save sync in the background) moved it to the next game's two sides while the top
+     * screen still asked about this one.
+     */
+    @Test fun theConflictStaysWhileItsChoiceIsOpenAndOneAboveIsSettled() {
+        val companion = CompanionHolder()
+        show(sample.copy(conflicts = listOf(pokemonX, sun, moon)), companion = companion)
+        press(Key.DirectionDown)
+        rule.onNodeWithTag("conflict-10").assertIsFocused()
+        press(Key.DirectionCenter)
+        update { it.copy(conflicts = listOf(sun, moon)) }
+        rule.onNodeWithText("Pokemon Sun: which save to keep?").assertExists()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(sun))
+        press(Key.DirectionCenter) // Skip: back on its row
+        rule.onNodeWithTag("conflict-10").assertIsFocused()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(sun))
+    }
+
+    @Test fun theConflictStaysWhileReplacingTheThorsSaveIsAskedAndOneAboveIsSettled() {
+        val companion = CompanionHolder()
+        show(sample.copy(conflicts = listOf(pokemonX, sun, moon)), companion = companion)
+        press(Key.DirectionDown)
+        press(Key.DirectionCenter)
+        press(Key.DirectionRight); press(Key.DirectionRight); press(Key.DirectionCenter) // Keep server: asked again
+        rule.onNodeWithText("Put RomM's save of Pokemon Sun on the Thor?").assertExists()
+        update { it.copy(conflicts = listOf(sun, moon)) }
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(sun))
+    }
+
+    /** The same for a download being asked about, while one above it finishes. */
+    @Test fun theDownloadStaysWhileCancellingItIsAskedAndOneAboveFinishes() {
+        val companion = CompanionHolder()
+        show(companion = companion)
+        press(Key.DirectionDown)
+        rule.onNodeWithTag("job-2").assertIsFocused()
+        press(Key.ButtonX)
+        rule.onNodeWithText("Cancel downloading Metroid Prime (USA)?").assertExists()
+        update { it.copy(active = it.active.drop(1)) }
+        rule.onNodeWithText("Cancel downloading Metroid Prime (USA)?").assertExists()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Job(sample.active[1]))
+    }
+
     @Test fun aPausesResumesAndRetriesByRow() {
         show()
         rule.onNodeWithTag("job-1").assertIsFocused()

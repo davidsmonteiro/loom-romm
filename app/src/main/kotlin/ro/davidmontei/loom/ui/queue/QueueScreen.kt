@@ -124,11 +124,13 @@ data class QueueUiState(
 )
 
 /** A row of the queue: a section header, a save to settle or restore, or a job. */
+private fun conflictKey(romId: Int): Any = "conflict-$romId"
+
 private sealed interface QueueRow {
     val key: Any
 
     data class Header(val text: String) : QueueRow { override val key get() = text }
-    data class Conflict(val item: ConflictItem) : QueueRow { override val key get() = "conflict-${item.romId}" }
+    data class Conflict(val item: ConflictItem) : QueueRow { override val key get() = conflictKey(item.romId) }
     data class Restorable(val item: RestorableSave) : QueueRow { override val key get() = "restore-${item.romId}" }
     data class Job(val item: QueueItem) : QueueRow { override val key get() = item.jobId }
 }
@@ -309,6 +311,7 @@ fun QueueContent(
     // one has left (a job finished or cancelled, a conflict settled), rather than the top of the queue.
     var lastIndex by remember { mutableStateOf<Int?>(null) }
     val entryKey = lastIndex?.let { keys.getOrNull(it.coerceAtMost(keys.lastIndex)) } ?: startKey
+    var lastKey by remember { mutableStateOf<Any?>(null) }
     val entry = remember { FocusRequester() }
     // With nothing to act on, the first row the pad can scroll from: the newest finished game, else the newest synced save.
     val readOnlyFirst: Any? = state.finished.firstOrNull()?.let { "done-${it.romId}-${it.installedAt}" }
@@ -317,6 +320,7 @@ fun QueueContent(
     fun trackFocus(key: Any, focused: Boolean) {
         if (focused) {
             focusedKey = key
+            lastKey = key
             lastIndex = keys.indexOf(key).takeIf { it >= 0 }
         } else if (focusedKey == key) focusedKey = null
     }
@@ -324,10 +328,17 @@ fun QueueContent(
     val focusedLeft = focusedKey != null && focusedKey !in keys
     LaunchedEffect(focusedLeft) { if (focusedLeft) runCatching { entry.requestFocus() } }
 
-    // The second screen shows the row focused, or the one focus will go back to: a conflict stays there
-    // while its choice is open, its two sides beside each other.
+    // The second screen shows the row focused, else the one a question open on top is about (a conflict's two
+    // sides stay beside each other while its choice is open), else the one last focused, or the one now in
+    // its place. By key: a row above that leaves (a save sync settling another conflict, a download
+    // finishing) moves the rest up, and the place would then name the next one.
+    val dialogKey: Any? = choosing?.let(::conflictKey)
+        ?: replacing?.first?.romId?.let(::conflictKey)
+        ?: state.saveFolderQuestion?.romId?.let(::conflictKey)
+        ?: restoring?.let { QueueRow.Restorable(it).key }
+        ?: confirmCancel?.jobId
     PublishCompanion(
-        when (val row = rows.firstOrNull { it.key == (focusedKey ?: entryKey) }) {
+        when (val row = rows.firstOrNull { it.key == (focusedKey ?: dialogKey ?: lastKey?.takeIf { it in keys } ?: entryKey) }) {
             is QueueRow.Conflict -> CompanionContent.Conflict(row.item)
             is QueueRow.Job -> CompanionContent.Job(row.item)
             else -> CompanionContent.Idle
