@@ -48,6 +48,9 @@ import ro.davidmontei.loom.ui.queue.QueueUiState
 import ro.davidmontei.loom.ui.queue.transferLine
 import ro.davidmontei.loom.ui.saves.SaveFolderOption
 import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
+import ro.davidmontei.loom.ui.second.CompanionContent
+import ro.davidmontei.loom.ui.second.CompanionHolder
+import ro.davidmontei.loom.ui.second.LocalCompanion
 
 @OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
@@ -96,9 +99,14 @@ class QueueScreenTest {
 
     private var state by mutableStateOf(sample)
 
-    private fun show(initial: QueueUiState = sample, focusJobId: Long? = null, focusConflictRomId: Int? = null) {
+    /** [companion]: what the activity hands the screens for a second screen; none by default, as on a phone. */
+    private fun show(initial: QueueUiState = sample, focusJobId: Long? = null, focusConflictRomId: Int? = null, companion: CompanionHolder? = null) {
         state = initial
-        rule.setContent { LoomTestTheme { QueueContent(state, actions, focusJobId, focusConflictRomId = focusConflictRomId) } }
+        rule.setContent {
+            CompositionLocalProvider(LocalCompanion provides companion) {
+                LoomTestTheme { QueueContent(state, actions, focusJobId, focusConflictRomId = focusConflictRomId) }
+            }
+        }
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
     }
 
@@ -117,6 +125,33 @@ class QueueScreenTest {
     private fun back() {
         rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
         rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+    }
+
+    // --- the second screen: the Thor's bottom one shows the row the pad is on ---
+
+    @Test fun aFocusedConflictIsPublished() {
+        val companion = CompanionHolder()
+        show(withSaves, companion = companion)
+        rule.onNodeWithTag("conflict-7").assertIsFocused()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(pokemonX))
+        press(Key.DirectionDown) // a save to restore: nothing more to show of it
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Idle)
+        press(Key.DirectionDown) // the download under way
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Job(sample.active[0]))
+        update { it.copy(active = listOf(it.active[0].copy(bytesDone = 1_400_000_000)) + it.active.drop(1)) } // as it moves on
+        assertThat((companion.content.value as CompanionContent.Job).item.bytesDone).isEqualTo(1_400_000_000)
+    }
+
+    @Test fun theConflictStaysWhileItsChoiceIsOpen() {
+        val companion = CompanionHolder()
+        show(withSaves, companion = companion)
+        press(Key.DirectionCenter)
+        button("Skip").assertIsFocused()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(pokemonX))
+        press(Key.DirectionRight); press(Key.DirectionRight) // Keep server: asked again
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Put RomM's save of Pokemon X on the Thor?").assertExists()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(pokemonX))
     }
 
     @Test fun aPausesResumesAndRetriesByRow() {

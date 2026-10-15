@@ -16,7 +16,10 @@ import kotlinx.coroutines.flow.asStateFlow
  * or another screen opened over it) can still publish while it animates away, and leaves after the
  * one replacing it has arrived: neither takes the second screen from that newer one.
  */
-class CompanionHolder {
+class CompanionHolder(
+    /** What the queue holds, shown under the game: the activity's, while a second screen shows it. */
+    val strip: StateFlow<QueueStrip?> = MutableStateFlow(null),
+) {
     private val _content = MutableStateFlow<CompanionContent>(CompanionContent.Idle)
     val content: StateFlow<CompanionContent> = _content.asStateFlow()
 

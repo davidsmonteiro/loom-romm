@@ -18,10 +18,15 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.data.db.SaveSyncState
+import ro.davidmontei.loom.data.saves.conflictReason
+import ro.davidmontei.loom.storage.engine.JobPhase
+import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.InstallState
+import ro.davidmontei.loom.ui.queue.transferLine
 import ro.davidmontei.loom.ui.second.CompanionContent
+import ro.davidmontei.loom.ui.second.QueueStrip
 import ro.davidmontei.loom.ui.second.SecondScreenContent
 
 /**
@@ -36,9 +41,12 @@ class SecondScreenContentTest {
 
     private var content by mutableStateOf<CompanionContent>(CompanionContent.Idle)
 
-    private fun show(shown: CompanionContent) {
+    private var strip by mutableStateOf<QueueStrip?>(null)
+
+    private fun show(shown: CompanionContent, queue: QueueStrip? = null) {
         content = shown
-        rule.setContent { LoomTestTheme { SecondScreenContent(content) } }
+        strip = queue
+        rule.setContent { LoomTestTheme { SecondScreenContent(content, strip) } }
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
     }
 
@@ -72,6 +80,48 @@ class SecondScreenContentTest {
         rule.onNodeWithText("Finishing…").assertExists() // not "100%"
         rule.onNodeWithText("Moving it into your ROMs folder").assertExists()
         rule.assertFitsIn("second-screen")
+    }
+
+    /** Under the game at its tallest, the queue's strip at its longest: every line of both in full, or ellipsized. */
+    @Test fun theQueueStripFitsUnderTheGame() {
+        val downloading = QueueScreenTest.item(1, "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)",
+            JobPhase.DOWNLOADING, done = 1_300_000_000, speed = 11_800_000)
+        show(CompanionContent.Game(tallest, "Nintendo 3DS", null), QueueStrip(downloading, waiting = 12, failed = 3, conflicts = 2))
+        rule.assertFitsIn("second-screen")
+        rule.onNodeWithText("12 more in the queue · 3 failed · 2 save conflicts").assertExists()
+        val cover = rule.onNodeWithTag("panel-cover").fetchSemanticsNode().boundsInRoot
+        assertThat(cover.bottom).isAtMost(rule.onNodeWithTag("queue-strip").fetchSemanticsNode().boundsInRoot.top)
+        rule.saveScreenshot("second-screen-game-queue")
+        strip = QueueStrip(null, waiting = 0, failed = 0, conflicts = 1) // nothing downloading: one line
+        rule.assertFitsIn("second-screen")
+        rule.onNodeWithText("1 save conflict").assertExists()
+    }
+
+    /** The queue's conflict at its longest: a long title and reason, and RomM's side in full beside the Thor's. */
+    @Test fun aConflictsTwoSidesFitTheBottomScreen() {
+        val conflict = QueueScreenTest.pokemonX.copy(
+            title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)",
+            reason = conflictReason(SyncDecision.SERVER_WENT_BACK.name), serverEmulator = "eden", serverDevice = "AYN Odin 2 Portal (Argosy)",
+        )
+        show(CompanionContent.Conflict(conflict))
+        rule.assertFitsIn("second-screen")
+        val thor = rule.onNodeWithTag("panel-thor-side").fetchSemanticsNode().boundsInRoot
+        val server = rule.onNodeWithTag("panel-server-side").fetchSemanticsNode().boundsInRoot
+        assertThat(server.left).isAtLeast(thor.right) // beside each other
+        assertThat(server.top).isEqualTo(thor.top)
+        rule.onNodeWithText("From AYN Odin 2 Portal (Argosy)").assertExists()
+        rule.saveScreenshot("second-screen-conflict")
+    }
+
+    @Test fun aDownloadFitsTheBottomScreen() {
+        val failed = QueueScreenTest.sample.failed[0]
+        show(CompanionContent.Job(QueueScreenTest.sample.active[0]))
+        rule.assertFitsIn("second-screen")
+        rule.onNodeWithText(transferLine(QueueScreenTest.sample.active[0])).assertExists()
+        rule.saveScreenshot("second-screen-download")
+        content = CompanionContent.Job(failed.copy(retryable = false))
+        rule.assertFitsIn("second-screen")
+        rule.onNodeWithText("Retrying won't help until this is fixed.").assertExists()
     }
 
     /** It takes no input: the pad stays with Loom on the other screen. */

@@ -54,9 +54,11 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import ro.davidmontei.loom.data.db.DownloadJobEntity
 import ro.davidmontei.loom.data.db.RecentInstall
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.download.DownloadRepository
+import ro.davidmontei.loom.data.download.LiveProgress
 import ro.davidmontei.loom.data.download.status
 import ro.davidmontei.loom.data.saves.ConflictChoice
 import ro.davidmontei.loom.data.saves.SaveRepository
@@ -83,6 +85,8 @@ import ro.davidmontei.loom.ui.saves.SaveFolderOption
 import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 import ro.davidmontei.loom.ui.saves.answer
 import ro.davidmontei.loom.ui.saves.toQuestion
+import ro.davidmontei.loom.ui.second.CompanionContent
+import ro.davidmontei.loom.ui.second.PublishCompanion
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 import javax.inject.Inject
@@ -104,6 +108,8 @@ data class QueueItem(
     val failed get() = phase == JobPhase.FAILED
     /** Moving into place (finishing) can't be stopped half way. */
     val canCancel get() = phase != JobPhase.PROMOTING
+    /** How far it is, while its size is known. */
+    val fraction: Float? get() = if (bytesTotal > 0) bytesDone.toFloat() / bytesTotal else null
 }
 
 data class QueueUiState(
@@ -158,31 +164,7 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
     val messages: Flow<String> = _messages.receiveAsFlow()
 
     private val jobRows = combine(downloads.jobs, downloads.progress, downloads.recentInstalls) { jobs, live, recent ->
-        val items = jobs.filter { it.phase != JobPhase.CANCELLING.name }.map { job ->
-            val status = job.status()
-            val p = live[job.id]
-            QueueItem(
-                jobId = job.id,
-                title = job.title,
-                phase = status.phase,
-                label = when (status.phase) {
-                    JobPhase.QUEUED -> "Queued"
-                    JobPhase.WAITING -> if (status.waitReason == WaitReason.STORAGE) "Waiting for the SD card" else "Waiting for Loom to open"
-                    JobPhase.PAUSED -> "Paused"
-                    JobPhase.DOWNLOADING -> "Downloading"
-                    JobPhase.VERIFYING -> "Checking files"
-                    JobPhase.EXTRACTING -> "Unpacking"
-                    JobPhase.PROMOTING -> "Finishing…"
-                    JobPhase.FAILED -> "Failed"
-                    else -> status.phase.name
-                },
-                detail = status.failure?.detail,
-                bytesDone = p?.bytesDone ?: job.bytesDone,
-                bytesTotal = job.bytesTotal,
-                bytesPerSecond = if (status.phase == JobPhase.DOWNLOADING) p?.bytesPerSecond ?: 0 else 0,
-                retryable = status.failure?.retryable ?: true,
-            )
-        }
+        val items = queueItems(jobs, live)
         QueueUiState(items.filterNot { it.failed }, items.filter { it.failed }, recent)
     }
 
@@ -250,6 +232,36 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
     }
 }
 
+/** The queue's jobs as the queue and the second screen show them, with [live] transfer numbers while they download. */
+fun queueItems(jobs: List<DownloadJobEntity>, live: Map<Long, LiveProgress>): List<QueueItem> =
+    jobs.filter { it.phase != JobPhase.CANCELLING.name }.map { queueItem(it, live[it.id]) }
+
+/** One job, with [live] transfer numbers while it downloads. */
+fun queueItem(job: DownloadJobEntity, live: LiveProgress?): QueueItem {
+    val status = job.status()
+    return QueueItem(
+        jobId = job.id,
+        title = job.title,
+        phase = status.phase,
+        label = when (status.phase) {
+            JobPhase.QUEUED -> "Queued"
+            JobPhase.WAITING -> if (status.waitReason == WaitReason.STORAGE) "Waiting for the SD card" else "Waiting for Loom to open"
+            JobPhase.PAUSED -> "Paused"
+            JobPhase.DOWNLOADING -> "Downloading"
+            JobPhase.VERIFYING -> "Checking files"
+            JobPhase.EXTRACTING -> "Unpacking"
+            JobPhase.PROMOTING -> "Finishing…"
+            JobPhase.FAILED -> "Failed"
+            else -> status.phase.name
+        },
+        detail = status.failure?.detail,
+        bytesDone = live?.bytesDone ?: job.bytesDone,
+        bytesTotal = job.bytesTotal,
+        bytesPerSecond = if (status.phase == JobPhase.DOWNLOADING) live?.bytesPerSecond ?: 0 else 0,
+        retryable = status.failure?.retryable ?: true,
+    )
+}
+
 @Composable
 fun QueueScreen(focusJobId: Long?, focusConflictRomId: Int?, onBack: () -> Unit, vm: QueueViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -311,6 +323,16 @@ fun QueueContent(
     // A focused row that leaves the list takes focus with it; the row now in its place takes over.
     val focusedLeft = focusedKey != null && focusedKey !in keys
     LaunchedEffect(focusedLeft) { if (focusedLeft) runCatching { entry.requestFocus() } }
+
+    // The second screen shows the row focused, or the one focus will go back to: a conflict stays there
+    // while its choice is open, its two sides beside each other.
+    PublishCompanion(
+        when (val row = rows.firstOrNull { it.key == (focusedKey ?: entryKey) }) {
+            is QueueRow.Conflict -> CompanionContent.Conflict(row.item)
+            is QueueRow.Job -> CompanionContent.Job(row.item)
+            else -> CompanionContent.Idle
+        },
+    )
 
     fun primary(item: QueueItem) = when {
         item.failed -> if (item.retryable) actions.retry(item.jobId) else Unit
@@ -489,23 +511,26 @@ private fun JobRow(item: QueueItem, modifier: Modifier, onFocus: (QueueItem, Boo
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
             Text(item.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            when {
-                item.failed -> StatusBadge("Failed", color = LoomColors.Error, onColor = LoomColors.OnError)
-                item.phase == JobPhase.PAUSED -> StatusBadge("Paused", color = LoomColors.SurfaceHighest, onColor = LoomColors.Text)
-                else -> StatusBadge(item.label, color = if (item.phase.isActive) LoomColors.Accent else LoomColors.SurfaceHighest,
-                    onColor = if (item.phase.isActive) LoomColors.OnAccent else LoomColors.Text)
-            }
+            JobBadge(item)
         }
         if (!item.failed) {
-            LoomProgressBar(
-                if (item.bytesTotal > 0) item.bytesDone.toFloat() / item.bytesTotal else null,
-                color = if (item.phase.isActive) LoomColors.Accent else LoomColors.TextFaint,
-            )
+            LoomProgressBar(item.fraction, color = if (item.phase.isActive) LoomColors.Accent else LoomColors.TextFaint)
             Text(transferLine(item), style = MaterialTheme.typography.labelMedium.tabular(), color = LoomColors.TextMuted)
         } else {
             Text(item.detail ?: "The download failed.", style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted)
             if (!item.retryable) Text("Retrying won't help until this is fixed.", style = MaterialTheme.typography.labelMedium, color = LoomColors.Error)
         }
+    }
+}
+
+/** Where a job is: what it is doing, failed, or paused. */
+@Composable
+internal fun JobBadge(item: QueueItem) {
+    when {
+        item.failed -> StatusBadge("Failed", color = LoomColors.Error, onColor = LoomColors.OnError)
+        item.phase == JobPhase.PAUSED -> StatusBadge("Paused", color = LoomColors.SurfaceHighest, onColor = LoomColors.Text)
+        else -> StatusBadge(item.label, color = if (item.phase.isActive) LoomColors.Accent else LoomColors.SurfaceHighest,
+            onColor = if (item.phase.isActive) LoomColors.OnAccent else LoomColors.Text)
     }
 }
 

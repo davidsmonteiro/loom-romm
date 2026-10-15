@@ -29,19 +29,24 @@ import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import ro.davidmontei.loom.data.download.DownloadRepository
+import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.ui.components.DialogHost
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.input.GamepadKeys
 import ro.davidmontei.loom.ui.input.TouchModePress
 import ro.davidmontei.loom.ui.nav.LoomNavHost
+import ro.davidmontei.loom.ui.queue.queueItems
 import ro.davidmontei.loom.ui.second.CompanionHolder
 import ro.davidmontei.loom.ui.second.LocalCompanion
 import ro.davidmontei.loom.ui.second.PresentationWindow
 import ro.davidmontei.loom.ui.second.SecondScreenContent
 import ro.davidmontei.loom.ui.second.SecondScreenController
+import ro.davidmontei.loom.ui.second.queueStrip
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.LoomTheme
 import javax.inject.Inject
@@ -49,14 +54,18 @@ import javax.inject.Inject
 data class AppState(val onboarded: Boolean, val swapConfirmBack: Boolean)
 
 @HiltViewModel
-class AppViewModel @Inject constructor(settings: SettingsStore) : ViewModel() {
+class AppViewModel @Inject constructor(settings: SettingsStore, downloads: DownloadRepository, saves: SaveRepository) : ViewModel() {
     /** Null until settings have loaded, so the first frame doesn't flash onboarding. */
     val state: StateFlow<AppState?> = settings.settings
         .map { AppState(it.onboardingComplete && it.server != null, it.swapConfirmBack) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    /** What the screens publish for a second screen. */
-    val companion = CompanionHolder()
+    /** What the screens publish for a second screen, and what the queue holds, worked out only while one shows it. */
+    val companion = CompanionHolder(
+        strip = combine(downloads.jobs, downloads.progress, saves.observeConflicts()) { jobs, live, conflicts ->
+            queueStrip(queueItems(jobs, live), conflicts.count { !it.conflict.skipped })
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null),
+    )
 
     /** "Use the second screen": off until settings have loaded, so a panel switched off never flashes up. */
     val secondScreen: StateFlow<Boolean> = settings.settings.map { it.secondScreen }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -89,7 +98,7 @@ class MainActivity : ComponentActivity() {
         openQueue = intent?.action == ACTION_OPEN_QUEUE
         // Handed state only: a ViewModel asked for on the second screen would be another copy of this one's.
         secondScreen = SecondScreenController(this, app.companion, app.secondScreen, PresentationWindow(this) {
-            SecondScreenContent(app.companion.content.collectAsStateWithLifecycle().value)
+            SecondScreenContent(app.companion.content.collectAsStateWithLifecycle().value, app.companion.strip.collectAsStateWithLifecycle().value)
         })
         lifecycle.addObserver(secondScreen)
         setContent {

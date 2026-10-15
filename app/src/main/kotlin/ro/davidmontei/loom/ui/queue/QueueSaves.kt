@@ -247,8 +247,9 @@ internal fun ConflictDialog(item: ConflictItem, onAnswer: (ConflictChoice) -> Un
     )
 }
 
+/** One side of a conflict, under its [heading]: the choice's and the second screen's. */
 @Composable
-private fun SaveSide(heading: String, lines: List<String>, modifier: Modifier) {
+internal fun SaveSide(heading: String, lines: List<String>, modifier: Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
         Text(heading.uppercase(), style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted)
         lines.forEach { Text(it, style = MaterialTheme.typography.bodyMedium.tabular(), color = LoomColors.Text) }

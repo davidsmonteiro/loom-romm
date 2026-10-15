@@ -261,7 +261,8 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
                             subtitle = "For Nintendo-style pads: confirm with the right face button and go back with the bottom one.")
                     }
                     LoomSwitchRow("Use the second screen", state.settings?.secondScreen != false, actions::setSecondScreen,
-                        subtitle = "With two screens, as on the Thor, the other one shows the game you're on. It only shows: the pad stays here.")
+                        subtitle = "With two screens, as on the Thor, the other one shows the game you're on, or the download or save " +
+                            "conflict in the queue. It only shows: the pad stays here.")
                 }
                 SettingsSection.ABOUT -> AboutSection(state, actions, first)
             }
