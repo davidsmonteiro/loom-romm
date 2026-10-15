@@ -8,6 +8,8 @@ import org.junit.rules.TemporaryFolder
 import ro.davidmontei.loom.storage.saves.SaveFixtures.AZAHAR_MAIN
 import ro.davidmontei.loom.storage.saves.SaveFixtures.AZAHAR_METADATA
 import ro.davidmontei.loom.storage.saves.SaveFixtures.AZAHAR_UNIT_HASH
+import ro.davidmontei.loom.storage.saves.SaveFixtures.RAW_SAVE
+import ro.davidmontei.loom.storage.saves.SaveFixtures.RAW_SAVE_MD5
 import ro.davidmontei.loom.storage.saves.SaveFixtures.folderOf
 import java.nio.file.Files
 import java.nio.file.Path
@@ -21,6 +23,7 @@ class SaveBackupsTest {
     private var clock = Instant.parse("2026-10-13T22:15:07.123Z")
     private fun backups(keep: Int = 10) = SaveBackups(path(".loom/save-backups"), keep) { clock }
     private fun unit() = listOf(SaveRoot("data", folderOf(path("data"), "00000001/main" to AZAHAR_MAIN, "00000001.metadata" to AZAHAR_METADATA)))
+    private fun rawUnit() = SaveUnit.SingleFile(folderOf(path("melonDS"), "Mario Kart DS.sav" to RAW_SAVE).resolve("Mario Kart DS.sav"))
 
     @Test fun aBackupIsTheUnitsArchiveNamedByTime() {
         val backup = backups().backUp("42", "Pokémon Omega Ruby (USA)", unit(), AZAHAR_UNIT_HASH)
@@ -44,6 +47,35 @@ class SaveBackupsTest {
         }) { clock }
         assertThrows(java.io.IOException::class.java) { lossy.backUp("42", "Game", unit(), AZAHAR_UNIT_HASH) }
         assertThat(backups().list("42")).isEmpty()
+    }
+
+    /** A DS save is one raw file: its backup is that file as it was, named `.sav`, not a zip of it. */
+    @Test fun aRawSaveIsBackedUpAsItself() {
+        val backup = backups().backUp("42", "Mario Kart DS", rawUnit(), RAW_SAVE_MD5)
+        assertThat(backup.file).isEqualTo(path(".loom/save-backups/42/20261013-221507-123 Mario Kart DS.sav"))
+        assertThat(backup.hash).isEqualTo(RAW_SAVE_MD5)
+        assertThat(Files.readAllBytes(backup.file)).isEqualTo(RAW_SAVE)
+        assertThat(Files.list(backup.file.parent).use { it.count() }).isEqualTo(1) // no partial file left
+    }
+
+    @Test fun aRawCopyThatDoesntReadBackIsNoBackup() {
+        val lossy = SaveBackups(path(".loom/save-backups"), archive = { unit, target ->
+            unit.pack(target).also { Files.write(target, byteArrayOf(1)) }
+        }) { clock }
+        assertThrows(java.io.IOException::class.java) { lossy.backUp("42", "Game", rawUnit(), RAW_SAVE_MD5) }
+        assertThat(backups().list("42")).isEmpty()
+    }
+
+    /** Raw and zipped backups of one game count as one set: only the newest are kept, whatever their kind. */
+    @Test fun rawAndZipBackupsArePrunedTogether() {
+        val made = (1..5).map {
+            clock = clock.plus(Duration.ofMinutes(1))
+            if (it % 2 == 1) backups(keep = 3).backUp("42", "Game", rawUnit(), RAW_SAVE_MD5).file
+            else backups(keep = 3).backUp("42", "Game", unit(), AZAHAR_UNIT_HASH).file
+        }
+        assertThat(made.map { it.fileName.toString().substringAfterLast('.') }).containsExactly("sav", "zip", "sav", "zip", "sav").inOrder()
+        assertThat(backups().list("42")).containsExactly(made[4], made[3], made[2]).inOrder()
+        assertThat(Files.list(path(".loom/save-backups/42")).use { it.count() }).isEqualTo(3)
     }
 
     @Test fun keepsTheNewestBackupsOfEachGame() {

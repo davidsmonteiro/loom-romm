@@ -1,6 +1,13 @@
 package ro.davidmontei.loom.storage.saves
 
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
+import java.nio.file.attribute.BasicFileAttributes
+import java.security.DigestInputStream
+import java.security.MessageDigest
 
 /**
  * Everything Loom syncs as one game's save: what it hashes, packs into the one file it uploads,
@@ -54,5 +61,49 @@ sealed interface SaveUnit {
         override fun snapshot(): UnitSnapshot = UnitSnapshot.of(roots)
 
         override fun pack(target: Path): String = SaveZipper.zip(roots, target)
+    }
+
+    /**
+     * One raw file, uploaded and restored as itself: a DS game's `.sav` in melonDS's save folder.
+     * An empty file is no save: melonDS creates one when a game first runs.
+     */
+    data class SingleFile(val file: Path) : SaveUnit {
+        /** Its name, under which a restore stages and journals it. */
+        val name: String get() = file.fileName.toString()
+
+        override val path: String get() = file.toString()
+
+        override val anchor: Path get() = file.toAbsolutePath().parent
+
+        /** The MD5 of its bytes, as RomM hashes a raw save; null when it is missing or empty. */
+        override fun hash(): String? = if ((sizeOrNull() ?: 0L) == 0L) null else SaveHasher.md5(file)
+
+        override fun snapshot(): UnitSnapshot = UnitSnapshot.ofFile(file)
+
+        /** Copies the file to [target] and returns the MD5 of the bytes copied. */
+        override fun pack(target: Path): String {
+            if ((sizeOrNull() ?: 0L) == 0L) throw SaveArchiveException("Nothing to upload in $file")
+            val md5 = MessageDigest.getInstance("MD5")
+            DigestInputStream(Files.newInputStream(file), md5).use { input ->
+                Files.newOutputStream(target).use { input.copyTo(it) }
+            }
+            return md5.digest().toHex()
+        }
+
+        /**
+         * The file's size; null when there's no file.
+         *
+         * @throws IOException when something else is in its place (a folder, a link): Loom can't
+         *   tell what the save is, which is never "no save".
+         */
+        private fun sizeOrNull(): Long? {
+            val attrs = try {
+                Files.readAttributes(file, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+            } catch (e: NoSuchFileException) {
+                return null
+            }
+            if (!attrs.isRegularFile) throw IOException("$file isn't a file")
+            return attrs.size()
+        }
     }
 }

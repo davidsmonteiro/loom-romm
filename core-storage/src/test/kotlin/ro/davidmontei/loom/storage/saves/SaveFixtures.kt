@@ -50,4 +50,10 @@ object SaveFixtures {
 
     /** Python's `zipfile` hash of `data/00000001/main` + `data/00000001.metadata` above. */
     const val AZAHAR_UNIT_HASH = "c43ef632a43368c6ec5e23a4e9653a50"
+
+    /** A DS game's raw `.sav`, 8 KiB as a small cartridge's save is. */
+    val RAW_SAVE = ByteArray(8192) { ((it * 31 + 7) % 251).toByte() }
+
+    /** `hashlib.md5(bytes((i * 31 + 7) % 251 for i in range(8192))).hexdigest()`: RomM's hash of [RAW_SAVE]. */
+    const val RAW_SAVE_MD5 = "5756fb1d2eb2a0bd1a8dfeb93648c920"
 }

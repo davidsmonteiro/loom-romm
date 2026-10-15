@@ -15,12 +15,13 @@ import java.time.format.DateTimeFormatter
 class SaveChangedException(message: String) : IOException(message)
 
 /**
- * Copies of local saves, taken before Loom overwrites one. Each game has a folder of zips named
+ * Copies of local saves, taken before Loom overwrites one. Each game has a folder of copies named
  * by the time they were taken (UTC), e.g. `20261013-221507-123 Pokemon X.zip`, newest [keep]
  * kept. Names sort in the order the backups were taken even when the clock went back: a backup
  * is then stamped just after the newest one. [dir] is a dot folder at the root of the card holding the saves, outside the ROMs root,
- * so Cocoon never sees it and it outlives a reinstall of Loom. Each zip is the save unit's archive,
- * the same shape Loom uploads, so it can be restored by hand or uploaded to RomM.
+ * so Cocoon never sees it and it outlives a reinstall of Loom. Each copy is what Loom uploads for
+ * the save unit, so it can be restored by hand or uploaded to RomM: the zip of its folders, or a
+ * single-file unit's raw file, named `.sav`.
  */
 class SaveBackups(
     private val dir: Path,
@@ -46,13 +47,15 @@ class SaveBackups(
      */
     fun backUp(key: String, label: String, unit: SaveUnit, expectedHash: String): Backup {
         val folder = Files.createDirectories(dir.resolve(key))
-        val name = freeName(folder, "${STAMP.format(stampFor(key))} ${NameSanitizer.sanitize(label, fallback = "save")}")
+        val extension = if (unit is SaveUnit.SingleFile) "sav" else "zip"
+        val name = freeName(folder, "${STAMP.format(stampFor(key))} ${NameSanitizer.sanitize(label, fallback = "save")}", extension)
         val part = folder.resolve(".$name.part")
         try {
             val written = archive(unit, part)
             if (written != expectedHash) throw SaveChangedException("The save changed while it was being backed up")
             FileChannel.open(part, StandardOpenOption.WRITE).use { it.force(true) }
-            if (SaveHasher.hashFile(part) != written) throw IOException("The backup didn't read back intact")
+            val readBack = if (unit is SaveUnit.SingleFile) SaveHasher.md5(part) else SaveHasher.hashFile(part)
+            if (readBack != written) throw IOException("The backup didn't read back intact")
             val file = folder.resolve(name)
             Files.move(part, file, StandardCopyOption.ATOMIC_MOVE)
             prune(key, file)
@@ -92,10 +95,10 @@ class SaveBackups(
     private fun takenAt(file: Path): Instant? =
         runCatching { STAMP.parse(file.fileName.toString().take(STAMP_LENGTH), Instant::from) }.getOrNull()
 
-    private fun freeName(folder: Path, stem: String): String {
-        var name = "$stem.zip"
+    private fun freeName(folder: Path, stem: String, extension: String): String {
+        var name = "$stem.$extension"
         var n = 2
-        while (Files.exists(folder.resolve(name))) name = "$stem-${n++}.zip"
+        while (Files.exists(folder.resolve(name))) name = "$stem-${n++}.$extension"
         return name
     }
 
@@ -112,6 +115,6 @@ class SaveBackups(
 
         private val STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS").withZone(ZoneOffset.UTC)
         private const val STAMP_LENGTH = 19
-        private val BACKUP_NAME = Regex("""\d{8}-\d{6}-\d{3} .*\.zip""")
+        private val BACKUP_NAME = Regex("""\d{8}-\d{6}-\d{3} .*\.(zip|sav)""")
     }
 }

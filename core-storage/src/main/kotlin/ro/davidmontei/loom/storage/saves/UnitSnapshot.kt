@@ -1,7 +1,10 @@
 package ro.davidmontei.loom.storage.saves
 
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
+import java.nio.file.NoSuchFileException
+import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 import java.security.MessageDigest
 import java.time.Instant
@@ -36,6 +39,26 @@ data class UnitSnapshot(
                 digest.update("${entry.name}\t${attrs.size()}\t$modified\n".toByteArray(Charsets.UTF_8))
             }
             return UnitSnapshot(entries.size, bytes, newest, digest.digest().toHex())
+        }
+
+        /**
+         * A unit of one raw file. An empty file counts as no file, as it is no save; its size and
+         * time still go in the fingerprint, so the scan sees the emulator create it or write to it.
+         *
+         * @throws java.io.IOException when the file can't be read, or something else is in its place.
+         */
+        fun ofFile(file: Path): UnitSnapshot {
+            val attrs = try {
+                Files.readAttributes(file, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+            } catch (e: NoSuchFileException) {
+                return UnitSnapshot(0, 0, null, MessageDigest.getInstance("MD5").digest().toHex())
+            }
+            if (!attrs.isRegularFile) throw IOException("$file isn't a file")
+            val modified = attrs.lastModifiedTime().toInstant()
+            val line = "${file.fileName}\t${attrs.size()}\t$modified\n"
+            val fingerprint = MessageDigest.getInstance("MD5").digest(line.toByteArray(Charsets.UTF_8)).toHex()
+            val empty = attrs.size() == 0L
+            return UnitSnapshot(if (empty) 0 else 1, attrs.size(), modified.takeUnless { empty }, fingerprint)
         }
     }
 }

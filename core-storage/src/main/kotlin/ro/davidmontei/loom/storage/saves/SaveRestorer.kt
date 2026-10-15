@@ -13,11 +13,11 @@ import kotlin.io.path.isDirectory
 import kotlin.io.path.name
 
 /**
- * Puts a save archive in place of a unit's folders so that the save on disk is always either the
- * old one or the new one, checked, and never a mix:
+ * Puts a save archive in place of a unit's folders, or a raw save in place of a single-file unit,
+ * so that the save on disk is always either the old one or the new one, checked, and never a mix:
  *
- * 1. The archive is unpacked into a work folder beside the unit (same card, so moves are renames)
- *    and checked against the archive's hash. Nothing in the unit has been touched yet.
+ * 1. The archive is unpacked (a raw save copied) into a work folder beside the unit (same card, so
+ *    moves are renames) and checked against its hash. Nothing in the unit has been touched yet.
  * 2. A journal listing the new files and the old ones is written. Every old file is moved aside
  *    into the work folder, then every new file is moved into place, one rename per file.
  * 3. The unit is hashed again. Only when it matches the archive is the old copy dropped.
@@ -51,38 +51,36 @@ class SaveRestorer(
     }
 
     /**
-     * Replaces [unit] with what [archive] holds under the unit's root names and returns the
-     * restored unit's hash. [expectedCurrent] is the hash the unit had when it was backed up (null
-     * when it held no files); if it no longer matches, nothing is touched. The archive may unpack to
-     * at most [maxUnitBytes].
+     * Replaces [unit] with what [archive] holds under the unit's root names, or for a
+     * [SaveUnit.SingleFile] with [archive] itself, a raw save, and returns the restored unit's hash.
+     * [expectedCurrent] is the hash the unit had when it was backed up (null when it held no save);
+     * if it no longer matches, nothing is touched. The archive may unpack to at most [maxUnitBytes].
      *
      * @throws SaveChangedException when the unit changed since it was backed up.
-     * @throws SaveArchiveException when the archive is unsafe, holds nothing for the unit, or the
-     *   files don't come out as the archive says.
+     * @throws SaveArchiveException when the archive is unsafe, holds nothing for the unit (a raw
+     *   save: is empty), or the files don't come out as the archive says.
      * @throws IOException when the card can't be written. In every case the unit is left as it was.
      */
     fun restore(archive: Path, unit: SaveUnit, expectedCurrent: String?, maxUnitBytes: Long = SaveZipper.MAX_UNIT_BYTES): String {
         val parent = parentOf(unit)
         recover(unit)
         if (unit.hash() != expectedCurrent) throw SaveChangedException("The save changed since it was backed up")
-        val roots = rootsOf(unit)
-        val names = roots.map { it.name }.toSet()
-        val expected = SaveHasher.hashZip(archive, names)
+        val expected = when (unit) {
+            is SaveUnit.Folders -> SaveHasher.hashZip(archive, unit.roots.map { it.name }.toSet())
+            is SaveUnit.SingleFile -> SaveHasher.md5(archive)
+        }
 
         Files.createDirectories(parent)
         val work = Files.createDirectory(parent.resolve(WORK_PREFIX + UUID.randomUUID()))
-        val staged = roots.map { SaveRoot(it.name, work.resolve(NEW).resolve(it.name)) }
         val incoming = try {
-            unpack(archive, work.resolve(NEW), names, maxUnitBytes)
-            if (SaveHasher.hashUnit(staged) != expected) throw SaveArchiveException("The unpacked save doesn't match the archive")
-            SaveZipper.entries(staged).onEach { FileChannel.open(it.file, StandardOpenOption.WRITE).use { c -> c.force(true) } }.map { it.name }
+            stage(archive, unit, work.resolve(NEW), expected, maxUnitBytes)
         } catch (e: Exception) {
             deleteTree(work)
             throw e
         }
 
         val outgoing = try {
-            SaveZipper.entries(roots).also { writeJournal(work, Journal(incoming, it.map { e -> e.name }.toSet())) }
+            filesOf(unit).also { writeJournal(work, Journal(incoming, it.map { e -> e.name }.toSet())) }
         } catch (e: Exception) {
             deleteTree(work)
             throw e
@@ -160,20 +158,58 @@ class SaveRestorer(
     }
 
     /**
+     * Puts what [archive] holds for [unit] in [dest], a folder on the unit's card, checked against
+     * [expected] and flushed to the card. Returns the names the files have in the unit.
+     */
+    private fun stage(archive: Path, unit: SaveUnit, dest: Path, expected: String, maxUnitBytes: Long): List<String> {
+        val staged = when (unit) {
+            is SaveUnit.Folders -> {
+                val roots = unit.roots.map { SaveRoot(it.name, dest.resolve(it.name)) }
+                unpack(archive, dest, roots.map { it.name }.toSet(), maxUnitBytes)
+                if (SaveHasher.hashUnit(roots) != expected) throw SaveArchiveException("The unpacked save doesn't match the archive")
+                SaveZipper.entries(roots)
+            }
+            is SaveUnit.SingleFile -> {
+                val size = Files.size(archive)
+                if (size == 0L) throw SaveArchiveException("The save is empty: there's nothing to restore")
+                if (size > maxUnitBytes) throw SaveArchiveException("The save is larger than a save unit can hold")
+                val copy = Files.createDirectory(dest).resolve(unit.name)
+                Files.copy(archive, copy)
+                if (SaveHasher.md5(copy) != expected) throw SaveArchiveException("The copied save doesn't match the one downloaded")
+                listOf(SaveEntry(unit.name, copy))
+            }
+        }
+        staged.forEach { FileChannel.open(it.file, StandardOpenOption.WRITE).use { c -> c.force(true) } }
+        return staged.map { it.name }
+    }
+
+    /**
+     * The unit's files as they are now, by their names in the unit. A single file counts even
+     * when it is empty, a placeholder the emulator made: it is moved aside like any old save.
+     */
+    private fun filesOf(unit: SaveUnit): List<SaveEntry> = when (unit) {
+        is SaveUnit.Folders -> SaveZipper.entries(unit.roots)
+        is SaveUnit.SingleFile -> listOfNotNull(SaveEntry(unit.name, unit.file).takeIf { Files.exists(unit.file, LinkOption.NOFOLLOW_LINKS) })
+    }
+
+    /**
      * Where the file named [name] ("data/00000001/main") lives: in its root's folder. A root that
      * isn't the unit's is another game's, whose restore Loom didn't finish in a folder several
      * games share (Eden's profile folder). When the unit's roots are named after their folders,
-     * as Azahar's `data` and Eden's title folders are, so is that one, beside them.
+     * as Azahar's `data` and Eden's title folders are, so is that one, beside them. A single file
+     * lives in the unit's folder, whichever game's it is.
      */
-    private fun live(unit: SaveUnit, name: String): Path {
-        val rootName = SaveZipper.rootOf(name)
-        val roots = rootsOf(unit)
-        val root = roots.firstOrNull { it.name == rootName }
-        return when {
-            root != null -> root.folder.resolve(name.substringAfter('/'))
-            rootName != null && roots.all { it.folder.fileName.toString() == it.name } -> unit.anchor.resolve(name)
-            else -> throw SaveArchiveException("No root for $name")
+    private fun live(unit: SaveUnit, name: String): Path = when (unit) {
+        is SaveUnit.Folders -> {
+            val rootName = SaveZipper.rootOf(name)
+            val root = unit.roots.firstOrNull { it.name == rootName }
+            when {
+                root != null -> root.folder.resolve(name.substringAfter('/'))
+                rootName != null && unit.roots.all { it.folder.fileName.toString() == it.name } -> unit.anchor.resolve(name)
+                else -> throw SaveArchiveException("No root for $name")
+            }
         }
+        is SaveUnit.SingleFile -> unit.anchor.resolve(name)
     }
 
     /** The files a restore puts in place and the ones it moves aside, by their names in the unit. */
@@ -205,10 +241,7 @@ class SaveRestorer(
         is SaveUnit.Folders -> unit.anchor.also { parent ->
             require(unit.roots.all { it.folder.toAbsolutePath().parent == parent }) { "A unit's folders must share one parent to be restored" }
         }
-    }
-
-    private fun rootsOf(unit: SaveUnit): List<SaveRoot> = when (unit) {
-        is SaveUnit.Folders -> unit.roots
+        is SaveUnit.SingleFile -> unit.anchor
     }
 
     private fun deleteTree(path: Path) {

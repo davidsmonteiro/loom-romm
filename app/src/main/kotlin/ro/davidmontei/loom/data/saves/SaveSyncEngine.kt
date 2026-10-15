@@ -737,6 +737,9 @@ class SaveSyncEngine(
                     val roots = SaveZipper.rootsIn(file.toPath())
                     if (unit.roots.none { it.name in roots }) throw SaveArchiveException(otherSave(save, unit.roots, roots))
                 }
+                is SaveUnit.SingleFile -> if (SaveHasher.isZip(file.toPath())) {
+                    throw SaveArchiveException("RomM's save for this game is an archive, and ${emulatorName(save.emulator)} keeps one file; nothing was replaced")
+                }
             }
             val restored = restorer.restore(file.toPath(), save.unit, current, save.maxUnitBytes)
             // The hash the download was checked against: RomM 5.4.0 keeps it as this device's baseline.
