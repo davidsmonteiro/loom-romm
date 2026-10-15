@@ -96,6 +96,8 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+            // All of the app's Robolectric and Compose tests run in one JVM, and outgrew Gradle's default 512 MB.
+            all { it.maxHeapSize = "1536m" }
         }
     }
 
