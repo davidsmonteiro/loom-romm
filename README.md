@@ -173,7 +173,7 @@ Either way the choice is remembered for that platform; change it in Settings →
 | Select | Settings | | |
 | R3 | | | Hide or bring back the second screen's panel |
 
-With two screens, as on the Thor, the other one shows the game you're on, or the download or save conflict in the queue, while Loom is in front. It only shows: the pad stays with Loom, and tapping that screen does nothing. To use an app open on that screen, press R3: the panel goes, and stays gone, even once you've used that app and come back to Loom, until you press R3 again or next open Loom. Settings → Controls & screens → **Use the second screen** turns the panel off altogether. The button hints don't mention R3.
+With two screens, as on the Thor, the other one shows the game you're on, or the download or save conflict in the queue, while Loom is in front. It only shows: the pad stays with Loom, and tapping that screen does nothing. To use an app open on that screen, press R3: the panel goes, and stays gone, even once you've used that app and come back to Loom, until you press R3 again or Loom opens again: after Home or a game, and also when the Thor wakes from sleep (the screen timed out, or the lid was closed) with Loom in front. Settings → Controls & screens → **Use the second screen** turns the panel off altogether. The button hints don't mention R3.
 
 In a save conflict's choice, B is **Skip**. For Nintendo-layout pads, use Settings → Controls & screens → **Swap A and B**. Touch works too, and the first button press after a tap still acts (it doesn't just bring the focus ring back), except X, which only brings focus back so it never downloads a game you didn't pick. Loom runs full screen; swipe from an edge to see the system bars.
 
@@ -283,7 +283,7 @@ Long-press Loom's icon for the **Sync library** and **Downloads** shortcuts.
 | Loom says "AYN's Focus Mode has the pad on the top screen" | Loom is open on the bottom screen while Focus Mode is set to **Top screen**. Set it to Auto-lock or Bottom screen, or open Loom on the top screen. |
 | Loom opens on the bottom screen, narrow, with no panel | Cocoon opens each app on the screen set for it. In Cocoon, Settings → Library & Data, set Loom's launch display to **Top**. |
 | The bottom screen went black | Loom darkens it after 3 minutes without a button press or a touch, so the panel doesn't mark the OLED screen. Press any button. |
-| An app open on the bottom screen is hidden while Loom is open | Press R3 to hide Loom's panel, and again to bring it back; opening Loom again also brings it back. Or turn off Settings → Controls & screens → **Use the second screen**. |
+| An app open on the bottom screen is hidden while Loom is open | Press R3 to hide Loom's panel, and again to bring it back; opening Loom again, or waking the Thor from sleep with Loom in front, also brings it back. Or turn off Settings → Controls & screens → **Use the second screen**. |
 | The bottom screen's cover stays soft | It is made from RomM's large art once you rest on a game for half a second, on Wi-Fi only with **Only on Wi-Fi** on. A game without large art on RomM keeps its thumbnail. |
 | A restored save didn't stick | The emulator was still running in the background and saved over it, and Loom may have uploaded that as the newest save since. Nothing is lost: RomM keeps the older versions (pick one in its web UI), and the Thor's save from before the restore is in `.loom/save-backups`. Close the emulator completely before restoring. |
 

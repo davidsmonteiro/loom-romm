@@ -195,14 +195,17 @@ class SettingsScreenTest {
     /**
      * Found by review: the panel covers an app open on the other screen whenever Loom is in front, and
      * Loom can't tell it is there. The switch says that turning it off leaves that app in view, and
-     * that with it on, R3 does for a while.
+     * that with it on, R3 does for a while. Found by review too: it said "until next open Loom", and
+     * the panel also comes back when the device wakes from sleep with Loom in front, which nobody calls
+     * opening Loom; it says so.
      */
     @Test fun theSecondScreenSwitchSaysOffLeavesAnotherAppInView() {
         show()
         goTo(SettingsSection.CONTROLS)
         press(Key.DirectionCenter)
         rule.onNodeWithText("Off, an app open on the other screen stays in view while Loom is in front.", substring = true).assertExists()
-        rule.onNodeWithText("On, R3 brings that app into view until you press R3 again or next open Loom.", substring = true).assertExists()
+        rule.onNodeWithText("On, R3 brings that app into view until you press R3 again or Loom opens again (waking from sleep counts).",
+            substring = true).assertExists()
     }
 
     /** Found on the Thor: A selected a section but left focus in the list; the next press did nothing new. */

@@ -435,12 +435,16 @@ class FitsTheScreenTest {
     @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
     @Test fun theControlsSectionFitsTheBottomScreen() = theControlsSectionFits("settings-controls-bottom-screen")
 
+    /** Found by review: on a phone in portrait the second screen's explanation, cut at seven lines, lost its end. */
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun theControlsSectionFitsAPhoneInPortrait() = theControlsSectionFits("settings-controls-phone")
+
     private fun theControlsSectionFits(screenshot: String) {
         rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample, SettingsScreenTest.noop) } }
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
         rule.onNodeWithTag("section-CONTROLS").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
-        for (line in listOf("go back with the bottom one.", "stays in view while Loom is in front.", "or next open Loom.")) {
+        for (line in listOf("go back with the bottom one.", "stays in view while Loom is in front.", "(waking from sleep counts).")) {
             assertWithMessage(line).that(cutShort(line)).isFalse()
         }
         rule.saveScreenshot(screenshot)

@@ -288,7 +288,7 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
                         subtitle = "With two screens, as on the Thor, the other one shows the game you're on, or the download or save " +
                             "conflict in the queue. It only shows: the pad stays here. Off, an app open on the other screen " +
                             "stays in view while Loom is in front. On, R3 brings that app into view until you press R3 again " +
-                            "or next open Loom.", subtitleLines = 7)
+                            "or Loom opens again (waking from sleep counts).", subtitleLines = 10)
                 }
                 SettingsSection.ABOUT -> AboutSection(state, actions, first)
             }
