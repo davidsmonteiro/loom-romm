@@ -588,6 +588,28 @@ class QueueScreenTest {
         rule.onNodeWithText("Choose its folder", useUnmergedTree = true).assertExists()
     }
 
+    /**
+     * Opened from the notification that says to press A on a game waiting for its folder, with saves to
+     * settle as well: focus starts on the game, so A asks about its folder, not about a save.
+     */
+    @Test fun aGameWaitingForItsFolderTakesFocusBeforeTheSaves() {
+        show(withSaves.copy(active = listOf(sonic) + withSaves.active))
+        rule.onNodeWithTag("job-10").assertIsFocused()
+        rule.onNodeWithTag("conflict-7").assertExists() // still in sight above it
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("askFolder:10")
+        rule.onNodeWithText("Pokemon X: which save to keep?").assertDoesNotExist()
+    }
+
+    /** Below more saves to restore than fit on the screen, it's scrolled to. */
+    @Test fun aGameWaitingForItsFolderBelowManySavesIsScrolledTo() {
+        val many = (100..119).map { RestorableSave(it, "Pokemon $it", missing = false, emulator = "azahar") }
+        show(withSaves.copy(restorable = many, active = listOf(sonic) + withSaves.active))
+        rule.onNodeWithTag("job-10").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("askFolder:10")
+    }
+
     /** Sent from RomM's web UI: the row says so beside its badge, at the same height as the others. */
     @Test fun aGameSentFromRommSaysSo() {
         show(sample.copy(active = sample.active.map { if (it.jobId == 3L) it.copy(fromRomm = true) else it }))

@@ -27,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -50,6 +51,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -341,8 +343,8 @@ fun QueueScreen(focusJobId: Long?, focusConflictRomId: Int?, onBack: () -> Unit,
 
 /**
  * [focusJobId] or [focusConflictRomId]: the job, or the game's save conflict, focus starts on (the
- * game the library opened the queue for), else the first row to act on: a save conflict, a save to
- * restore, then the jobs.
+ * game the library opened the queue for), else a game waiting for its folder, whose notification says
+ * to press A on it, else the first row to act on: a save conflict, a save to restore, then the jobs.
  */
 @Composable
 fun QueueContent(
@@ -373,6 +375,7 @@ fun QueueContent(
     val keys = rows.filterNot { it is QueueRow.Header }.map { it.key }
     val startKey = jobs.firstOrNull { it.jobId == focusJobId }?.jobId
         ?: state.conflicts.firstOrNull { it.romId == focusConflictRomId }?.let { QueueRow.Conflict(it).key }
+        ?: state.active.firstOrNull { it.needsFolder }?.jobId
         ?: keys.firstOrNull()
     // Where focus goes back into the list: the row last focused, or the one now in its place once that
     // one has left (a job finished or cancelled, a conflict settled), rather than the top of the queue.
@@ -439,7 +442,12 @@ fun QueueContent(
                 val index = rows.indexOfFirst {
                     (it is QueueRow.Job && it.item.jobId == focusJobId) || (it is QueueRow.Conflict && it.item.romId == focusConflictRomId)
                 }
-                if (index >= 0) listState.scrollToItem(index)
+                if (index >= 0) return@LaunchedEffect listState.scrollToItem(index)
+                // A game waiting for its folder below many saves: scrolled to, but only then, so the saves above stay in sight.
+                val start = rows.indexOfFirst { it.key == startKey }
+                if (start <= 0 || startKey == keys.firstOrNull()) return@LaunchedEffect
+                val shown = snapshotFlow { listState.layoutInfo.visibleItemsInfo }.first { it.isNotEmpty() }
+                if (shown.none { it.index == start }) listState.scrollToItem(start)
             }
             LazyColumn(
                 Modifier.fillMaxSize().onFocusChanged { listHasFocus = it.hasFocus }.focusRequester(listFocus).focusRestorer(entry)
