@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl
+import ro.davidmontei.loom.net.PROXY_CANT_REACH
 import ro.davidmontei.loom.romm.socket.DeviceEvent
 import ro.davidmontei.loom.romm.socket.reconnecting
 
@@ -25,7 +26,9 @@ import ro.davidmontei.loom.romm.socket.reconnecting
  * While it isn't connected, Loom claims every [pollEveryMs] instead, which also keeps the device shown
  * online in RomM's "Install on device" (for 90 s after each claim). A front that answers the upgrade
  * itself [GIVE_UP_AFTER] times in a row doesn't pass WebSockets: the socket isn't tried again until
- * Loom next comes to the front, and the claims carry on.
+ * Loom next comes to the front, and the claims carry on. A proxy saying it can't reach RomM
+ * ([PROXY_CANT_REACH], as while RomM restarts behind Cloudflare) doesn't count: that passes, and the
+ * socket is tried again as after a drop.
  */
 class LiveNudges(
     private val connect: (baseUrl: HttpUrl, token: String) -> Flow<DeviceEvent>,
@@ -77,7 +80,7 @@ class LiveNudges(
         var upgradesRefused = 0
         reconnecting({ connect(target.baseUrl, target.token) }, delay = waitBeforeReconnecting)
             .onEach {
-                if (it is DeviceEvent.UpgradeRefused) upgradesRefused++
+                if (it is DeviceEvent.UpgradeRefused && it.code !in PROXY_CANT_REACH) upgradesRefused++
                 if (it == DeviceEvent.Connected) upgradesRefused = 0
             }
             .takeWhile { upgradesRefused < GIVE_UP_AFTER }

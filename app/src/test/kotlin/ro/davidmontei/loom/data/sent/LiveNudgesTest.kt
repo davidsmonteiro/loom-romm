@@ -115,7 +115,7 @@ class LiveNudgesTest {
      * socket is left alone until Loom next comes to the front, and Loom claims by the minute instead.
      */
     @Test fun aProxyThatWontUpgradeFallsBackToPollingQuietly() = runBlocking<Unit> {
-        romm.refuseUpgrades = true
+        romm.refuseUpgradesWith = 400
         target.value = at(romm.server)
         running()
         live.inFront(true)
@@ -125,14 +125,32 @@ class LiveNudgesTest {
 
         live.inFront(false)
         delay(100)
-        romm.refuseUpgrades = false
+        romm.refuseUpgradesWith = null
         live.inFront(true) // the next time in front, the socket is tried again
         assertThat(romm.next()).startsWith("40/devices,")
     }
 
+    /**
+     * RomM restarting behind a proxy (Cloudflare, or RomM's own nginx): the proxy answers the upgrades with
+     * 502s and 52x meanwhile. That's RomM out of reach for a while, not a front that won't pass WebSockets:
+     * the socket comes back once RomM does, without Loom leaving the front.
+     */
+    @Test fun aRestartBehindAProxyDoesntGiveUpTheSocket() = runBlocking<Unit> {
+        target.value = at(romm.server)
+        running()
+        live.inFront(true)
+        assertThat(romm.next()).startsWith("40/devices,")
+        romm.refusals.addAll(listOf(502, 521, 503, 530))
+
+        romm.say("1") // RomM goes away
+
+        assertThat(romm.next()).startsWith("40/devices,") // and the socket is back with it
+        assertThat(romm.upgrades).hasSize(6)
+    }
+
     /** A proxy's 502 to the upgrade isn't RomM out of reach: the library mustn't say "Offline" for it. */
     @Test fun aRefusedUpgradeDoesntMakeTheLibrarySayOffline() = runBlocking<Unit> {
-        romm.refuseUpgrades = true
+        romm.refuseUpgradesWith = 502
         val reachability = ServerReachability()
         // As Loom's API client reports on RomM: a heartbeat answered.
         val api = NetworkModule.bareClient().newBuilder().addInterceptor(ReachabilityInterceptor(reachability, RommAt(romm.server.url("/")))).build()
@@ -142,21 +160,23 @@ class LiveNudgesTest {
         running()
         live.inFront(true)
 
-        until { romm.server.requestCount == 1 + LiveNudges.GIVE_UP_AFTER }
+        until { romm.server.requestCount >= 1 + LiveNudges.GIVE_UP_AFTER }
 
         assertThat(reachability.current.value).isEqualTo(ServerReachability.State.REACHABLE)
         assertThat(client.interceptors.none { it is ReachabilityInterceptor }).isTrue()
-        assertThat(romm.upgrades.map { it.headers["Authorization"] }).containsExactly(null, null, null)
+        assertThat(romm.upgrades.map { it.headers["Authorization"] }.toSet()).containsExactly(null)
     }
 
     /** The server's address changed in Settings (or Loom paired again): the socket moves with it. */
     @Test fun aNewAddressMovesTheSocket() = runBlocking<Unit> {
         val elsewhere = FakeRomm()
         try {
+            romm.onConnect = { it.send(CONNECTED); it.send("2") }
             target.value = at(romm.server)
             running()
             live.inFront(true)
             assertThat(romm.next()).startsWith("40/devices,")
+            assertThat(romm.next()).isEqualTo("3") // Loom heard it was let in, so it says goodbye on leaving
 
             target.value = at(elsewhere.server, "rmm_new")
 
@@ -170,10 +190,12 @@ class LiveNudgesTest {
 
     /** No games can come (switched off, say): the socket closes. */
     @Test fun noTargetNoSocket() = runBlocking<Unit> {
+        romm.onConnect = { it.send(CONNECTED); it.send("2") }
         target.value = at(romm.server)
         running()
         live.inFront(true)
         assertThat(romm.next()).startsWith("40/devices,")
+        assertThat(romm.next()).isEqualTo("3") // Loom heard it was let in, so it says goodbye on leaving
 
         target.value = null
 
@@ -207,15 +229,17 @@ class LiveNudgesTest {
 
     /**
      * RomM's end of the socket at `/ws/socket.io/`: the Engine.IO handshake on open, then [onConnect] when
-     * the device asks to join the namespace (accepting it by default). With [refuseUpgrades], a proxy in
-     * front answers the upgrade with a 502 instead. Anything else is a heartbeat.
+     * the device asks to join the namespace (accepting it by default). A proxy in front answers the
+     * upgrade itself with each of [refusals] in turn, then with [refuseUpgradesWith] when set. Anything
+     * else is a heartbeat.
      */
     private class FakeRomm : WebSocketListener() {
         val server = MockWebServer()
         val received = LinkedBlockingQueue<String>()
         val closeCodes = LinkedBlockingQueue<Int>()
         val upgrades = CopyOnWriteArrayList<RecordedRequest>()
-        @Volatile var refuseUpgrades = false
+        val refusals = LinkedBlockingQueue<Int>()
+        @Volatile var refuseUpgradesWith: Int? = null
         @Volatile var onConnect: (WebSocket) -> Unit = { it.send(CONNECTED) }
         @Volatile private var socket: WebSocket? = null
 
@@ -224,7 +248,7 @@ class LiveNudgesTest {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     if (request.url.encodedPath != "/ws/socket.io/") return MockResponse.Builder().code(200).body("{}").build()
                     upgrades += request
-                    if (refuseUpgrades) return MockResponse.Builder().code(502).body("<html>Bad Gateway</html>").build()
+                    (refusals.poll() ?: refuseUpgradesWith)?.let { return MockResponse.Builder().code(it).body("<html>Refused</html>").build() }
                     return MockResponse.Builder().webSocketUpgrade(this@FakeRomm).build()
                 }
             }

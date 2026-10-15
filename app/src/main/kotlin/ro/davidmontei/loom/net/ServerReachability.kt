@@ -59,11 +59,13 @@ class ReachabilityInterceptor(private val reachability: ServerReachability, priv
         if (response.code in PROXY_CANT_REACH) reachability.unreachable() else reachability.answered()
         return response
     }
-
-    private companion object {
-        val PROXY_CANT_REACH = setOf(502, 503, 504, 520, 521, 522, 523, 524, 530)
-    }
 }
+
+/**
+ * What a proxy in front of RomM answers when it can't reach RomM (a 502, 503 or 504, or Cloudflare's 52x
+ * and 530): RomM out of reach for now, restarting say, not RomM answering.
+ */
+val PROXY_CANT_REACH: Set<Int> = setOf(502, 503, 504, 520, 521, 522, 523, 524, 530)
 
 /**
  * Looks again whether RomM can be reached when there's reason to, with one heartbeat ([probe]): when
