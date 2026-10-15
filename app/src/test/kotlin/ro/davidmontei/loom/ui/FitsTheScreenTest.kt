@@ -361,6 +361,21 @@ class FitsTheScreenTest {
         rule.saveScreenshot("library-save-folder-question")
     }
 
+    /** Which disc ID's PPSSPP folders are a PSP game's: the explanation in full, and the disc IDs in a list of their own. */
+    @Test fun thePspSaveFolderQuestionFits() {
+        val title = "Monster Hunter Freedom Unite (USA) (En,Fr,De,Es,It) (Rev 1) (Greatest Hits) (v1.01)"
+        val game = GameItem(40, title, 1_600_000_000, null, listOf("USA"), InstallState.INSTALLED, null, null, null, adopted = true,
+            removedOnServer = false, installPath = "psp/$title.chd",
+            save = GameSave(true, SaveSyncState.NEEDS_FOLDER, "RomM didn't read this game's disc ID, and Loom can't read a CHD on the Thor", "ppsspp"))
+        val options = (1..12).map { SaveFolderOption("ULUS%05d".format(10_000 + it), 9, 12_400_000, System.currentTimeMillis() - it * 3_600_000L, folderCount = 3) }
+        val question = SaveFolderQuestion(40, title, "ppsspp", options, current = null, kind = SaveFolderQuestion.Kind.PREFIX)
+        val state = LibraryScreenTest().state.copy(games = listOf(game), saveFolderQuestion = question)
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        assertThat(overflow("Which PPSSPP save folders are $title's?")).isEqualTo(0f)
+        assertThat(cutShort("Its details can change this later.")).isFalse()
+        rule.saveScreenshot("library-psp-save-folder-question")
+    }
+
     /** Which of a game's two Eden folders Loom syncs: the question in full beside both folders, from details that fit too. */
     @Test fun theSyncedFolderQuestionFits() {
         val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"

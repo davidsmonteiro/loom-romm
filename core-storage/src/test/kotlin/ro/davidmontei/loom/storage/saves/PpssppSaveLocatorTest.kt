@@ -202,6 +202,7 @@ class PpssppSaveLocatorTest {
         assertThat(prefixes.map { it.discId.value }).containsExactly("NPUZ00001", "ULUS10064").inOrder()
         val ulus = prefixes.single { it.discId == ulus10064 }
         assertThat(ulus.folderCount).isEqualTo(2)
+        assertThat(ulus.fileCount).isEqualTo(4) // each folder's DATA.BIN and PARAM.SFO
         assertThat(ulus.bytes).isEqualTo(110L + saveSfo("ULUS10064DATA00").size + saveSfo("ulus10064settings").size)
         assertThat(ulus.newestModified).isEqualTo(old)
         assertThat(PpssppSaveLocator.prefixes(path("nowhere"))).isEmpty()

@@ -551,6 +551,19 @@ class QueueScreenTest {
         rule.onNodeWithText("Skip").assertIsFocused() // nothing left of it
     }
 
+    /** A PSP game's pick is of save folders, as the dialog says; Change save folder asks for them again. */
+    @Test fun aPspGamesPickIsOfItsSaveFolders() {
+        val lumines = wonder.copy(romId = 50, title = "Lumines", serverEmulator = "ppsspp", emulator = "ppsspp")
+        show(sample.copy(conflicts = listOf(lumines)))
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("You picked this game's PPSSPP save folders: if the Thor's save isn't its, Change save folder picks again.",
+            substring = true, useUnmergedTree = true).assertExists()
+        press(Key.DirectionLeft)
+        button("Change save folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("askSaveFolder:50:ppsspp")
+    }
+
     /** The same question as in the game's details: focus on the newest folder, and A takes the one focused. */
     @Test fun theSaveFolderQuestionInTheQueueIsAnsweredByPad() {
         show(sample.copy(conflicts = listOf(wonder)))

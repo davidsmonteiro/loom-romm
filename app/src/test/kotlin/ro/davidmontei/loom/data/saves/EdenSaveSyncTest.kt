@@ -109,15 +109,15 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         assertThat(state(wonder)).isEqualTo(SaveSyncState.NEEDS_FOLDER)
         assertThat(romm.uploads()).isEmpty()
 
-        val choice = eden().folderChoice(wonder.romId) as EdenFolderChoice.Options
-        assertThat(choice.folders.map { it.titleId.toString() }).containsExactly(arceus.titleId, wonder.titleId).inOrder() // newest first
+        val choice = eden().folderChoice(wonder.romId) as FolderChoice.Options
+        assertThat(choice.options.map { it.key }).containsExactly(arceus.titleId, wonder.titleId).inOrder() // newest first
         assertThat(choice.current).isNull()
 
         eden().chooseFolder(wonder.romId, SwitchTitleId.parse(wonder.titleId)!!)
         assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(wonder.romId)
         assertThat(archiveEntries(romm.head(wonder.romId)!!.bytes)).contains("0100A0B00C0D0000/game_data.sav")
         assertThat(saves.saveKey("eden", wonder.romId)!!.source).isEqualTo(SaveKeySource.OWNER)
-        assertThat((eden().folderChoice(wonder.romId) as EdenFolderChoice.Options).current.toString()).isEqualTo(wonder.titleId)
+        assertThat((eden().folderChoice(wonder.romId) as FolderChoice.Options).current).isEqualTo(wonder.titleId)
     }
 
     /**
@@ -206,8 +206,8 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         engine().sync(SaveSyncRequest.PUSH)
 
         assertThat(saves.saveKey("eden", wonder.romId)).isNull()
-        val choice = eden().folderChoice(arceus.romId) as EdenFolderChoice.Options
-        assertThat(choice.folders.map { it.titleId.toString() }).contains(wonder.titleId)
+        val choice = eden().folderChoice(arceus.romId) as FolderChoice.Options
+        assertThat(choice.options.map { it.key }).contains(wonder.titleId)
     }
 
     /**
@@ -278,7 +278,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
     @Test fun keepingTheSyncedFolderCarriesOnAndLeavesTheOtherAlone() = runBlocking<Unit> {
         wonderInBothFolders()
         val profile = folderBytes(edenFolder(wonder))
-        val repository = SaveRepository(engine(), saves, eden(), scope)
+        val repository = SaveRepository(engine(), saves, eden(), ppssppSaves(), scope)
 
         assertThat(repository.chooseSyncedFolder(wonder.romId, wonder.title, consoleWide.toPath()))
             .isEqualTo("Loom now syncs Super Mario Bros Wonder's save from Eden's console-wide folder, and leaves the other as it is")
@@ -302,7 +302,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         wonderInBothFolders()
         val console = folderBytes(consoleWide)
         val profileHash = SaveHasher.hashUnit(edenUnit(wonder))
-        val repository = SaveRepository(engine(), saves, eden(), scope)
+        val repository = SaveRepository(engine(), saves, eden(), ppssppSaves(), scope)
 
         assertThat(repository.chooseSyncedFolder(wonder.romId, wonder.title, edenFolder(wonder).toPath())).isEqualTo(
             "Loom now syncs Super Mario Bros Wonder's save from Eden's profile folder, and leaves the other as it is. " +
@@ -357,7 +357,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         assertThat(saves.conflict(wonder.romId)!!.detail).isEqualTo(why)
         assertThat(detail(wonder)).isEqualTo(why)
 
-        val repository = SaveRepository(engine(), saves, eden(), scope)
+        val repository = SaveRepository(engine(), saves, eden(), ppssppSaves(), scope)
         repository.chooseSaveFolder(wonder.romId, wonder.title, SwitchTitleId.parse(wonder.titleId)!!)
         assertThat(saves.conflict(wonder.romId)).isNull()
         assertThat(state(wonder)).isEqualTo(SaveSyncState.SERVER_NEWER) // RomM's save, for the Thor to take when asked
@@ -375,8 +375,8 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         engine().sync(SaveSyncRequest.PUSH)
         assertThat(state(wonder)).isEqualTo(SaveSyncState.NEEDS_FOLDER)
 
-        val choice = eden().folderChoice(wonder.romId) as EdenFolderChoice.Options
-        assertThat(choice.folders.map { it.titleId.toString() }).containsExactly(wonder.titleId)
+        val choice = eden().folderChoice(wonder.romId) as FolderChoice.Options
+        assertThat(choice.options.map { it.key }).containsExactly(wonder.titleId)
     }
 
     @Test fun aKeyThatDoesntOpenTheImageAsksToo() = runBlocking<Unit> {
@@ -427,7 +427,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         // Whose saves comes first: a game's folder can only be picked from a profile's.
         engine().sync(SaveSyncRequest.PUSH)
         assertThat(detail(wonder)).isEqualTo(EdenSaves.SEVERAL_PROFILES)
-        assertThat(eden().folderChoice(wonder.romId)).isEqualTo(EdenFolderChoice.Unavailable(EdenSaves.SEVERAL_PROFILES))
+        assertThat(eden().folderChoice(wonder.romId)).isEqualTo(FolderChoice.Unavailable(EdenSaves.SEVERAL_PROFILES))
 
         putProdKeys()
         engine().sync(SaveSyncRequest.PUSH)
@@ -557,7 +557,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         // A look says the same, rather than promising an upload with the next sync.
         assertThat(engine().sync(SaveSyncRequest.CHECK).unsupported).containsExactly(wonder.romId, why)
         assertThat(state(wonder)).isEqualTo(SaveSyncState.UNSUPPORTED)
-        val repository = SaveRepository(engine(), saves, eden(), scope)
+        val repository = SaveRepository(engine(), saves, eden(), ppssppSaves(), scope)
         assertThat(repository.upload(wonder.romId, wonder.title)).isEqualTo("Super Mario Bros Wonder's save isn't synced: $why")
 
         writeEdenSave(wonder, bytes(2)) // small again

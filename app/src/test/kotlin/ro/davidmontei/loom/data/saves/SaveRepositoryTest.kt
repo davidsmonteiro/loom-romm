@@ -30,7 +30,7 @@ import java.time.Duration
 @RunWith(AndroidJUnit4::class)
 class SaveRepositoryTest : SaveSyncTestBase() {
     private val screen = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val repository get() = SaveRepository(engine(), db.saveDao(), eden(), scope)
+    private val repository get() = SaveRepository(engine(), db.saveDao(), eden(), ppssppSaves(), scope)
 
     @After fun tearDownScreen() = screen.cancel()
 
@@ -69,7 +69,7 @@ class SaveRepositoryTest : SaveSyncTestBase() {
     // --- the look a game's details ask for ---
 
     private var lookClockMs = 1_000_000L
-    private fun lookingRepository() = SaveRepository(engine(), db.saveDao(), eden(), scope, now = { lookClockMs })
+    private fun lookingRepository() = SaveRepository(engine(), db.saveDao(), eden(), ppssppSaves(), scope, now = { lookClockMs })
     private fun negotiations() = romm.requests.filter { it.url.encodedPath == "/api/sync/negotiate" }
     private suspend fun SaveRepository.lookDone(romId: Int) = withTimeout(10_000) { looks.first { it[romId] != SaveLook.Looking } }
 

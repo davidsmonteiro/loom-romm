@@ -17,6 +17,7 @@ import ro.davidmontei.loom.storage.saves.SaveZipper
 import ro.davidmontei.loom.storage.saves.ThreeDsTitleId
 import java.io.File
 import java.io.IOException
+import java.time.Instant
 
 /** Where an installed game's save is, or why Loom can't sync it. */
 sealed interface ResolvedSave {
@@ -60,6 +61,21 @@ sealed interface ResolvedSave {
      * out. Never read as "no save", which could let a download through.
      */
     data class Unavailable(override val romId: Int, val reason: String) : ResolvedSave
+}
+
+/**
+ * What the owner can pick a game's save folders from, when Loom can't tell which are its, or why
+ * there's nothing to pick. Each option is the key the emulator names them by: a Switch game's
+ * title ID (Eden's folder), a PSP game's disc ID (PPSSPP's folders starting with it).
+ */
+sealed interface FolderChoice {
+    /** The options no other installed game has, newest first; [current] is the owner's earlier pick. */
+    data class Options(val options: List<Option>, val current: String?) : FolderChoice
+
+    data class Unavailable(val reason: String) : FolderChoice
+
+    /** The folders [key] names: their files, their size, when they last changed, and how many there are where there can be several. */
+    data class Option(val key: String, val fileCount: Int, val bytes: Long, val newestModified: Instant?, val folderCount: Int? = null)
 }
 
 /**

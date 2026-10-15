@@ -224,7 +224,7 @@ class QueueViewModel @Inject constructor(private val downloads: DownloadReposito
     override fun restoreSave(romId: Int, title: String) = carryOut(romId) { saves.restore(romId, title) }
 
     override fun askSaveFolder(romId: Int, title: String, emulator: String?) {
-        viewModelScope.launch { saveFolderQuestion.value = saves.saveFolderChoice(romId).toQuestion(romId, title, emulator) }
+        viewModelScope.launch { saveFolderQuestion.value = saves.saveFolderChoice(romId, emulator).toQuestion(romId, title, emulator) }
     }
 
     /** Remembered, then the game's save is looked at again: a right pick usually settles its conflict. */

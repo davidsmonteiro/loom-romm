@@ -2,12 +2,14 @@ package ro.davidmontei.loom.data.saves
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.junit.runner.RunWith
 import ro.davidmontei.loom.data.db.SaveKeySource
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.storage.engine.formatBytes
+import ro.davidmontei.loom.storage.saves.PspDiscId
 import ro.davidmontei.loom.storage.saves.SyncDecision
 import java.io.File
 import java.util.zip.ZipInputStream
@@ -300,6 +302,99 @@ class PpssppSaveSyncTest : SaveSyncTestBase() {
         settings.setPpssppMemoryStick(File(stick, "PSP").path) // the PSP folder in it does as well
         assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(lumines.romId)
         assertThat(romm.head(lumines.romId)!!.hash).isEqualTo(LUMINES_HASH)
+    }
+
+    // --- the owner's pick, when Loom can't tell the disc ID ---
+
+    /** A game's folders as one disc ID's, dated [minutesAgo] before [clock]. */
+    private fun writePrefix(discId: String, minutesAgo: Long, vararg folders: String) {
+        for (name in folders) writePspSave("$discId$name", "DATA.BIN" to byteArrayOf(1, 2, 3), "PARAM.SFO" to SAVE_SFO, minutesAgo = minutesAgo)
+    }
+
+    @Test fun aPspGameWithoutADiscIdListsTheMemoryStickPrefixesNewestFirst() = runBlocking<Unit> {
+        installPsp(lumines, file = "Lumines.chd", bytes = chd)
+        writePrefix("ULUS10064", minutesAgo = 60, "DATA00", "DATA01")
+        writePrefix("NPUZ00001", minutesAgo = 5, "SAVE")
+        writePspSave("ULES00151INSTALL", "PARAM.SFO" to INSTALL_SFO, "DATA.DAT" to ByteArray(64)) // installed data, nothing to pick
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(state(lumines)).isEqualTo(SaveSyncState.NEEDS_FOLDER)
+
+        val choice = ppssppSaves().folderChoice(lumines.romId) as FolderChoice.Options
+
+        assertThat(choice.options.map { it.key }).containsExactly("NPUZ00001", "ULUS10064").inOrder()
+        val ulus = choice.options.single { it.key == "ULUS10064" }
+        assertThat(ulus.folderCount).isEqualTo(2)
+        assertThat(ulus.fileCount).isEqualTo(4)
+        assertThat(ulus.bytes).isEqualTo(2L * (3 + SAVE_SFO.size))
+        assertThat(choice.current).isNull()
+    }
+
+    /** Folders another installed game syncs, by its save key or the ID RomM gave it, aren't offered. */
+    @Test fun prefixesOtherGamesHaveAreNotOffered() = runBlocking<Unit> {
+        installPsp(lumines, file = "Lumines.chd", bytes = chd)
+        installPsp(patapon, fixture = "game.pbp", platform = "psp-minis") // NPUZ00001, read from its PBP
+        installPsp(PspGame(52, "Daxter"), file = "Daxter.chd", bytes = chd, rommTitleId = "UCUS98618")
+        writePrefix("ULUS10064", minutesAgo = 60, "DATA00")
+        writePrefix("NPUZ00001", minutesAgo = 5, "SAVE")
+        writePrefix("UCUS98618", minutesAgo = 5, "SAVE")
+        engine().sync(SaveSyncRequest.PUSH)
+
+        val choice = ppssppSaves().folderChoice(lumines.romId) as FolderChoice.Options
+
+        assertThat(choice.options.map { it.key }).containsExactly("ULUS10064")
+    }
+
+    /**
+     * The owner's pick is the game's save from then on, and can be changed: Loom looks again at
+     * once, and the game's details offer to choose again.
+     */
+    @Test fun thePickIsRememberedAndCanBeChanged() = runBlocking<Unit> {
+        installPsp(lumines, file = "Lumines.chd", bytes = chd)
+        writeLuminesSaves()
+        writePrefix("NPUZ00001", minutesAgo = 5, "SAVE")
+        engine().sync(SaveSyncRequest.PUSH)
+        val repository = SaveRepository(engine(), saves, eden(), ppssppSaves(), scope)
+
+        assertThat(repository.choosePrefix(lumines.romId, lumines.title, PspDiscId("NPUZ00001")))
+            .isEqualTo("Lumines's saves are PPSSPP's folders starting with NPUZ00001")
+        assertThat(repository.observeChosenFolders().first()).containsExactly(lumines.romId)
+        assertThat((repository.saveFolderChoice(lumines.romId, "ppsspp") as FolderChoice.Options).current).isEqualTo("NPUZ00001")
+
+        repository.choosePrefix(lumines.romId, lumines.title, PspDiscId("ULUS10064"))
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(lumines.romId)
+        assertThat(romm.head(lumines.romId)!!.hash).isEqualTo(LUMINES_HASH)
+        val key = saves.saveKey("ppsspp", lumines.romId)!!
+        assertThat(key.saveKey).isEqualTo("ULUS10064")
+        assertThat(key.source).isEqualTo(SaveKeySource.OWNER)
+    }
+
+    /**
+     * A pick stands while RomM and the game's image can't say otherwise. Once RomM reads the disc
+     * and names another ID, the game asks again rather than sync another game's folders as its own.
+     */
+    @Test fun aPickTheDiscContradictsAsksAgain() = runBlocking<Unit> {
+        installPsp(lumines, file = "Lumines.chd", bytes = chd)
+        writeLuminesSaves()
+        writePrefix("NPUZ00001", minutesAgo = 5, "SAVE")
+        ppssppSaves().choosePrefix(lumines.romId, PspDiscId("NPUZ00001"))
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(state(lumines)).isEqualTo(SaveSyncState.IN_SYNC)
+        val uploads = romm.uploads().size
+
+        installPsp(lumines, file = "Lumines.chd", bytes = chd, rommTitleId = "ULUS10064") // RomM rescanned the game
+        engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(state(lumines)).isEqualTo(SaveSyncState.NEEDS_FOLDER)
+        assertThat(detail(lumines))
+            .isEqualTo("You chose the save folders starting with NPUZ00001, but RomM says it is ULUS10064. Choose its save folders again")
+        assertThat(romm.uploads()).hasSize(uploads)
+        assertThat((ppssppSaves().folderChoice(lumines.romId) as FolderChoice.Options).current).isEqualTo("NPUZ00001")
+
+        // RomM's own ID stands. What the wrong pick uploaded is RomM's save now: which to keep is the owner's to say.
+        ppssppSaves().choosePrefix(lumines.romId, PspDiscId("ULUS10064"))
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(saves.unit(lumines.romId)!!.unitPath).isEqualTo("${saveData.path}/ULUS10064*")
+        assertThat(saves.conflict(lumines.romId)!!.reason).isEqualTo(SyncDecision.FIRST_SYNC_DIFFERS.name)
     }
 
     private companion object {

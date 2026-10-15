@@ -38,9 +38,11 @@ import ro.davidmontei.loom.data.saves.SaveSyncRequest
 import ro.davidmontei.loom.data.saves.SaveSyncTestBase
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.storage.engine.JobPhase
+import ro.davidmontei.loom.storage.saves.PspDiscId
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import ro.davidmontei.loom.ui.queue.QueueViewModel
 import ro.davidmontei.loom.ui.queue.RestorableSave
+import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 import java.io.File
 
 /** The queue's saves: conflicts as RomM and the Thor hold them, and the user's answers carried out. */
@@ -58,7 +60,7 @@ class QueueViewModelTest : SaveSyncTestBase() {
         val mapping = MappingRepository(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "m.preferences_pb") })
         val downloads = DownloadRepository(db.downloadDao(), db.catalogDao(), server, mapping, settings, StorageVolumes(context),
             QueueKicker(WorkManager.getInstance(context)))
-        vm = QueueViewModel(downloads, SaveRepository(engine(), db.saveDao(), eden(), scope))
+        vm = QueueViewModel(downloads, SaveRepository(engine(), db.saveDao(), eden(), ppssppSaves(), scope))
     }
 
     @After fun tearDownQueue() {
@@ -164,6 +166,37 @@ class QueueViewModelTest : SaveSyncTestBase() {
         assertThat(after.saveFolderQuestion).isNull()
         assertThat(db.saveDao().saveKey("eden", wonder.romId)!!.saveKey).isEqualTo(wonder.titleId)
         assertThat(db.saveDao().unit(wonder.romId)!!.state).isEqualTo(SaveSyncState.IN_SYNC) // the same save as RomM's
+        assertThat(romm.uploads()).isEmpty()
+    }
+
+    /**
+     * The same for a PSP game whose disc ID Loom can't tell: the conflict its picked prefix ends in
+     * asks for the folders again, as the memory stick's disc IDs, and the right pick settles it.
+     */
+    @Test fun aPickedPrefixsConflictOffersChangeSaveFolder() = runBlocking<Unit> {
+        installPsp(lumines, file = "Lumines.chd", bytes = "MComprHD".toByteArray() + ByteArray(120)) // no disc ID on the Thor
+        writePspSave("ULUS10064DATA00", "DATA.BIN" to bytes(1), "PARAM.SFO" to SAVE_SFO, minutesAgo = 60)
+        writePspSave("NPUZ00001SAVE", "DATA.BIN" to bytes(2), "PARAM.SFO" to SAVE_SFO, minutesAgo = 5) // another game's, changed later
+        romm.addSave(lumines.romId, pspArchiveOf("ULUS10064DATA00/DATA.BIN" to bytes(1), "ULUS10064DATA00/PARAM.SFO" to SAVE_SFO), emulator = "ppsspp")
+        ppssppSaves().choosePrefix(lumines.romId, PspDiscId("NPUZ00001")) // the wrong one
+        engine().sync(SaveSyncRequest.PUSH)
+        val conflict = withTimeout(5_000) { vm.state.first { s -> s.conflicts.any { it.folderChosen } } }.conflicts.single()
+        assertThat(conflict.emulator).isEqualTo("ppsspp")
+
+        vm.askSaveFolder(lumines.romId, lumines.title, conflict.emulator)
+        val question = withTimeout(5_000) { vm.state.first { it.saveFolderQuestion != null } }.saveFolderQuestion!!
+        assertThat(question.kind).isEqualTo(SaveFolderQuestion.Kind.PREFIX)
+        assertThat(question.options.map { it.id }).containsExactly("NPUZ00001", "ULUS10064").inOrder()
+        assertThat(question.options.map { it.folderCount }).containsExactly(1, 1)
+        assertThat(question.current).isEqualTo("NPUZ00001")
+
+        val message = async { vm.messages.first() }
+        vm.chooseSaveFolder("ULUS10064")
+
+        assertThat(withTimeout(10_000) { message.await() }).isEqualTo("Lumines's saves are PPSSPP's folders starting with ULUS10064")
+        withTimeout(5_000) { vm.state.first { it.conflicts.isEmpty() } }
+        assertThat(db.saveDao().saveKey("ppsspp", lumines.romId)!!.saveKey).isEqualTo("ULUS10064")
+        assertThat(db.saveDao().unit(lumines.romId)!!.state).isEqualTo(SaveSyncState.IN_SYNC) // the same save as RomM's
         assertThat(romm.uploads()).isEmpty()
     }
 

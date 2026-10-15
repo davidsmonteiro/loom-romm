@@ -58,8 +58,8 @@ object SaveModule {
     ) = SaveSyncEngine(catalog, saves, server, credentials, settings, units, volumes, File(context.cacheDir, "save-sync"))
 
     @Provides @Singleton
-    fun saveRepository(engine: SaveSyncEngine, saves: SaveDao, eden: EdenSaves, @AppScope scope: CoroutineScope) =
-        SaveRepository(engine, saves, eden, scope)
+    fun saveRepository(engine: SaveSyncEngine, saves: SaveDao, eden: EdenSaves, ppsspp: PpssppSaves, @AppScope scope: CoroutineScope) =
+        SaveRepository(engine, saves, eden, ppsspp, scope)
 
     @Provides @Singleton fun saveSyncScheduler(workManager: WorkManager) = SaveSyncScheduler(workManager)
 

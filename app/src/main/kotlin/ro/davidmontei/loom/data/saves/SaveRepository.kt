@@ -22,6 +22,7 @@ import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import ro.davidmontei.loom.storage.saves.EmulatorIds
 import ro.davidmontei.loom.storage.saves.MelonDsSaveLocator
 import ro.davidmontei.loom.storage.saves.PpssppSaveLocator
+import ro.davidmontei.loom.storage.saves.PspDiscId
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import java.nio.file.Path
 
@@ -43,6 +44,7 @@ class SaveRepository(
     private val engine: SaveSyncEngine,
     private val saves: SaveDao,
     private val eden: EdenSaves,
+    private val ppsspp: PpssppSaves,
     private val scope: CoroutineScope,
     /** A clock that only moves forward, in milliseconds, for how soon a game's save is looked at again. */
     private val now: () -> Long = { System.nanoTime() / 1_000_000 },
@@ -105,13 +107,17 @@ class SaveRepository(
 
     suspend fun serverSaveInfo(romId: Int, saveId: Int): ServerSaveInfo? = engine.serverSaveInfo(romId, saveId)
 
-    /** The games whose save folder the owner chose, as for a Switch game whose title ID Loom can't read: they can choose another. */
+    /**
+     * The games whose save folders the owner chose, as for a Switch game whose title ID Loom can't
+     * read or a PSP game whose disc ID it can't tell: they can choose again.
+     */
     fun observeChosenFolders(): Flow<Set<Int>> = saves.observeOwnerChosenSaveKeys().map { it.toSet() }
 
-    /** The Eden save folders the owner can pick [romId]'s from. */
-    suspend fun saveFolderChoice(romId: Int): EdenFolderChoice =
-        if (saves.unit(romId)?.emulator == PpssppSaveLocator.EMULATOR_ID) EdenFolderChoice.Unavailable("Loom can't list PPSSPP's save folders yet")
-        else eden.folderChoice(romId)
+    /** What the owner can pick [romId]'s save folders from, as [emulator] keeps them: Eden's title folders, PPSSPP's disc IDs. */
+    suspend fun saveFolderChoice(romId: Int, emulator: String?): FolderChoice = when (emulator) {
+        PpssppSaveLocator.EMULATOR_ID -> ppsspp.folderChoice(romId)
+        else -> eden.folderChoice(romId)
+    }
 
     /**
      * The owner's answer to "which Eden save folder is this game's?": remembered, then Loom looks
@@ -120,6 +126,15 @@ class SaveRepository(
     suspend fun chooseSaveFolder(romId: Int, title: String, titleId: SwitchTitleId): String = request {
         eden.chooseFolder(romId, titleId)
         "$title's save is Eden's $titleId folder" + lookAfterChoosing(romId)
+    }
+
+    /**
+     * The owner's answer to "which PPSSPP save folders are this game's?": remembered, then Loom
+     * looks at the game's save again (moving nothing), so its details show where it stands.
+     */
+    suspend fun choosePrefix(romId: Int, title: String, discId: PspDiscId): String = request {
+        ppsspp.choosePrefix(romId, discId)
+        "$title's saves are PPSSPP's folders starting with $discId" + lookAfterChoosing(romId)
     }
 
     /** The Switch games whose synced folder the owner chose, of the two Eden kept their save in: they can choose again. */
@@ -249,6 +264,9 @@ class SaveRepository(
         private const val NOT_ASKED = "Couldn't check with RomM"
     }
 }
+
+/** What the owner picks for a game of [emulator]'s whose save Loom can't place: its "save folder", or PPSSPP's "save folders". */
+fun saveFolderWords(emulator: String?): String = if (emulator == PpssppSaveLocator.EMULATOR_ID) "save folders" else "save folder"
 
 /** An emulator id Loom gives RomM, as the user knows it. */
 fun emulatorName(id: String?): String = when (id) {

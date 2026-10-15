@@ -32,6 +32,7 @@ import ro.davidmontei.loom.data.saves.ConflictChoice
 import ro.davidmontei.loom.data.saves.ServerSaveInfo
 import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.data.saves.emulatorName
+import ro.davidmontei.loom.data.saves.saveFolderWords
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.ui.components.FocusRingIndication
@@ -230,8 +231,8 @@ internal fun ConflictDialog(item: ConflictItem, onAnswer: (ConflictChoice) -> Un
                     item.serverUnreadable -> "Skip leaves RomM's save as it is; Loom asks again if either side changes."
                     else -> "Keep both uploads the Thor's save to RomM as a separate copy, then takes RomM's. Skip leaves both as they are."
                 } +
-                    if (onChangeFolder != null) " You picked this game's ${emulatorName(item.emulator)} save folder: if the Thor's save " +
-                        "isn't its, Change save folder picks again." else "",
+                    if (onChangeFolder != null) " You picked this game's ${emulatorName(item.emulator)} ${saveFolderWords(item.emulator)}: " +
+                        "if the Thor's save isn't its, Change save folder picks again." else "",
                 style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted,
             )
         },

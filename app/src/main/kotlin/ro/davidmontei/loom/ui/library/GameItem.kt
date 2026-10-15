@@ -6,6 +6,7 @@ import ro.davidmontei.loom.data.db.SaveUnitEntity
 import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.data.saves.SaveUnitResolver
 import ro.davidmontei.loom.data.saves.emulatorName
+import ro.davidmontei.loom.data.saves.saveFolderWords
 import ro.davidmontei.loom.storage.engine.JobPhase
 
 /** What the catalog shows per ROM (the brief's five states). */
@@ -96,7 +97,7 @@ fun saveLine(save: GameSave): String = "Save: " + when (save.state) {
     SaveSyncState.SERVER_NEWER -> "newer on RomM"
     SaveSyncState.LOCAL_MISSING -> "missing on the Thor; RomM has a copy"
     SaveSyncState.CONFLICT -> "changed on the Thor and on RomM. Choose which to keep."
-    SaveSyncState.NEEDS_FOLDER -> "choose its ${emulatorName(save.emulator)} save folder. " + save.detail.orEmpty()
+    SaveSyncState.NEEDS_FOLDER -> "choose its ${emulatorName(save.emulator)} ${saveFolderWords(save.emulator)}. " + save.detail.orEmpty()
     SaveSyncState.MOVED -> "in two ${emulatorName(save.emulator)} folders, each holding a different save. Choose which one Loom syncs."
     SaveSyncState.UNSUPPORTED -> "not synced. " + save.detail.orEmpty()
     SaveSyncState.ERROR -> "the last sync failed. " + save.detail.orEmpty()

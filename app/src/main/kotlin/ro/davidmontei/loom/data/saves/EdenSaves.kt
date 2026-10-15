@@ -13,7 +13,6 @@ import ro.davidmontei.loom.data.settings.Settings
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.storage.saves.EdenSaveLocation
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
-import ro.davidmontei.loom.storage.saves.EdenTitleFolder
 import ro.davidmontei.loom.storage.saves.SAVE_SLOT
 import ro.davidmontei.loom.storage.saves.SaveRoot
 import ro.davidmontei.loom.storage.saves.SaveUnit
@@ -27,14 +26,6 @@ import java.io.IOException
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.Instant
-
-/** The save folders the owner can pick a Switch game's from, or why there's nothing to pick. */
-sealed interface EdenFolderChoice {
-    /** Eden's title folders no other installed game has, newest first; [current] is the owner's earlier pick. */
-    data class Options(val folders: List<EdenTitleFolder>, val current: SwitchTitleId?) : EdenFolderChoice
-
-    data class Unavailable(val reason: String) : EdenFolderChoice
-}
 
 /** The two Eden folders a Switch game's save can be synced from, or why there's nothing to pick. */
 sealed interface SyncedFolderChoice {
@@ -179,22 +170,26 @@ class EdenSaves(
         is ResolvedSave.Ready -> ""
     }
 
-    /** What the owner can pick [romId]'s save folder from: the folders in the profile Loom syncs. */
-    suspend fun folderChoice(romId: Int): EdenFolderChoice = withContext(Dispatchers.IO) {
-        val install = catalog.install(romId) ?: return@withContext EdenFolderChoice.Unavailable("The game isn't installed any more")
+    /**
+     * What the owner can pick [romId]'s save folder from: the title folders in the profile Loom
+     * syncs that no other installed game has, newest first.
+     */
+    suspend fun folderChoice(romId: Int): FolderChoice = withContext(Dispatchers.IO) {
+        val install = catalog.install(romId) ?: return@withContext FolderChoice.Unavailable("The game isn't installed any more")
         val s = settings.snapshot()
         val dir = saveDir(s, install.romsRoot)?.takeIf { EdenSaveLocator.holdsEdenData(it.toPath()) }
-            ?: return@withContext EdenFolderChoice.Unavailable("Loom can't find Eden's save folder: choose it in Settings")
+            ?: return@withContext FolderChoice.Unavailable("Loom can't find Eden's save folder: choose it in Settings")
         val locator = EdenSaveLocator(dir.toPath())
         try {
             val profiles = locator.profiles()
             val profile = profiles.singleOrNull() ?: profiles.firstOrNull { it.equals(s.edenProfile, ignoreCase = true) }
-            if (profiles.size > 1 && profile == null) return@withContext EdenFolderChoice.Unavailable(SEVERAL_PROFILES)
+            if (profiles.size > 1 && profile == null) return@withContext FolderChoice.Unavailable(SEVERAL_PROFILES)
             val taken = saves.saveKeysTakenBesides(EMULATOR, romId).toSet()
-            val current = saves.saveKey(EMULATOR, romId)?.takeIf { it.source == SaveKeySource.OWNER }?.let { SwitchTitleId.parse(it.saveKey) }
-            EdenFolderChoice.Options(locator.titleFolders(profile).filter { it.titleId.toString() !in taken }, current)
+            val current = saves.saveKey(EMULATOR, romId)?.takeIf { it.source == SaveKeySource.OWNER }?.saveKey
+            val folders = locator.titleFolders(profile).filter { it.titleId.toString() !in taken }
+            FolderChoice.Options(folders.map { FolderChoice.Option(it.titleId.toString(), it.fileCount, it.bytes, it.newestModified) }, current)
         } catch (e: IOException) {
-            EdenFolderChoice.Unavailable("Couldn't read Eden's save folder: ${e.message}")
+            FolderChoice.Unavailable("Couldn't read Eden's save folder: ${e.message}")
         }
     }
 

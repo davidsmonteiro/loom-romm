@@ -25,7 +25,7 @@ sealed interface PpssppSaveLocation {
 }
 
 /** One disc ID's save folders in SAVEDATA, for the owner to pick a game's from when Loom can't tell its disc ID. */
-data class PspSavePrefix(val discId: PspDiscId, val folderCount: Int, val bytes: Long, val newestModified: Instant?)
+data class PspSavePrefix(val discId: PspDiscId, val folderCount: Int, val bytes: Long, val newestModified: Instant?, val fileCount: Int = 0)
 
 /**
  * Finds PSP saves on PPSSPP's memory stick (Settings → System → Memory Stick folder; on the Thor,
@@ -95,7 +95,7 @@ object PpssppSaveLocator {
             .groupBy({ it.first }, { it.second })
             .map { (discId, folders) ->
                 val snapshot = UnitSnapshot.of(folders.map { SaveRoot(it.name, it) })
-                PspSavePrefix(discId, folders.size, snapshot.totalBytes, snapshot.newestModified)
+                PspSavePrefix(discId, folders.size, snapshot.totalBytes, snapshot.newestModified, snapshot.fileCount)
             }
             .sortedWith(compareByDescending<PspSavePrefix> { it.newestModified }.thenBy { it.discId.value })
     }

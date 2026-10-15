@@ -77,6 +77,36 @@ class PpssppSaves(
         saves.otherGamesWithSaveKey(EMULATOR, discId.value, romId).firstOrNull()
             ?: catalog.installedRomsOf(SaveUnitResolver.PPSSPP_PLATFORMS).firstOrNull { it.id != romId && rommDiscId(it) == discId }?.title
 
+    /**
+     * What the owner can pick [romId]'s save folders from: the disc IDs SAVEDATA's save folders
+     * start with that no other installed game has (by its save key or RomM's ID), the most
+     * recently played first, each with its folders' count and size.
+     */
+    suspend fun folderChoice(romId: Int): FolderChoice = withContext(Dispatchers.IO) {
+        val install = catalog.install(romId) ?: return@withContext FolderChoice.Unavailable("The game isn't installed any more")
+        val stick = memoryStick(settings.snapshot(), install.romsRoot)
+            ?: return@withContext FolderChoice.Unavailable("Loom can't find PPSSPP's memory stick: choose it in Settings")
+        try {
+            val others = catalog.installedRomsOf(SaveUnitResolver.PPSSPP_PLATFORMS).filter { it.id != romId }.mapNotNull { rommDiscId(it)?.value }
+            val taken = saves.saveKeysTakenBesides(EMULATOR, romId).toSet() + others
+            val current = saves.saveKey(EMULATOR, romId)?.takeIf { it.source == SaveKeySource.OWNER }?.saveKey
+            val prefixes = PpssppSaveLocator.prefixes(PpssppSaveLocator.saveDataOf(stick.toPath())).filter { it.discId.value !in taken }
+            FolderChoice.Options(
+                prefixes.map { FolderChoice.Option(it.discId.value, it.fileCount, it.bytes, it.newestModified, folderCount = it.folderCount) },
+                current,
+            )
+        } catch (e: IOException) {
+            FolderChoice.Unavailable("Couldn't read PPSSPP's memory stick: ${e.message}")
+        }
+    }
+
+    /**
+     * The owner's answer: the folders starting with [discId] are [romId]'s save. It stands until
+     * they choose again, or RomM or the game's image names another disc.
+     */
+    suspend fun choosePrefix(romId: Int, discId: PspDiscId) =
+        saves.upsertSaveKey(SaveKeyEntity(EMULATOR, romId, discId.value, SaveKeySource.OWNER, null, now()))
+
     private sealed interface Disc {
         data class Known(val id: PspDiscId) : Disc
 

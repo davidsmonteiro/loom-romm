@@ -114,14 +114,15 @@ class LibraryViewModelTest {
             rom(20, 2, "genesis", "Sonic the Hedgehog", "Sonic the Hedgehog (USA, Europe).zip"),
         ))
         val eden = EdenSaves(settings, db.catalogDao(), db.saveDao())
-        val units = SaveUnitResolver(settings, volumes, eden, MelonDsSaves(settings, db.catalogDao()), PpssppSaves(settings, db.catalogDao(), db.saveDao()))
+        val ppsspp = PpssppSaves(settings, db.catalogDao(), db.saveDao())
+        val units = SaveUnitResolver(settings, volumes, eden, MelonDsSaves(settings, db.catalogDao()), ppsspp)
         val engine = SaveSyncEngine(db.catalogDao(), db.saveDao(), server, credentials, settings, units, volumes, File(tmp.root, "cache"))
         vm = LibraryViewModel(
             db.catalogDao(),
             DownloadRepository(db.downloadDao(), db.catalogDao(), server, mapping, settings, volumes, QueueKicker(workManager)),
             InstallManager(db.catalogDao(), settings, mapping, volumes),
             CatalogSyncScheduler(workManager), server, settings, FolderChooser(settings, mapping),
-            SaveRepository(engine, db.saveDao(), eden, scope),
+            SaveRepository(engine, db.saveDao(), eden, ppsspp, scope),
             reachability,
         )
     }
