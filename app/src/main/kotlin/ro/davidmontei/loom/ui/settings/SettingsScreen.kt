@@ -55,6 +55,7 @@ import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
@@ -183,15 +184,22 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
 
 private val settingsHints = listOf(ButtonHint("A", "Select"), ButtonHint("B", "Back"))
 
+/**
+ * The narrowest window Settings shows its list and a section side by side in: there the section has
+ * 480 dp beside the list, as much as on its own on the Thor's bottom screen. Narrower, as on that
+ * screen, a section opens on its own; at 600 dp one beside the list had 282 dp and its rows squeezed.
+ */
+private val TWO_PANES_FROM = 800.dp
+
 @Composable
 fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: String? = null) {
     // Saveable: "Pair again" opens pairing on top, and Settings comes back from saved state.
     var section by rememberSaveable { mutableStateOf(SettingsSection.SERVER) }
     var backFromPairing by rememberSaveable { mutableStateOf(false) }
-    // A narrow screen shows the list, then the section it opens on its own: whether one is open. On a
-    // wide one, whether focus is in the section rather than the list, so a move to a narrow screen
+    // A window under TWO_PANES_FROM shows the list, then the section it opens on its own: whether one is open.
+    // On a wider one, whether focus is in the section rather than the list, so a move to a narrow screen
     // (Loom moved to the Thor's bottom screen, which keeps the activity) shows the pane focus is in.
-    val compact = rememberLoomLayout().compact
+    val onePane = LocalWindowInfo.current.containerDpSize.width < TWO_PANES_FROM
     var open by rememberSaveable { mutableStateOf(false) }
     val sectionActions = remember(actions) {
         object : SettingsActions by actions {
@@ -203,16 +211,16 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
     // Moving right from the section list lands on the section's first control, not the nearest one.
     val contentFirst = remember { FocusRequester() }
     val first = Modifier.focusRequester(contentFirst)
-    InitialFocus(firstSection, unless = { backFromPairing || (compact && open) })
+    InitialFocus(firstSection, unless = { backFromPairing || (onePane && open) })
     // A on a section opens it: focus moves to its first control once it is shown.
     var opened by remember { mutableIntStateOf(0) }
     LaunchedEffect(opened) { if (opened > 0) runCatching { contentFirst.requestFocus() } }
     // B inside a section undoes that A, back to the section in the list (as Left does); from there it leaves Settings.
     var contentHasFocus by remember { mutableStateOf(false) }
-    BackHandler(enabled = contentHasFocus && !compact) { runCatching { sectionFocus.getValue(section).requestFocus() } }
+    BackHandler(enabled = contentHasFocus && !onePane) { runCatching { sectionFocus.getValue(section).requestFocus() } }
     // On a narrow screen B closes the section, back to it in the list once the list is shown again.
     var closed by remember { mutableIntStateOf(0) }
-    BackHandler(enabled = compact && open) { open = false; closed++ }
+    BackHandler(enabled = onePane && open) { open = false; closed++ }
     LaunchedEffect(closed) {
         if (closed > 0) {
             delay(50) // as InitialFocus: the list has to compose its rows first
@@ -221,13 +229,13 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
     }
     // A section open on its own when Settings is shown (back from somewhere else) starts on its first control.
     // Not when a move to a narrow screen leaves it on its own: focus is already where the user was.
-    InitialFocus(contentFirst, unless = { backFromPairing || !(compact && open) })
+    InitialFocus(contentFirst, unless = { backFromPairing || !(onePane && open) })
 
     val sectionList: @Composable (Modifier) -> Unit = { modifier ->
         LazyColumn(
             // Coming back from a section (Left) lands on that section, not whichever is level with the control left behind.
             modifier.focusProperties { onEnter = { runCatching { sectionFocus.getValue(section).requestFocus() } } }
-                .onFocusChanged { if (it.hasFocus && !compact) open = false }
+                .onFocusChanged { if (it.hasFocus && !onePane) open = false }
                 .testTag("settings-sections"),
             contentPadding = PaddingValues(8.dp),
             // Eight sections fit the Thor's screen only this close together.
@@ -246,7 +254,7 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
         Column(
             // Only a move (Right) is redirected: focus given back to a control after a dialog closes stays on it.
             modifier
-                .onFocusChanged { contentHasFocus = it.hasFocus; if (it.hasFocus && !compact) open = true }
+                .onFocusChanged { contentHasFocus = it.hasFocus; if (it.hasFocus && !onePane) open = true }
                 .focusProperties { onEnter = { if (requestedFocusDirection != FocusDirection.Enter) runCatching { contentFirst.requestFocus() } } }
                 .verticalScroll(rememberScrollState()).padding(8.dp).testTag("settings-content"),
             verticalArrangement = Arrangement.spacedBy(Space.m),
@@ -273,12 +281,12 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
         }
     }
 
-    ScreenScaffold(title = if (compact && open) "Settings · ${section.title}" else "Settings", hints = settingsHints) {
+    ScreenScaffold(title = if (onePane && open) "Settings · ${section.title}" else "Settings", hints = settingsHints) {
         // Each pane drawn from one place in either layout: one that stays shown across a change of layout
         // keeps its controls, and focus on them.
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
-            if (!compact || !open) sectionList(if (compact) Modifier.fillMaxSize() else Modifier.width(230.dp).fillMaxHeight())
-            if (!compact || open) sectionContent(if (compact) Modifier.fillMaxSize() else Modifier.weight(1f).fillMaxHeight())
+            if (!onePane || !open) sectionList(if (onePane) Modifier.fillMaxSize() else Modifier.width(230.dp).fillMaxHeight())
+            if (!onePane || open) sectionContent(if (onePane) Modifier.fillMaxSize() else Modifier.weight(1f).fillMaxHeight())
         }
     }
 }

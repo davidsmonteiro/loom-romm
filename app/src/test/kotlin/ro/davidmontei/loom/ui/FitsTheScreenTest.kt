@@ -571,7 +571,28 @@ class FitsTheScreenTest {
     }
 
     /** Library sync at its tallest: a failed sync's reason beside Full resync. */
-    @Test fun theLibrarySyncSectionFits() {
+    @Test fun theLibrarySyncSectionFits() = theLibrarySyncSectionFits("settings-library-sync")
+
+    /**
+     * Found by review: at 600 dp Settings put the section beside the list in 282 dp, and the failed
+     * sync's reason beside Pair again and Full resync took a character a line, the section 1000 dp
+     * tall. Below 800 dp a section opens on its own instead, as on a narrow screen.
+     */
+    @Config(qualifiers = SMALL_TABLET_PORTRAIT)
+    @Test fun theLibrarySyncSectionFitsASmallTabletInPortrait() {
+        theLibrarySyncSectionFits("settings-library-sync-small-tablet")
+        rule.onNodeWithText("Settings · ${SettingsSection.LIBRARY.title}").assertExists()
+        rule.onNodeWithTag("settings-sections").assertDoesNotExist()
+    }
+
+    /** A tablet in portrait has room for the section beside the list, a little more than the Thor's bottom screen gives it alone. */
+    @Config(qualifiers = TABLET_PORTRAIT)
+    @Test fun theLibrarySyncSectionFitsBesideTheListOnATabletInPortrait() {
+        theLibrarySyncSectionFits("settings-library-sync-tablet-portrait")
+        rule.onNodeWithTag("settings-sections").assertExists()
+    }
+
+    private fun theLibrarySyncSectionFits(screenshot: String) {
         val state = SettingsScreenTest.sample.copy(
             settings = SettingsScreenTest.sample.settings!!.copy(lastCatalogSyncEpochMs = System.currentTimeMillis() - 3 * 3_600_000L),
             sync = CatalogSyncStatus(running = false, error = "RomM rejected Loom's token. Pair again in Settings.", needsPairing = true),
@@ -579,7 +600,7 @@ class FitsTheScreenTest {
         rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-LIBRARY").performClick()
         val overflow = overflowOf("settings-content")
-        rule.saveScreenshot("settings-library-sync")
+        rule.saveScreenshot(screenshot)
         assertThat(overflow).isEqualTo(0f)
     }
 
