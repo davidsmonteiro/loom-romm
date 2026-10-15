@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,6 +32,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ViewList
+import androidx.compose.material.icons.outlined.ArrowDropDown
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Settings
@@ -94,6 +97,7 @@ import ro.davidmontei.loom.ui.components.dateTime
 import ro.davidmontei.loom.ui.components.gameCount
 import ro.davidmontei.loom.ui.input.PadAction
 import ro.davidmontei.loom.ui.input.onPadAction
+import ro.davidmontei.loom.ui.layout.rememberLoomLayout
 import ro.davidmontei.loom.ui.saves.ReplaceSaveDialog
 import ro.davidmontei.loom.ui.saves.SaveFolderDialog
 import ro.davidmontei.loom.ui.saves.SaveFolderOption
@@ -230,7 +234,18 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     val entryGame = remember { FocusRequester() }
     val gamesFocus = remember { FocusRequester() }
     val railFocus = remember { FocusRequester() }
-
+    // Too narrow for the rail beside the games: the header names the platform, and A there lists them all.
+    val layout = rememberLoomLayout()
+    var pickingPlatform by remember { mutableStateOf(false) }
+    val platformTitle = remember { FocusRequester() }
+    // B in that list goes back to the name it was opened from; a new platform takes focus to its games.
+    var backToPlatformTitle by remember { mutableIntStateOf(0) }
+    LaunchedEffect(backToPlatformTitle) {
+        if (backToPlatformTitle > 0) {
+            delay(50) // until the list has gone: its focus trap refuses requests made from inside it
+            runCatching { platformTitle.requestFocus() }
+        }
+    }
 
     // X does what the details offer; where that's nothing to download or retry, the details say why.
     fun toggle(game: GameItem) = when (game.state) {
@@ -246,8 +261,11 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     // Into the games when they first appear and whenever the platform, filter or layout changes,
     // but never while a search is being typed: results that vanish and come back as the query
     // changes must not pull focus out of the field. The box merely having focus doesn't count: at launch
-    // it can take the window's first focus before the games arrive.
-    InitialFocus(entryGame, state.selected?.platform?.id, state.filter, state.gridMode, state.games.isNotEmpty(), unless = { searchEditing })
+    // it can take the window's first focus before the games arrive. On a narrow screen the filters are
+    // one chip that A moves on: focus stays on it for the next press while the games change below.
+    var filterFocused by remember { mutableStateOf(false) }
+    InitialFocus(entryGame, state.selected?.platform?.id, state.filter, state.gridMode, state.games.isNotEmpty(),
+        unless = { searchEditing || filterFocused })
     // A focused game that leaves the list takes focus with it before the game now in its place can
     // take over (Compose then picks the top-left card on screen), so that one asks once it can.
     val focusedLeft = focusedId != null && state.games.none { it.id == focusedId }
@@ -269,10 +287,13 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
         ScreenScaffold(
             title = state.selected?.platform?.displayName ?: "Library",
             hints = libraryHints,
-            actions = { HeaderActions(state, actions) },
+            actions = { HeaderActions(state, actions, layout.compact) },
+            titleContent = if (!layout.compact) null else {
+                { PlatformTitle(state, onClick = { pickingPlatform = true }, Modifier.focusRequester(platformTitle)) }
+            },
         ) {
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(Space.l)) {
-                PlatformRail(state, actions, Modifier.width(210.dp).fillMaxHeight().focusRequester(railFocus))
+                if (!layout.compact) PlatformRail(state, actions, Modifier.width(210.dp).fillMaxHeight().focusRequester(railFocus))
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(Space.m)) {
                     Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                         LoomTextField(
@@ -281,8 +302,14 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                             onEditingChange = { searchEditing = it },
                             onImeAction = { runCatching { entryGame.requestFocus() } },
                         )
-                        LibraryFilter.entries.forEach { f ->
-                            LoomChip(f.label, state.filter == f, { actions.setFilter(f) })
+                        if (layout.compact) {
+                            val next = LibraryFilter.entries[(state.filter.ordinal + 1) % LibraryFilter.entries.size]
+                            LoomChip(state.filter.label, state.filter != LibraryFilter.ALL, { actions.setFilter(next) },
+                                Modifier.onFocusChanged { filterFocused = it.isFocused }.testTag("filter"))
+                        } else {
+                            LibraryFilter.entries.forEach { f ->
+                                LoomChip(f.label, state.filter == f, { actions.setFilter(f) })
+                            }
                         }
                     }
                     state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = LoomColors.Accent) }
@@ -350,7 +377,18 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
         }
         // The question can arrive after another dialog opened (the card scan takes a moment): it takes over.
         LaunchedEffect(state.folderQuestion != null) {
-            if (state.folderQuestion != null) { detailsFor = null; confirmOffload = null; confirmRestore = null }
+            if (state.folderQuestion != null) { detailsFor = null; confirmOffload = null; confirmRestore = null; pickingPlatform = false }
+        }
+        if (pickingPlatform) {
+            PlatformPicker(
+                state.platforms, state.selected?.platform?.id, layout.tallEnough,
+                onPick = { id ->
+                    pickingPlatform = false
+                    // The platform already shown changes nothing, so focus goes back as from B.
+                    if (id == state.selected?.platform?.id) backToPlatformTitle++ else actions.selectPlatform(id)
+                },
+                onDismiss = { pickingPlatform = false; backToPlatformTitle++ },
+            )
         }
         state.folderQuestion?.let { FolderQuestionDialog(it, actions) }
         state.saveFolderQuestion?.let { SaveFolderDialog(it, actions::chooseSaveFolder, actions::dismissSaveFolderQuestion) }
@@ -417,26 +455,33 @@ private fun FolderQuestionDialog(q: FolderQuestion, actions: LibraryActions) {
     )
 }
 
-@Composable
-private fun HeaderActions(state: LibraryUiState, actions: LibraryActions) {
-    val sync = state.header.sync
-    val status = when {
+/** Where the library's sync stands, in a few words: the header has room for no more. */
+private fun syncStatus(header: LibraryHeader): String {
+    val sync = header.sync
+    return when {
         sync.running && sync.total != null -> "Syncing ${sync.fetched} of ${sync.total}"
         sync.running -> "Syncing…"
         sync.needsPairing -> "Not paired"
         sync.error != null -> "Sync failed" // the reason has more room above the games
-        state.header.lastSyncMs != null -> "Synced ${ago(state.header.lastSyncMs)}"
+        header.lastSyncMs != null -> "Synced ${ago(header.lastSyncMs)}"
         else -> "Not synced yet"
     }
+}
+
+@Composable
+private fun HeaderActions(state: LibraryUiState, actions: LibraryActions, compact: Boolean) {
     // A slot of its own width, in a row as tall as the buttons: the note that RomM can't be reached
-    // appears above the status without moving the title, the buttons or the games.
-    Column(Modifier.padding(end = Space.s).width(220.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        if (state.header.offline) {
-            Text(OFFLINE_NOTE, style = MaterialTheme.typography.labelSmall, color = LoomColors.Accent, maxLines = 1,
-                overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("offline"))
+    // appears above the status without moving the title, the buttons or the games. On a narrow
+    // screen the status is under the platform's name instead.
+    if (!compact) {
+        Column(Modifier.padding(end = Space.s).width(220.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (state.header.offline) {
+                Text(OFFLINE_NOTE, style = MaterialTheme.typography.labelSmall, color = LoomColors.Accent, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("offline"))
+            }
+            Text(syncStatus(state.header), style = MaterialTheme.typography.labelMedium.tabular(),
+                color = if (state.header.sync.error != null) LoomColors.Error else LoomColors.TextFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Text(status, style = MaterialTheme.typography.labelMedium.tabular(), color = if (sync.error != null) LoomColors.Error else LoomColors.TextFaint,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
     IconAction(Icons.Outlined.Sync, "Sync library", actions::sync)
     IconAction(if (state.gridMode) Icons.AutoMirrored.Outlined.ViewList else Icons.Outlined.GridView, "Grid or list", actions::toggleGrid)
@@ -446,6 +491,36 @@ private fun HeaderActions(state: LibraryUiState, actions: LibraryActions) {
 
 /** The library's note while RomM can't be reached: what's shown is the copy kept on the Thor. */
 const val OFFLINE_NOTE = "Offline · showing your saved library"
+
+/**
+ * The header on a screen too narrow for the platform rail: the platform's name, which A turns into
+ * the list of platforms, over where the sync stands. Offline, that line starts with a sign saying so.
+ */
+@Composable
+private fun RowScope.PlatformTitle(state: LibraryUiState, onClick: () -> Unit, modifier: Modifier) {
+    Column(
+        modifier.weight(1f).padding(end = Space.s)
+            .clickable(remember { MutableInteractionSource() }, FocusRingIndication(cornerRadius = 12.dp), enabled = state.platforms.isNotEmpty(),
+                role = Role.Button, onClickLabel = "Choose a platform", onClick = onClick)
+            .padding(horizontal = Space.s, vertical = Space.xs)
+            .testTag("platform-title"),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(state.selected?.platform?.displayName ?: "Library", style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            if (state.platforms.isNotEmpty()) Icon(Icons.Outlined.ArrowDropDown, contentDescription = null, tint = LoomColors.TextMuted)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
+            // A phone has no room for the words beside the status: a cloud struck through, the usual sign, says it.
+            if (state.header.offline) {
+                Icon(Icons.Outlined.CloudOff, contentDescription = OFFLINE_NOTE, tint = LoomColors.Accent,
+                    modifier = Modifier.size(16.dp).testTag("offline"))
+            }
+            Text(syncStatus(state.header), style = MaterialTheme.typography.labelMedium.tabular(),
+                color = if (state.header.sync.error != null) LoomColors.Error else LoomColors.TextFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
 
 /** Why the last sync failed, in full, and the way out when RomM no longer accepts Loom's token. */
 @Composable
@@ -487,26 +562,7 @@ private fun PlatformRail(state: LibraryUiState, actions: LibraryActions, modifie
     ) {
         items(state.platforms, key = { it.platform.id }) { p ->
             val selected = p.platform.id == state.selected?.platform?.id
-            val shape = RoundedCornerShape(12.dp)
-            Column(
-                Modifier.fillMaxWidth()
-                    .then(if (selected) Modifier.focusRequester(selectedItem) else Modifier)
-                    .background(if (selected) LoomColors.SurfaceHighest else LoomColors.Surface, shape)
-                    .clickable(remember { MutableInteractionSource() }, FocusRingIndication(cornerRadius = 12.dp), role = Role.Tab) {
-                        actions.selectPlatform(p.platform.id)
-                    }
-                    .padding(horizontal = Space.m, vertical = Space.s)
-                    .testTag("platform-${p.platform.id}"),
-            ) {
-                Text(p.platform.displayName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    color = if (selected) LoomColors.Text else LoomColors.TextMuted)
-                Text(
-                    if (p.installedCount > 0) "${p.installedCount} of ${p.localRomCount} · ${formatBytes(p.installedBytes)}"
-                    else gameCount(p.localRomCount),
-                    style = MaterialTheme.typography.labelMedium.tabular(),
-                    color = if (p.installedCount > 0) LoomColors.Installed else LoomColors.TextFaint,
-                )
-            }
+            PlatformItem(p, selected, { actions.selectPlatform(p.platform.id) }, if (selected) Modifier.focusRequester(selectedItem) else Modifier)
         }
     }
     // Keep the selected platform in view as L1/R1 move through the list.

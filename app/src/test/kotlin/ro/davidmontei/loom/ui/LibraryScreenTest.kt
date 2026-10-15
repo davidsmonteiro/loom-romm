@@ -494,6 +494,84 @@ class LibraryScreenTest {
         rule.onNodeWithTag("game-101").assertIsFocused()
     }
 
+    // --- a narrow screen: the Thor's bottom one, with no room for the platform rail ---
+
+    private fun settle() { rule.mainClock.advanceTimeBy(300); rule.waitForIdle() }
+
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun aNarrowScreenNamesThePlatformInTheHeader() {
+        show()
+        rule.onNodeWithTag("platform-rail").assertDoesNotExist()
+        rule.onNodeWithTag("platform-title").assertTextContains("Super Nintendo")
+        rule.onNodeWithTag("platform-title").assertTextContains("Synced 5 min ago") // beneath it
+        rule.onNodeWithTag("game-1").assertIsFocused() // the games still come first
+    }
+
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun aOnThePlatformOpensThePickerOnTheSelectedOne() {
+        state = state.copy(selected = platforms[2])
+        show()
+        press(listOf(Key.DirectionUp, Key.DirectionUp)) // over the search box to the header
+        rule.onNodeWithTag("platform-title").assertIsFocused()
+        press(Key.DirectionCenter)
+        settle() // the list scrolls to it first
+        rule.onNodeWithText("Choose a platform").assertExists()
+        rule.onNodeWithTag("platform-3").assertIsFocused() // Game Boy Advance, the one shown
+    }
+
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun aInThePickerChoosesAndBLeavesItAsItWas() {
+        show()
+        press(listOf(Key.DirectionUp, Key.DirectionUp, Key.DirectionCenter))
+        settle()
+        rule.onNodeWithTag("platform-1").assertIsFocused()
+        back()
+        settle()
+        rule.onNodeWithText("Choose a platform").assertDoesNotExist()
+        assertThat(calls.filter { it.startsWith("select") }).isEmpty()
+        rule.onNodeWithTag("platform-title").assertIsFocused() // back where it was opened
+
+        press(Key.DirectionCenter)
+        settle()
+        press(listOf(Key.DirectionDown, Key.DirectionCenter)) // PlayStation
+        assertThat(calls).contains("select:2")
+        rule.onNodeWithText("Choose a platform").assertDoesNotExist()
+        update { it.copy(selected = platforms[1]) } // as the library does
+        rule.onNodeWithTag("platform-title").assertTextContains("PlayStation")
+        rule.onNodeWithTag("game-1").assertIsFocused() // on to its games
+    }
+
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun l1AndR1StillChangePlatformOnANarrowScreen() {
+        show()
+        press(listOf(Key.ButtonR1, Key.ButtonL1))
+        assertThat(calls).containsAtLeast("cycle:1", "cycle:-1").inOrder()
+        update { it.copy(selected = platforms[3]) }
+        rule.onNodeWithTag("platform-title").assertTextContains("Nintendo DS")
+        rule.onNodeWithTag("game-1").assertIsFocused()
+    }
+
+    /** One chip in place of three: A moves it on to the next filter, and it keeps focus for the next press. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theFilterChipCyclesOnANarrowScreen() {
+        show()
+        press(listOf(Key.DirectionUp, Key.DirectionRight)) // past the search box
+        rule.onNodeWithTag("filter").assertIsFocused().assertTextEquals("All")
+        calls.clear()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("filter:ON_DEVICE")
+        update { it.copy(filter = LibraryFilter.ON_DEVICE, games = games.filter { g -> g.state == InstallState.INSTALLED }) }
+        rule.onNodeWithTag("filter").assertIsFocused().assertTextEquals("On device")
+        press(Key.DirectionCenter)
+        update { it.copy(filter = LibraryFilter.NOT_ON_DEVICE, games = emptyList()) }
+        update { it.copy(games = games.filter { g -> g.state == InstallState.NOT_INSTALLED }) } // the games arriving don't take focus
+        rule.onNodeWithTag("filter").assertIsFocused().assertTextEquals("Not on device")
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("filter:ON_DEVICE", "filter:NOT_ON_DEVICE", "filter:ALL").inOrder()
+        press(Key.DirectionDown)
+        rule.onNodeWithTag("game-2").assertIsFocused() // the first of them
+    }
+
     /** Found by audit: a sync error was cut to one line in the header, and nothing there led to pairing again. */
     @Test fun aRejectedTokenShowsWhyAndLeadsToPairing() {
         val error = "RomM rejected Loom's token. Pair again in Settings."

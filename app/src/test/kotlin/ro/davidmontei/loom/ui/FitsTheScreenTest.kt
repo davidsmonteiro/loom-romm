@@ -18,6 +18,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
@@ -45,6 +47,7 @@ import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.InstallState
 import ro.davidmontei.loom.ui.library.LibraryContent
+import ro.davidmontei.loom.ui.library.LibraryFilter
 import ro.davidmontei.loom.ui.onboarding.OnboardingActions
 import ro.davidmontei.loom.ui.onboarding.OnboardingContent
 import ro.davidmontei.loom.ui.onboarding.OnboardingState
@@ -411,12 +414,12 @@ class FitsTheScreenTest {
 
     /**
      * The library's hints, the most any screen shows, each checked to be whole: one line, inside the
-     * screen's margin. Returns how many lines of hints there are.
+     * screen's [margin] (narrower on a narrow screen). Returns how many lines of hints there are.
      */
-    private fun libraryHintLines(): Int {
+    private fun libraryHintLines(margin: Dp = Space.xl): Int {
         rule.setContent { LoomTestTheme { LibraryContent(LibraryScreenTest().state, NoopLibraryActions) } }
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
-        val end = rule.onRoot().fetchSemanticsNode().boundsInRoot.right - with(rule.density) { Space.xl.toPx() }
+        val end = rule.onRoot().fetchSemanticsNode().boundsInRoot.right - with(rule.density) { margin.toPx() }
         val hints = listOf("Details", "Download / offload", "Search", "Platform", "Queue", "Settings").map { label ->
             label to rule.onNode(hasText(label) and hasAnyAncestor(hasTestTag("button-hints")), useUnmergedTree = true).fetchSemanticsNode()
         }
@@ -439,8 +442,69 @@ class FitsTheScreenTest {
     /** On a narrower screen, such as the Thor's bottom one, the hints wrap rather than squeeze the last one. */
     @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
     @Test fun theHintsWrapToTwoLinesAtMost() {
-        assertThat(libraryHintLines()).isEqualTo(2)
+        assertThat(libraryHintLines(margin = Space.l)).isEqualTo(2)
         rule.saveScreenshot("library-hints-bottom-screen")
+    }
+
+    /** A phone in portrait is narrower still: its narrower margins keep the hints to two lines. */
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun theHintsWrapToTwoLinesAtMostOnAPhone() {
+        assertThat(libraryHintLines(margin = Space.l)).isEqualTo(2)
+    }
+
+    /**
+     * The library's header on a narrow screen: the platform's name and where the sync stands in full,
+     * with the sign that RomM can't be reached too, the four buttons inside the margin, and the filter
+     * chip on one line, whichever filter.
+     */
+    private fun theLibraryHeaderFits(screenshot: String) {
+        var state by mutableStateOf(LibraryScreenTest().state)
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("platform-rail").assertDoesNotExist()
+        val end = rule.onRoot().fetchSemanticsNode().boundsInRoot.right - with(rule.density) { Space.l.toPx() }
+        fun fits(vararg lines: String) {
+            rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+            for (line in lines) {
+                assertWithMessage(line).that(ellipsized(line)).isFalse()
+                assertWithMessage(line).that(lineCount(line)).isEqualTo(1)
+            }
+            for (button in listOf("Sync library", "Grid or list", "Settings")) {
+                assertWithMessage(button).that(rule.onNodeWithContentDescription(button).fetchSemanticsNode().boundsInRoot.right).isAtMost(end)
+            }
+            assertThat(lineCount(rule.onNode(hasAnyAncestor(hasTestTag("filter")), useUnmergedTree = true).fetchSemanticsNode())).isEqualTo(1)
+            // The search box keeps room to show what's typed.
+            assertThat(with(rule.density) { rule.onNodeWithTag("search").fetchSemanticsNode().boundsInRoot.width.toDp() }).isAtLeast(160.dp)
+        }
+        fits("Super Nintendo", "Synced 5 min ago")
+        rule.saveScreenshot(screenshot)
+        state = state.copy(header = state.header.copy(offline = true), filter = LibraryFilter.NOT_ON_DEVICE)
+        fits("Super Nintendo", "Synced 5 min ago")
+        rule.onNodeWithContentDescription("Offline · showing your saved library").assertExists() // beside it
+    }
+
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theLibraryHeaderFitsTheBottomScreen() = theLibraryHeaderFits("library-header-bottom-screen")
+
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun theLibraryHeaderFitsAPhoneInPortrait() = theLibraryHeaderFits("library-header-phone")
+
+    /** The platforms to pick from on the bottom screen: many of them scroll in their own pane, the dialog in full. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun thePlatformPickerFitsTheBottomScreen() {
+        val library = LibraryScreenTest().state
+        val platforms = (1..40).map { i -> library.platforms[0].let { it.copy(platform = it.platform.copy(id = i, displayName = "Platform $i")) } }
+        rule.setContent { LoomTestTheme { LibraryContent(library.copy(platforms = platforms, selected = platforms[30]), NoopLibraryActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("platform-title").performClick()
+        assertThat(overflow("Choose a platform")).isEqualTo(0f)
+        val root = rule.onRoot().fetchSemanticsNode().boundsInRoot
+        for (node in listOf(rule.onNodeWithTag("platform-31"), rule.onNodeWithText("Cancel"))) {
+            val bounds = node.fetchSemanticsNode().boundsInRoot
+            assertThat(bounds.top).isAtLeast(root.top)
+            assertThat(bounds.bottom).isAtMost(root.bottom)
+        }
+        rule.saveScreenshot("library-platform-picker")
     }
 
     /** The question at a platform's first download, with its few options and with every folder of the Thor's ES-DE template. */

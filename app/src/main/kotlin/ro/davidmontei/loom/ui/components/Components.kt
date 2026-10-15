@@ -92,6 +92,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import ro.davidmontei.loom.ui.layout.rememberLoomLayout
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 
@@ -442,13 +443,18 @@ fun ButtonHints(hints: List<ButtonHint>, modifier: Modifier = Modifier) {
     }
 }
 
-/** Screen chrome: title bar, content, and a footer of button hints. */
+/**
+ * Screen chrome: title bar, content, and a footer of button hints. [titleContent], when given,
+ * takes the title's place (the library's platform button on a narrow screen), filling what
+ * [actions] leave. A narrow screen has narrower margins, so the hints wrap to two lines at most.
+ */
 @Composable
 fun ScreenScaffold(
     title: String,
     hints: List<ButtonHint>,
     modifier: Modifier = Modifier,
     actions: @Composable RowScope.() -> Unit = {},
+    titleContent: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
@@ -456,11 +462,12 @@ fun ScreenScaffold(
             .fillMaxSize()
             .background(LoomColors.Background)
             .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(horizontal = Space.xl, vertical = Space.m),
+            .padding(horizontal = if (rememberLoomLayout().compact) Space.l else Space.xl, vertical = Space.m),
         verticalArrangement = Arrangement.spacedBy(Space.m),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f), maxLines = 1,
+            if (titleContent != null) titleContent()
+            else Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f), maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
             actions()
         }
