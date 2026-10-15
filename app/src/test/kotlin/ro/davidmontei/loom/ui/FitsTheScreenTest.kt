@@ -303,7 +303,13 @@ class FitsTheScreenTest {
      * Found by review: Downloads & saves scrolled by over 400 px, with every save control below the
      * fold. Downloads and Saves are two sections now, and each fits.
      */
-    @Test fun theDownloadsSectionFits() {
+    @Test fun theDownloadsSectionFits() = theDownloadsSectionFits("settings-downloads-pair-again")
+
+    /** The same, open on its own on the bottom screen: Pair again and the line beside it still fit, in full. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theDownloadsSectionFitsTheBottomScreen() = theDownloadsSectionFits("settings-downloads-pair-again-bottom-screen")
+
+    private fun theDownloadsSectionFits(screenshot: String) {
         var state by mutableStateOf(SettingsScreenTest.sample.copy(sendToDevice = SendToDeviceState.Ready("dev-1")))
         rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-DOWNLOADS").performClick()
@@ -314,7 +320,7 @@ class FitsTheScreenTest {
         state = state.copy(batteryUnrestricted = false, sendToDevice = SendToDeviceState.NeedsPairing)
         assertThat(settingsOverflow()).isEqualTo(0f)
         assertThat(ellipsized("Pair again, with the code Loom shows")).isFalse()
-        rule.saveScreenshot("settings-downloads-pair-again")
+        rule.saveScreenshot(screenshot)
     }
 
     /** Saves with every folder chosen, a failed sync and two Eden profiles to choose between. */
