@@ -188,6 +188,17 @@ class SettingsScreenTest {
         assertThat(calls).containsExactly("secondScreen:false")
     }
 
+    /**
+     * Found by review: the panel covers an app open on the other screen whenever Loom is in front, and
+     * Loom can't tell it is there. The switch says that turning it off leaves that app in view.
+     */
+    @Test fun theSecondScreenSwitchSaysOffLeavesAnotherAppInView() {
+        show()
+        goTo(SettingsSection.CONTROLS)
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Off, an app open on the other screen stays in view while Loom is in front.", substring = true).assertExists()
+    }
+
     /** Found on the Thor: A selected a section but left focus in the list; the next press did nothing new. */
     @Test fun aOnASectionMovesIntoIt() {
         show()

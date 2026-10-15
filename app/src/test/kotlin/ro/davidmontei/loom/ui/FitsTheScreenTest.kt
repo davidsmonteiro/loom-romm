@@ -367,7 +367,7 @@ class FitsTheScreenTest {
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
         rule.onNodeWithTag("section-CONTROLS").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
-        for (line in listOf("go back with the bottom one.", "the pad stays here.")) assertWithMessage(line).that(cutShort(line)).isFalse()
+        for (line in listOf("go back with the bottom one.", "stays in view while Loom is in front.")) assertWithMessage(line).that(cutShort(line)).isFalse()
         rule.saveScreenshot(screenshot)
     }
 
