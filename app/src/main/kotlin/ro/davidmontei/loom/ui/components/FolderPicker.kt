@@ -40,7 +40,7 @@ class FolderNote(val text: String, val looksRight: Boolean)
  * Browses folders with the D-pad (the system picker is touch-first and returns SAF URIs Loom
  * doesn't need with all-files access). Shows how many of the folders inside look like Cocoon
  * system folders, so picking the right ROMs root is easy to confirm; [note] says something else
- * about the open folder's [children] when it isn't a ROMs root being picked, and the folders in
+ * about the open folder and its children when it isn't a ROMs root being picked, and the folders in
  * [knownSystemFolders] are the ones to highlight.
  *
  * With [focusOnOpen] false the screen around it keeps focus (onboarding puts it on its suggested
@@ -51,6 +51,9 @@ class FolderNote(val text: String, val looksRight: Boolean)
  * B, while the picker has focus, goes back up through the folders opened with A, then leaves it to
  * the screen. Going up puts focus on the folder just left, so A goes back into it rather than
  * picking its parent.
+ *
+ * [first] goes on the control focus lands on, wherever that is now: a screen sending focus into
+ * the picker puts it there.
  */
 @Composable
 fun FolderPicker(
@@ -61,7 +64,8 @@ fun FolderPicker(
     modifier: Modifier = Modifier,
     focusOnOpen: Boolean = true,
     focusOn: File? = null,
-    note: ((children: List<File>) -> FolderNote)? = null,
+    note: ((folder: File, children: List<File>) -> FolderNote)? = null,
+    first: Modifier = Modifier,
 ) {
     var current by remember { mutableStateOf(initial?.takeIf { it.isDirectory }) }
     // The folder (or volume) just left by going up, or [focusOn] at first.
@@ -96,7 +100,7 @@ fun FolderPicker(
     Column(modifier.onFocusChanged { hasFocus = it.hasFocus }, verticalArrangement = Arrangement.spacedBy(Space.m)) {
         Text(current?.path ?: "Choose a storage", style = MaterialTheme.typography.titleSmall, color = LoomColors.TextMuted)
         if (current != null) {
-            val said = note?.invoke(children) ?: FolderNote(
+            val said = note?.invoke(current!!, children) ?: FolderNote(
                 if (systems > 0) "$systems folders here look like Cocoon systems (${children.filter(::looksLikeSystem).take(6).joinToString { it.name }}…)"
                 else "No system folders (snes, psx, gba…) here yet.",
                 looksRight = systems > 0,
@@ -104,7 +108,7 @@ fun FolderPicker(
             Text(said.text, style = MaterialTheme.typography.bodyMedium, color = if (said.looksRight) LoomColors.Installed else LoomColors.TextMuted)
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
                 LoomButton("Use this folder", onClick = { onPick(current!!) }, primary = true,
-                    modifier = if (focusIndex == null) Modifier.focusRequester(firstFocus) else Modifier)
+                    modifier = if (focusIndex == null) first.focusRequester(firstFocus) else Modifier)
                 LoomButton("Up", onClick = { up() })
             }
         }
@@ -117,7 +121,7 @@ fun FolderPicker(
                         subtitle = v.root.path,
                         onClick = { open(v.root) },
                         leading = { Icon(if (v.removable) Icons.Outlined.SdCard else Icons.Outlined.PhoneAndroid, null, tint = LoomColors.TextMuted) },
-                        modifier = if (i == (focusIndex ?: 0)) Modifier.focusRequester(firstFocus) else Modifier,
+                        modifier = if (i == (focusIndex ?: 0)) first.focusRequester(firstFocus) else Modifier,
                     )
                 }
             } else {
@@ -126,7 +130,7 @@ fun FolderPicker(
                         title = dir.name,
                         onClick = { open(dir) },
                         leading = { Icon(Icons.Outlined.Folder, null, tint = if (looksLikeSystem(dir)) LoomColors.Installed else LoomColors.TextMuted) },
-                        modifier = if (i == focusIndex) Modifier.focusRequester(firstFocus) else Modifier,
+                        modifier = if (i == focusIndex) first.focusRequester(firstFocus) else Modifier,
                     )
                 }
             }

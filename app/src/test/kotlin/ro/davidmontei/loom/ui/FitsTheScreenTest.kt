@@ -25,6 +25,7 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
+import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.storage.saves.EdenProfile
 import ro.davidmontei.loom.data.db.SaveSyncState
@@ -33,6 +34,7 @@ import ro.davidmontei.loom.data.sent.SendToDeviceState
 import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.storage.saves.SyncDecision
+import ro.davidmontei.loom.storage.saves.SyncOutcome
 import ro.davidmontei.loom.data.saves.EdenSaves
 import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.ui.folders.FolderQuestion
@@ -156,30 +158,38 @@ class FitsTheScreenTest {
         rule.saveScreenshot("settings-downloads-pair-again")
     }
 
-    /**
-     * Saves at its tallest: a failed last sync whose reason, the longest, sits beside Pair again; a
-     * chosen Azahar folder (with the button back to the 3DS one); and a chosen Eden folder without
-     * user/save, no prod.keys, and two profiles to choose between.
-     */
-    @Test fun theSavesSectionFits() {
+    /** Saves with every folder chosen, a failed sync and two Eden profiles to choose between. */
+    private fun tallestSaves(lastSaveSync: SaveSyncOutcome): ro.davidmontei.loom.ui.settings.SettingsUiState {
         val settings = SettingsScreenTest.sample.settings!!.copy(
             azaharUserDir = "/storage/6365-3230/Emulation/Azahar/user",
             edenSaveDir = "/storage/6365-3230/Emulation/Eden/nand",
-            lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true),
+            melonDsSaveDir = "/storage/6365-3230/Emulation/melonDS",
+            ppssppMemoryStick = "/storage/6365-3230/Emulation/PPSSPP",
+            lastSaveSync = lastSaveSync,
         )
         val storage = SettingsScreenTest.sample.storage.copy(
             edenProfiles = listOf(EdenProfile("0123456789ABCDEF0123456789ABCDEF", 12, null), EdenProfile("4E431822D6DEFD527268BA35B5C09533", 3, null)),
         )
-        rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample.copy(settings = settings, storage = storage), SettingsScreenTest.noop) } }
+        return SettingsScreenTest.sample.copy(settings = settings, storage = storage)
+    }
+
+    /**
+     * Saves at its tallest: a failed last sync whose reason, the longest, sits beside Pair again, and
+     * a card per emulator, each saying where its folder is on one line.
+     */
+    @Test fun theSavesSectionFits() {
+        val state = tallestSaves(SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true))
+        rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
         rule.onNodeWithText("Pair again").assertExists()
-        rule.onNodeWithText("Use 3DS folder").assertExists()
-        rule.onNodeWithText("Use saves/Eden").assertExists()
-        rule.onNodeWithTag("eden-profile").assertExists()
-        // How Loom found each folder, in full, on one line. (Labels with letter spacing report a width
-        // overflow they don't have, so the ellipsis and the line count are what's checked.)
-        for (line in listOf("Chosen here.", "Chosen, but it has no user/save.")) {
+        rule.onNodeWithTag("azahar-card").assertExists()
+        rule.onNodeWithTag("eden-card").assertExists()
+        rule.onNodeWithTag("melonds-card").assertExists()
+        rule.onNodeWithTag("ppsspp-card").assertExists()
+        // Each card's line in full. (Labels with letter spacing report a width overflow they don't
+        // have, so the ellipsis and the line count are what's checked.)
+        for (line in listOf("Your chosen folder", "Chosen, but it has no user/save", "Chosen, but it isn't there", "Chosen, but it has no ppsspp.ini")) {
             assertWithMessage(line).that(ellipsized(line)).isFalse()
             assertWithMessage(line).that(lineCount(line)).isEqualTo(1)
         }
@@ -187,35 +197,100 @@ class FitsTheScreenTest {
         rule.saveScreenshot("settings-saves-tallest")
     }
 
-    /** Eight Eden profiles: one chip in Saves, and a list of them all that fits beside its explanation. */
-    @Test fun manyEdenProfilesFit() {
-        val profiles = (1..8).map { i -> EdenProfile("4E431822D6DEFD527268BA35B5C095%02X".format(i), 40 + i, java.time.Instant.parse("2026-10-14T12:00:00Z").minusSeconds(86_400L * i)) }
-        val settings = SettingsScreenTest.sample.settings!!.copy(
-            azaharUserDir = "/storage/6365-3230/Emulation/Azahar/user", edenSaveDir = "/storage/6365-3230/Emulation/Eden/nand",
-            lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true),
-        )
-        val state = SettingsScreenTest.sample.copy(settings = settings, storage = SettingsScreenTest.sample.storage.copy(edenProfiles = profiles))
+    /** The same with sync switched off on RomM, days ago: the longest last-sync line, across the section's width. */
+    @Test fun theSavesSectionFitsWithSyncSwitchedOffOnRomm() {
+        val state = tallestSaves(SaveSyncOutcome(System.currentTimeMillis() - 10 * 86_400_000L, SaveSyncEngine.SYNC_OFF, failed = true))
         rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
+        assertThat(lineCount("pairing again won't help.")).isEqualTo(2)
+        rule.saveScreenshot("settings-saves-sync-off")
+    }
+
+    /**
+     * Each emulator's details at their tallest, with every button: a long chosen folder, and for
+     * Eden two profiles to choose between and no prod.keys. All of it shows, and the buttons sit
+     * on one line inside the dialog.
+     */
+    @Test fun eachEmulatorsDialogFits() {
+        val tallest = tallestSaves(SaveSyncOutcome(System.currentTimeMillis(), "no changes", failed = false))
+        val long = "/storage/6365-3230/Emulation/Some Emulator Front-end/Collections/Nintendo/Handhelds and Consoles"
+        val state = tallest.copy(settings = tallest.settings!!.copy(
+            azaharUserDir = "$long/Azahar/user", edenSaveDir = "$long/Eden/nand", melonDsSaveDir = "$long/melonDS", ppssppMemoryStick = "$long/PPSSPP",
+        ))
+        rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
+        rule.onNodeWithTag("section-SAVES").performClick()
+        for ((tag, name) in listOf("azahar" to "Azahar", "eden" to "Eden", "melonds" to "melonDS", "ppsspp" to "PPSSPP")) {
+            rule.onNodeWithTag("$tag-card").performClick()
+            assertWithMessage(name).that(overflow("$name's saves")).isEqualTo(0f)
+            rule.saveScreenshot("settings-saves-$tag-details")
+            assertWithMessage(name).that(cutShort("$long/$name")).isFalse()
+            val dialog = rule.onNode(hasText("$name's saves")).fetchSemanticsNode().boundsInRoot
+            val close = rule.onNodeWithTag("$tag-close").fetchSemanticsNode().boundsInRoot
+            assertWithMessage(name).that(close.right).isAtMost(dialog.right)
+            assertWithMessage(name).that(lineCount("Close")).isEqualTo(1)
+            if (tag == "eden") assertThat(lineCount("each Switch game asks which save folder is its.")).isEqualTo(1)
+            rule.onNodeWithTag("$tag-close").performClick()
+            rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        }
+    }
+
+    /** Eight Eden profiles: a list of them all, from Eden's details, that fits beside its explanation. */
+    @Test fun manyEdenProfilesFit() {
+        val profiles = (1..8).map { i -> EdenProfile("4E431822D6DEFD527268BA35B5C095%02X".format(i), 40 + i, java.time.Instant.parse("2026-10-14T12:00:00Z").minusSeconds(86_400L * i)) }
+        val tallest = tallestSaves(SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true))
+        val state = tallest.copy(storage = tallest.storage.copy(edenProfiles = profiles))
+        rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
+        rule.onNodeWithTag("section-SAVES").performClick()
+        assertThat(settingsOverflow()).isEqualTo(0f)
+        rule.onNodeWithTag("eden-card").performClick()
         rule.onNodeWithTag("eden-profile").performClick()
         assertThat(overflow("Whose Switch saves does Loom sync?")).isEqualTo(0f)
         assertThat(cutShort("Yours is likely the one whose saves changed last.")).isFalse()
         rule.saveScreenshot("settings-saves-eden-profiles")
     }
 
-    /** Saves as on the Thor: both folders found where Loom looks, shown in full, and Loom able to read title IDs. */
+    /** Saves as on the Thor: both folders found where Loom looks, and Loom able to read title IDs. */
     @Test fun theSavesSectionShowsTheThorsFoldersInFull() {
         val storage = SettingsScreenTest.sample.storage.copy(
             romsRoot = "/storage/6365-3230/ROMs", azaharFound = "/storage/6365-3230/ROMs/n3ds", edenFound = "/storage/6365-3230/ROMs/saves/Eden",
             edenProfiles = listOf(EdenProfile("4E431822D6DEFD527268BA35B5C09533", 2, null)), prodKeys = "/storage/6365-3230/ROMs/prod.keys",
+            melonDsFound = "/storage/6365-3230/ROMs/saves/melonDS", ppssppFound = "/storage/6365-3230/ROMs/saves/PPSSPP",
         )
         rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample.copy(storage = storage), SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
         rule.saveScreenshot("settings-saves-thor")
-        for (line in listOf("/storage/6365-3230/ROMs/n3ds", "/storage/6365-3230/ROMs/saves/Eden", "Found in ROMs/saves/Eden.")) {
+        for (line in listOf("Found in the 3DS folder", "Found in ROMs/saves/Eden", "Found in ROMs/saves/melonDS", "Found in ROMs/saves/PPSSPP")) {
             assertWithMessage(line).that(ellipsized(line)).isFalse()
+        }
+        rule.onNodeWithTag("eden-card").performClick()
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        assertThat(lineCount("/storage/6365-3230/ROMs/saves/Eden")).isEqualTo(1)
+    }
+
+    /**
+     * The folder browser in Saves, in a folder with more folders than fit: it takes the section's
+     * place, and its list scrolls in its own pane, so the section itself never does.
+     */
+    @Test fun theSavesFolderBrowserFits() {
+        val card = File(System.getProperty("java.io.tmpdir"), "loom-fits-${System.nanoTime()}/6365-3230")
+        val roms = File(card, "ROMs")
+        try {
+            (1..30).forEach { File(roms, "system%02d".format(it)).mkdirs() }
+            val n3ds = File(roms, "n3ds").apply { File(this, "sdmc/Nintendo 3DS").mkdirs() }
+            val state = SettingsScreenTest.sample.copy(storage = SettingsScreenTest.sample.storage.copy(romsRoot = roms.path, azaharFound = n3ds.path))
+            rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
+            rule.onNodeWithTag("section-SAVES").performClick()
+            rule.onNodeWithTag("azahar-card").performClick()
+            rule.onNodeWithTag("azahar-change-folder").performClick()
+            rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+            rule.onNodeWithTag("save-folder-browser").assertExists()
+            assertThat(settingsOverflow()).isEqualTo(0f)
+            rule.onNodeWithText("Use this folder").assertExists()
+            rule.saveScreenshot("settings-saves-browser")
+        } finally {
+            card.parentFile!!.deleteRecursively()
         }
     }
 
@@ -282,16 +357,98 @@ class FitsTheScreenTest {
         rule.saveScreenshot("library-details-switch-buttons")
     }
 
+    /**
+     * A DS or PSP game's details with its save's reason at its longest, under a long title and path:
+     * what to set in melonDS or PPSSPP, where there are no save buttons, and why Loom asks for a PSP
+     * game's save folders, above the button that asks, in full.
+     */
+    @Test fun aDsOrPspGamesSaveReasonFitsInFull() {
+        val title = "Monster Hunter Freedom Unite (USA) (En,Fr,De,Es,It) (Rev 1) (Greatest Hits) (v1.01)"
+        val roms = "/storage/6365-3230/ROMs"
+        val saves = listOf(
+            GameSave(true, SaveSyncState.UNSUPPORTED, "melonDS's saves aren't in $roms/saves/melonDS: in melonDS's Save Files settings, " +
+                "turn off Save next to ROM file and set the Save file directory there, or choose its folder in Settings", "melonds"),
+            GameSave(true, SaveSyncState.UNSUPPORTED, "PPSSPP's memory stick isn't $roms/saves/PPSSPP: in PPSSPP's System settings, set the " +
+                "Memory Stick folder there, or choose PPSSPP's folder in Settings", "ppsspp"),
+            GameSave(true, SaveSyncState.UNSUPPORTED, "New Super Mario Bros. (USA, Australia) (Rev 1) has the same melonDS save file " +
+                "(New Super Mario Bros. (USA, Australia) (Rev 1).sav), and Loom syncs a save for one game only", "melonds"),
+            GameSave(true, SaveSyncState.UNSUPPORTED, "Monster Hunter Freedom Unite (USA) (En,Fr,De,Es,It) (Rev 1) has the same PSP disc ID " +
+                "(ULUS10391), and Loom syncs a game's save folders for one game only", "ppsspp"),
+            GameSave(true, SaveSyncState.NEEDS_FOLDER, "Its image says it is ULUS10084, not ULUS10041 as you chose", "ppsspp"),
+            GameSave(true, SaveSyncState.NEEDS_FOLDER, "Its image names two disc IDs: ULUS10084 in UMD_DATA.BIN, ULJM05500 in PARAM.SFO", "ppsspp"),
+            GameSave(true, SaveSyncState.NEEDS_FOLDER, "RomM says it is ULUS10084, its image ULJM05500", "ppsspp"),
+            GameSave(true, SaveSyncState.NEEDS_FOLDER, "RomM didn't read its disc ID, and Loom can't read a CHD on the Thor", "ppsspp"),
+            GameSave(true, SaveSyncState.NEEDS_FOLDER, "RomM didn't read its disc ID, and Loom can't: the PBP's PARAM.SFO names no disc ID", "ppsspp"),
+        )
+        val game = GameItem(40, title, 1_600_000_000, null, listOf("USA"), InstallState.INSTALLED, null, null, null, adopted = true,
+            removedOnServer = false, installPath = "psp/$title.chd", save = saves.first())
+        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game)))
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("game-40").performClick()
+        for (save in saves) {
+            state = state.copy(games = listOf(game.copy(save = save)))
+            assertWithMessage(save.detail).that(overflow(title)).isEqualTo(0f)
+            assertWithMessage(save.detail).that(cutShort(save.detail!!.takeLast(20))).isFalse()
+        }
+        rule.saveScreenshot("library-details-psp-reason")
+    }
+
+    /**
+     * A conflict's details give its own reason, with both save buttons below: each of the queue's
+     * reasons fits, and one Loom can't restore at its longest fits the dialog, cut short if need be.
+     */
+    @Test fun aConflictsReasonFitsItsDetails() {
+        val title = "Monster Hunter Freedom Unite (USA) (En,Fr,De,Es,It) (Rev 1) (Greatest Hits) (v1.01)"
+        val conflict = GameSave(true, SaveSyncState.CONFLICT, null, "ppsspp", folderChosen = true)
+        val game = GameItem(40, title, 1_600_000_000, null, listOf("USA"), InstallState.INSTALLED, null, null, null, adopted = true,
+            removedOnServer = false, installPath = "psp/$title.chd", save = conflict)
+        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game)))
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("game-40").performClick()
+        for (reason in SyncDecision.entries.filter { it.outcome == SyncOutcome.CONFLICT }.map { conflictReason(it.name) }) {
+            state = state.copy(games = listOf(game.copy(save = conflict.copy(detail = reason))))
+            assertWithMessage(reason).that(overflow(title)).isEqualTo(0f)
+            // A one-line text can measure as overflowing its width: an ellipsis is what tells it is cut.
+            assertWithMessage(reason).that(ellipsized(reason.takeLast(20))).isFalse()
+        }
+        val unrestorable = "RomM's save is over 256 MB, more than Loom downloads: it likely holds data the game installed; nothing was replaced"
+        state = state.copy(games = listOf(game.copy(save = conflict.copy(detail = unrestorable))))
+        assertThat(overflow(title)).isEqualTo(0f)
+        rule.saveScreenshot("library-details-conflict-reason")
+    }
+
     /** Which Eden save folder is a game's: the explanation in full, and the folders in a list of their own. */
     @Test fun theSaveFolderQuestionFits() {
         val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"
         val game = GameItem(40, title, 16_300_000_000, null, listOf("World"), InstallState.INSTALLED, null, null, null, adopted = true,
             removedOnServer = false, installPath = "switch/$title.xci", save = GameSave(true, SaveSyncState.NEEDS_FOLDER, EdenSaves.NO_KEYS, "eden"))
         val options = (1..12).map { SaveFolderOption("0100%012X".format(it * 0x1000L), 4, 1_200_000, System.currentTimeMillis() - it * 3_600_000L) }
-        val state = LibraryScreenTest().state.copy(games = listOf(game), saveFolderQuestion = SaveFolderQuestion(40, title, "eden", options, current = null))
+        val state = LibraryScreenTest().state.copy(games = listOf(game),
+            saveFolderQuestion = SaveFolderQuestion(40, title, "eden", options, current = options.first().id))
         rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
         assertThat(overflow("Which Eden save folder is $title's?")).isEqualTo(0f)
+        assertThat(ellipsized("4 files · ${formatBytes(1_200_000)} · chosen now")).isFalse()
         rule.saveScreenshot("library-save-folder-question")
+    }
+
+    /** Which disc ID's PPSSPP folders are a PSP game's: the explanation in full, and the disc IDs in a list of their own. */
+    @Test fun thePspSaveFolderQuestionFits() {
+        val title = "Monster Hunter Freedom Unite (USA) (En,Fr,De,Es,It) (Rev 1) (Greatest Hits) (v1.01)"
+        val game = GameItem(40, title, 1_600_000_000, null, listOf("USA"), InstallState.INSTALLED, null, null, null, adopted = true,
+            removedOnServer = false, installPath = "psp/$title.chd",
+            save = GameSave(true, SaveSyncState.NEEDS_FOLDER, "RomM didn't read this game's disc ID, and Loom can't read a CHD on the Thor", "ppsspp"))
+        val options = (1..12).map { SaveFolderOption("ULUS%05d".format(10_000 + it), 9, 12_400_000, System.currentTimeMillis() - it * 3_600_000L, folderCount = 3) }
+        // Asked again from its details: the folders chosen now say so.
+        val question = SaveFolderQuestion(40, title, "ppsspp", options, current = options.first().id, kind = SaveFolderQuestion.Kind.PREFIX)
+        val state = LibraryScreenTest().state.copy(games = listOf(game), saveFolderQuestion = question)
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        assertThat(overflow("Which PPSSPP save folders are $title's?")).isEqualTo(0f)
+        assertThat(cutShort("Its details can change this later.")).isFalse()
+        // What each holds and how much, beside when it changed: a line each.
+        assertThat(ellipsized("3 folders · ${formatBytes(12_400_000)} · chosen now")).isFalse()
+        rule.saveScreenshot("library-psp-save-folder-question")
     }
 
     /** Which of a game's two Eden folders Loom syncs: the question in full beside both folders, from details that fit too. */
@@ -323,10 +480,14 @@ class FitsTheScreenTest {
         assertThat(ellipsized("synced so far")).isFalse()
     }
 
+    /** The longest reason a save conflict can give. */
+    private val longestConflictReason = SyncDecision.entries.filter { it.outcome == SyncOutcome.CONFLICT }
+        .map { conflictReason(it.name) }.maxBy { it.length }
+
     /** A save conflict's choice at its tallest: a long title, the longest reason, and RomM's side in full. */
     @Test fun theSaveConflictChoiceFits() {
         val title = "Pokémon Omega Ruby (USA) (En,Ja,Fr,De,Es,It,Ko) (Rev 2)"
-        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = conflictReason(SyncDecision.SERVER_WENT_BACK.name),
+        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = longestConflictReason,
             serverDevice = "AYN Odin 2 Portal (Argosy)")
         rule.setContent { LoomTestTheme { QueueContent(QueueScreenTest.sample.copy(conflicts = listOf(conflict)), NoopQueueActions) } }
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
@@ -338,7 +499,7 @@ class FitsTheScreenTest {
     /** The same, for a Switch game whose save folder the user picked: Change save folder fits beside the answers. */
     @Test fun theSaveConflictChoiceWithChangeSaveFolderFits() {
         val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"
-        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = conflictReason(SyncDecision.SERVER_WENT_BACK.name),
+        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = longestConflictReason,
             serverEmulator = "eden", emulator = "eden", serverDevice = "AYN Odin 2 Portal (Argosy)", folderChosen = true)
         rule.setContent { LoomTestTheme { QueueContent(QueueScreenTest.sample.copy(conflicts = listOf(conflict)), NoopQueueActions) } }
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
@@ -347,6 +508,24 @@ class FitsTheScreenTest {
         assertThat(overflow("$title: which save to keep?")).isEqualTo(0f)
         assertThat(cutShort("Change save folder picks again.")).isFalse()
         rule.saveScreenshot("queue-conflict-choice-change-folder")
+    }
+
+    /**
+     * RomM's save Loom can't restore, for a Switch game whose folder the user picked: the longest
+     * reason Loom gives, which names both title IDs, with Change save folder beside the answers.
+     */
+    @Test fun anUnreadableSaveConflictChoiceFits() {
+        val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"
+        val why = "RomM's save is for title 0100A0B00C0D0000 and 0100F2C0115B6000, not 01002B300C1D2000, the save folder this game uses. " +
+            "If that folder is the wrong one, change it in the game's details; nothing was replaced"
+        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = why, serverUnreadable = true,
+            serverEmulator = "eden", emulator = "eden", serverDevice = "AYN Odin 2 Portal (Argosy)", folderChosen = true)
+        rule.setContent { LoomTestTheme { QueueContent(QueueScreenTest.sample.copy(conflicts = listOf(conflict)), NoopQueueActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("conflict-7").performClick()
+        assertThat(overflow("$title: which save to keep?")).isEqualTo(0f)
+        assertThat(cutShort("Change save folder picks again.")).isFalse()
+        rule.saveScreenshot("queue-conflict-choice-unreadable")
     }
 
     /** The editor with arcade's other folders under the field, and what the card holds of each. */

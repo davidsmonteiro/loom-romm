@@ -38,6 +38,7 @@ import ro.davidmontei.loom.storage.saves.SaveRestorer
 import ro.davidmontei.loom.storage.saves.SaveRoot
 import ro.davidmontei.loom.storage.saves.SaveZipper
 import ro.davidmontei.loom.storage.saves.ThreeDsTitleId
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -45,10 +46,13 @@ import java.nio.file.Files
 import java.nio.file.attribute.FileTime
 import java.time.Duration
 import java.time.Instant
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 /**
  * The Thor as save sync sees it: the SD card `6365-3230` with `ROMs/n3ds` holding the games and
- * Azahar's user directory, a paired Loom, and [FakeRomm] behind a MockWebServer.
+ * Azahar's user directory, Eden's and melonDS's save folders and PPSSPP's memory stick in
+ * `ROMs/saves`, a paired Loom, and [FakeRomm] behind a MockWebServer.
  */
 abstract class SaveSyncTestBase {
     @get:Rule val tmp = TemporaryFolder()
@@ -62,6 +66,10 @@ abstract class SaveSyncTestBase {
     protected lateinit var n3ds: File
     /** Eden's save folder, moved to the card: `ROMs/saves/Eden`, with one profile. */
     protected lateinit var eden: File
+    /** melonDS's save folder, as the owner sets it in melonDS: `ROMs/saves/melonDS`. */
+    protected lateinit var melonDs: File
+    /** PPSSPP's SAVEDATA on its memory stick, as the owner sets it in PPSSPP: `ROMs/saves/PPSSPP/PSP/SAVEDATA`. */
+    protected lateinit var saveData: File
 
     /** The Thor's clock. Save files are dated [settle] minutes before it. */
     protected var clock: Instant = Instant.parse("2026-10-14T12:00:00Z")
@@ -92,6 +100,9 @@ abstract class SaveSyncTestBase {
         settings.setOnboardingComplete(true)
         credentials = CredentialStore(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "c.preferences_pb") }, cipher, scope)
         pair(deviceId = "dev-thor")
+        // The device Loom's token is bound to. Not under Loom's own identifier: with an unbound
+        // token, Loom finds no device unless a test lists one.
+        romm.devices += romm.device("dev-thor", "loom-thor")
         volume = tmp.newFolder("6365-3230")
         n3ds = File(volume, "ROMs/n3ds")
         listOf("config", "log", "nand", "states", "sysdata").forEach { File(n3ds, it).mkdirs() }
@@ -99,9 +110,17 @@ abstract class SaveSyncTestBase {
         eden = File(volume, "ROMs/saves/Eden")
         File(eden, "user/save/0000000000000000/$PROFILE").mkdirs()
         File(eden, "system/save/8000000000000010").mkdirs()
+        melonDs = File(volume, "ROMs/saves/melonDS").apply { mkdirs() }
+        saveData = File(volume, "ROMs/saves/PPSSPP/PSP/SAVEDATA").apply { mkdirs() }
+        File(volume, "ROMs/saves/PPSSPP/PSP/SYSTEM").mkdirs()
+        File(volume, "ROMs/saves/PPSSPP/PSP/SYSTEM/ppsspp.ini").writeText("[General]\n")
         db.catalogDao().upsertPlatforms(listOf(
             PlatformEntity(1, "3ds", "3ds", "Nintendo 3DS", "Nintendo 3DS", 2, "t"),
             PlatformEntity(2, "switch", "switch", "Nintendo Switch", "Nintendo Switch", 2, "t"),
+            PlatformEntity(3, "nds", "nds", "Nintendo DS", "Nintendo DS", 2, "t"),
+            PlatformEntity(4, "nintendo-dsi", "nintendo-dsi", "Nintendo DSi", "Nintendo DSi", 2, "t"),
+            PlatformEntity(5, "psp", "psp", "PlayStation Portable", "PlayStation Portable", 2, "t"),
+            PlatformEntity(6, "psp-minis", "psp-minis", "PlayStation minis", "PlayStation minis", 2, "t"),
         ))
     }
 
@@ -121,9 +140,18 @@ abstract class SaveSyncTestBase {
 
     protected fun eden() = EdenSaves(settings, db.catalogDao(), db.saveDao(), now = { clock.toEpochMilli() }, maxUnitBytes = edenMaxUnitBytes)
 
+    protected fun melonDsSaves() = MelonDsSaves(settings, db.catalogDao())
+
+    /** The largest PSP save Loom restores (and uploads), smaller in tests that need to go past it. */
+    protected var ppssppMaxUnitBytes = SaveZipper.MAX_UNIT_BYTES
+
+    protected fun ppssppSaves() = PpssppSaves(settings, db.catalogDao(), db.saveDao(), now = { clock.toEpochMilli() }, maxUnitBytes = ppssppMaxUnitBytes)
+
+    protected fun resolver() = SaveUnitResolver(settings, volumes, eden(), melonDsSaves(), ppssppSaves())
+
     protected fun engine(chunkSize: Int = 500, maxDownloadBytes: Long = SaveSyncEngine.MAX_DOWNLOAD_BYTES) = SaveSyncEngine(
         db.catalogDao(), db.saveDao(), ActiveServer(settings, credentials, OkHttpClient(), scope), credentials, settings,
-        SaveUnitResolver(settings, volumes, eden()), volumes, File(tmp.root, "cache"),
+        resolver(), volumes, File(tmp.root, "cache"),
         now = { clock }, pause = { onPause() }, restorer = SaveRestorer(mover = mover), chunkSize = chunkSize,
         maxDownloadBytes = maxDownloadBytes, lock = lock,
     )
@@ -261,7 +289,118 @@ abstract class SaveSyncTestBase {
         return Files.readAllBytes(zip)
     }
 
+    // --- DS games in melonDS ---
+
+    protected class DsGame(val romId: Int, val title: String)
+
+    protected val marioDs = DsGame(40, "New Super Mario Bros")
+    protected val zeldaDs = DsGame(41, "The Legend of Zelda Phantom Hourglass")
+
+    /**
+     * Installs [game] as [file] in the folder of [platform] (`nds`, or `nintendo-dsi` in `ndsi`):
+     * a ROM whose header has a cartridge's game code, or DSiWare's game code and category.
+     */
+    protected suspend fun installDs(game: DsGame, file: String = "${game.title}.nds", platform: String = "nds", dsiWare: Boolean = false) {
+        val folder = if (platform == "nds") "nds" else "ndsi"
+        val rom = File(volume, "ROMs/$folder/$file")
+        rom.parentFile!!.mkdirs()
+        val header = ByteBuffer.allocate(0x1000).order(ByteOrder.LITTLE_ENDIAN)
+        header.position(0x0C); header.put((if (dsiWare) "KQ9E" else "A2DE").toByteArray())
+        if (dsiWare) header.putInt(0x234, 0x0003_0004)
+        rom.writeBytes(header.array())
+        val platformId = if (platform == "nds") 3 else 4
+        val dao = db.catalogDao()
+        dao.upsertRoms(listOf(RomEntity(
+            id = game.romId, platformId = platformId, platformSlug = platform, platformFsSlug = platform, title = game.title,
+            searchKey = game.title.lowercase(), sortKey = game.title.lowercase(), fsName = file, fsNameNoExt = file.substringBeforeLast('.'),
+            fsExtension = file.substringAfterLast('.'), sizeBytes = rom.length(), hasSimpleSingleFile = true, hasNestedSingleFile = false,
+            hasMultipleFiles = false, coverSmall = null, coverLarge = null, regions = "", updatedAt = "t", missingFromFs = false,
+        )))
+        dao.upsertInstall(InstallEntity(game.romId, "6365-3230", File(volume, "ROMs").path, "$folder/$file", "$folder/${file.lowercase()}",
+            platformId, InstallKind.FILE, rom.length(), VerifiedBy.SIZE, InstallSource.ADOPTED, null, 0))
+    }
+
+    /** melonDS's save of a game installed as [rom]: the ROM's name with its last extension replaced by .sav. */
+    protected fun dsSave(rom: String): File = File(melonDs, rom.replaceAfterLast('.', "sav", "$rom.sav"))
+
+    protected fun dsSave(game: DsGame): File = dsSave("${game.title}.nds")
+
+    /** melonDS's save of [game] as it writes it, last touched [minutesAgo] before [clock]. */
+    protected fun writeDsSave(game: DsGame, data: ByteArray, minutesAgo: Long = 10): File = dsSave(game).apply {
+        writeBytes(data)
+        Files.setLastModifiedTime(toPath(), FileTime.from(clock.minus(Duration.ofMinutes(minutesAgo))))
+    }
+
+    // --- PSP games in PPSSPP ---
+
+    protected class PspGame(val romId: Int, val title: String)
+
+    protected val lumines = PspGame(50, "Lumines")
+    protected val patapon = PspGame(51, "Patapon")
+
+    /** core-storage's synthetic PSP images (game.iso is ULUS10064 in UMD_DATA.BIN and PARAM.SFO): no game's data. */
+    protected fun pspFixture(name: String): File =
+        listOf(File("../core-storage/src/test/resources/psp/$name"), File("core-storage/src/test/resources/psp/$name")).first { it.isFile }
+
+    /**
+     * Installs [game] as [file] in the folder of [platform] (`psp`, or `psp-minis` in `pspminis`),
+     * a copy of the [fixture] image or these [bytes]; with RomM's [rommTitleId], and its
+     * [rommSaveTarget] in [rommLayout].
+     */
+    protected suspend fun installPsp(
+        game: PspGame, fixture: String = "game.iso", file: String = "${game.title}.${fixture.substringAfterLast('.')}",
+        bytes: ByteArray? = null, platform: String = "psp",
+        rommTitleId: String? = null, rommSaveTarget: String? = null, rommLayout: String? = rommSaveTarget?.let { "folder-prefix" },
+    ) {
+        val folder = if (platform == "psp") "psp" else "pspminis"
+        val rom = File(volume, "ROMs/$folder/$file")
+        rom.parentFile!!.mkdirs()
+        if (bytes != null) rom.writeBytes(bytes) else pspFixture(fixture).copyTo(rom, overwrite = true)
+        val platformId = if (platform == "psp") 5 else 6
+        val dao = db.catalogDao()
+        dao.upsertRoms(listOf(RomEntity(
+            id = game.romId, platformId = platformId, platformSlug = platform, platformFsSlug = platform, title = game.title,
+            searchKey = game.title.lowercase(), sortKey = game.title.lowercase(), fsName = file, fsNameNoExt = file.substringBeforeLast('.'),
+            fsExtension = file.substringAfterLast('.'), sizeBytes = rom.length(), hasSimpleSingleFile = true, hasNestedSingleFile = false,
+            hasMultipleFiles = false, coverSmall = null, coverLarge = null, regions = "", updatedAt = "t", missingFromFs = false,
+            titleId = rommTitleId, saveTarget = rommSaveTarget, saveTargetLayout = rommLayout,
+        )))
+        dao.upsertInstall(InstallEntity(game.romId, "6365-3230", File(volume, "ROMs").path, "$folder/$file", "$folder/${file.lowercase()}",
+            platformId, InstallKind.FILE, rom.length(), VerifiedBy.SIZE, InstallSource.ADOPTED, null, 0))
+    }
+
+    /** One of PPSSPP's save folders in SAVEDATA, as it writes it, last touched [minutesAgo] before [clock]. */
+    protected fun writePspSave(folder: String, vararg files: Pair<String, ByteArray>, minutesAgo: Long = 10): File =
+        File(saveData, folder).apply {
+            mkdirs()
+            for ((name, data) in files) File(this, name).writeBytes(data)
+            walkTopDown().filter { it.isFile }.forEach { Files.setLastModifiedTime(it.toPath(), FileTime.from(clock.minus(Duration.ofMinutes(minutesAgo)))) }
+        }
+
+    /** A save archive as Argosy uploads PPSSPP's saves: each folder's directory entry, then its files. */
+    protected fun pspArchiveOf(vararg entries: Pair<String, ByteArray?>): ByteArray {
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zip ->
+            for ((name, data) in entries) {
+                zip.putNextEntry(ZipEntry(name))
+                if (data != null) zip.write(data)
+                zip.closeEntry()
+            }
+        }
+        return out.toByteArray()
+    }
+
+    /** `bytes((i * step + start) % 256 for i in range(size))`, as Python writes the hashed save files. */
+    protected fun pattern(size: Int, step: Int, start: Int) = ByteArray(size) { (it * step + start).toByte() }
+
     companion object {
+        /**
+         * A stand-in PARAM.SFO for a save PPSSPP wrote: Argosy and Loom tell a save from installed
+         * data by these two keys alone. [INSTALL_SFO] has neither, as an install's doesn't.
+         */
+        val SAVE_SFO = "\u0000PSF SAVEDATA_FILE_LIST SAVEDATA_PARAMS".toByteArray()
+        val INSTALL_SFO = "\u0000PSF TITLE SAVEDATA_TITLE".toByteArray()
+
         const val ZEROS = "00000000000000000000000000000000"
 
         /** The Eden profile on the Thor. */

@@ -164,6 +164,14 @@ interface CatalogDao {
 
     @Query("SELECT * FROM installs") suspend fun installs(): List<InstallEntity>
 
+    /** The installed games of the platforms with RomM's [slugs]: games one emulator keeps saves of side by side. */
+    @Query("SELECT i.* FROM installs i JOIN roms r ON r.id = i.rom_id WHERE r.platform_slug IN (:slugs)")
+    suspend fun installsOf(slugs: Collection<String>): List<InstallEntity>
+
+    /** The ROMs of [installsOf], by title. */
+    @Query("SELECT r.* FROM roms r JOIN installs i ON i.rom_id = r.id WHERE r.platform_slug IN (:slugs) ORDER BY r.sort_key")
+    suspend fun installedRomsOf(slugs: Collection<String>): List<RomEntity>
+
     @Query("SELECT * FROM installs WHERE volume_uuid = :volumeUuid AND path_key = :pathKey")
     suspend fun installAtPath(volumeUuid: String, pathKey: String): InstallEntity?
 }

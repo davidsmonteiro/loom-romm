@@ -204,9 +204,10 @@ class LibraryViewModel @Inject constructor(
         _messages.send(saves.restore(game.id, game.title))
     }
 
-    /** "Choose save folder" in a Switch game's details: the Eden save folders it can be. */
+    /** "Choose save folder" in a Switch or PSP game's details: the Eden save folders, or PPSSPP's disc IDs, it can be. */
     fun askSaveFolder(game: GameItem) = viewModelScope.launch {
-        _saveFolderQuestion.value = saves.saveFolderChoice(game.id).toQuestion(game.id, game.title, game.save?.emulator)
+        val emulator = game.save?.emulator
+        _saveFolderQuestion.value = saves.saveFolderChoice(game.id, emulator).toQuestion(game.id, game.title, emulator)
     }
 
     /** "Choose save folder" for a Switch game whose save Eden keeps in two folders: which one Loom syncs. */

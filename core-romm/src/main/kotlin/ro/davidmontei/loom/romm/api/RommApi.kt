@@ -29,6 +29,7 @@ import ro.davidmontei.loom.romm.dto.PlatformDto
 import ro.davidmontei.loom.romm.dto.RomDto
 import ro.davidmontei.loom.romm.dto.RomPageDto
 import ro.davidmontei.loom.romm.dto.SaveDeviceRequest
+import ro.davidmontei.loom.romm.dto.SaveDownloadedRequest
 import ro.davidmontei.loom.romm.dto.SaveDto
 import ro.davidmontei.loom.romm.dto.SyncCompleteRequest
 import ro.davidmontei.loom.romm.dto.SyncCompleteResponseDto
@@ -91,13 +92,18 @@ interface RommApi {
     // --- Save sync. RomM pairs saves on (rom_id, slot); see SaveSyncDtos. ---
 
     /**
-     * Plans a sync. It also cancels this device's other open sessions, so sync runs must never
-     * overlap.
+     * Plans a sync, opening a session. RomM before 5.4.0 also cancels this device's other open
+     * sessions; 5.4.0 leaves them to its hourly cleanup, which fails those over a day old. Answers
+     * 404 for a device deleted on RomM, and 400 while sync is switched off for it there (or for a
+     * request it refuses).
      */
     @POST("api/sync/negotiate")
     suspend fun negotiateSync(@Body body: SyncNegotiateRequest): SyncNegotiateResponseDto
 
-    /** Closes a session; 400 once a later negotiate has cancelled it. */
+    /**
+     * Closes a session. RomM before 5.4.0 answers 400 once a later negotiate has cancelled it;
+     * 5.4.0 only for a session cancelled or failed on purpose, and still closes a stale one.
+     */
     @POST("api/sync/sessions/{session_id}/complete")
     suspend fun completeSyncSession(
         @Path("session_id") sessionId: Int,
@@ -108,8 +114,9 @@ interface RommApi {
      * Adds a version to a slot. With [deviceId] and `overwrite=false`, RomM answers 409
      * ([ro.davidmontei.loom.romm.RommException.Conflict]) when the slot has a version this
      * device never synced. If any version in the slot already has the same bytes, RomM returns
-     * that row instead of a new one. [contentHash] is read by RomM 5.4.0 as this device's
-     * baseline; 5.3.1 ignores it. [saveFile] comes from [saveFilePart].
+     * that row instead of a new one; RomM 5.4.0 also makes it the slot's newest, unless it already
+     * is. [contentHash] is read by RomM 5.4.0 as this device's baseline; 5.3.1 ignores it.
+     * [saveFile] comes from [saveFilePart].
      *
      * A null [slot] adds an archival version outside every slot: negotiate never pairs it, and
      * RomM keeps its file name as sent, overwriting a save of the same name, so make it unique.
@@ -151,9 +158,12 @@ interface RommApi {
         @Query("session_id") sessionId: Int?,
     ): ResponseBody
 
-    /** Records that this device now holds [saveId]: its sync row, which uploads are checked against. */
+    /**
+     * Records that this device now holds [saveId]: its sync row, which uploads are checked against.
+     * With RomM's hash of the save in [body], RomM 5.4.0 also keeps it as the row's baseline.
+     */
     @POST("api/saves/{id}/downloaded")
-    suspend fun confirmSaveDownloaded(@Path("id") saveId: Int, @Body body: SaveDeviceRequest): SaveDto
+    suspend fun confirmSaveDownloaded(@Path("id") saveId: Int, @Body body: SaveDownloadedRequest): SaveDto
 
     /**
      * Marks this one save version untracked on the device: negotiate answers `no_op` for it, with

@@ -2,6 +2,7 @@ package ro.davidmontei.loom.data.db
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
@@ -51,6 +52,16 @@ data class SaveConflictEntity(
     @ColumnInfo(name = "detected_at") val detectedAtMs: Long,
     /** The user chose Skip: it stays listed, but isn't raised again until either side changes. */
     val skipped: Boolean = false,
+    /**
+     * What the reason alone doesn't say, in words for the UI: for SERVER_UNREADABLE, why RomM's
+     * save can't go in place of the Thor's. Null otherwise.
+     */
+    val detail: String? = null,
+    /**
+     * The save unit's folder when Loom found it. RomM's save that can't go in place of one unit
+     * (a Switch save for another title) may for another, once the owner picks the right folder.
+     */
+    @ColumnInfo(name = "unit_path") val unitPath: String? = null,
 )
 
 /**
@@ -120,18 +131,27 @@ enum class SaveSyncState {
 }
 
 /**
- * A Switch game's title ID, which names its save folder in Eden: read from the game's image with
- * the owner's header key, or the folder the owner chose when Loom couldn't read it. Never the key.
+ * What names a game's save in its emulator's save folder, for an emulator that keeps every game's
+ * save there by an ID Loom has to learn: a Switch game's title ID in Eden (its folder's name), a PSP
+ * game's disc ID in PPSSPP (the start of its folders' names). Learned from the game's image or from
+ * RomM, or the folder the owner chose when Loom couldn't tell. Never a key.
  */
-@Entity(tableName = "switch_titles")
-data class SwitchTitleEntity(
-    @PrimaryKey @ColumnInfo(name = "rom_id") val romId: Int,
-    /** 16 uppercase hex digits, e.g. 010015100B514000. */
-    @ColumnInfo(name = "title_id") val titleId: String,
-    val source: SwitchTitleSource,
+@Entity(
+    tableName = "save_keys",
+    primaryKeys = ["emulator", "rom_id"],
+    indices = [Index(value = ["emulator", "save_key"])],
+)
+data class SaveKeyEntity(
+    /** The emulator id Loom gives RomM, e.g. "eden". */
+    val emulator: String,
+    @ColumnInfo(name = "rom_id") val romId: Int,
+    /** For Eden 16 uppercase hex digits, e.g. 010015100B514000. */
+    @ColumnInfo(name = "save_key") val saveKey: String,
+    val source: SaveKeySource,
     /**
-     * For [SwitchTitleSource.IMAGE], the image files' paths, sizes and times when they were read:
-     * while they match, a scan doesn't read the images again. Null for the owner's choice.
+     * For [SaveKeySource.IMAGE], the image files' paths, sizes and times when they were read: while
+     * they match, a scan doesn't read the images again. For the owner's choice, what was last
+     * checked against it; null until then.
      */
     @ColumnInfo(name = "image_fingerprint") val imageFingerprint: String?,
     @ColumnInfo(name = "recorded_at") val recordedAtMs: Long,
@@ -150,9 +170,13 @@ data class SyncedFolderEntity(
     @ColumnInfo(name = "chosen_at") val chosenAtMs: Long,
 )
 
-enum class SwitchTitleSource {
-    /** Read from the game's XCI or NSP. */
+/** Where Loom learned a game's [SaveKeyEntity]. */
+enum class SaveKeySource {
+    /** Read from the game's image (an XCI or NSP, an ISO). */
     IMAGE,
+
+    /** RomM's own reading of the game, which Loom checks against the image when it can. */
+    ROMM,
 
     /** The save folder the owner chose for the game. It stands until they choose another. */
     OWNER,

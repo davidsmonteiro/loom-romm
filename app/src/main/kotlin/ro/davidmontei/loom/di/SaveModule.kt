@@ -14,6 +14,8 @@ import ro.davidmontei.loom.data.db.LoomDatabase
 import ro.davidmontei.loom.data.db.SaveDao
 import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.saves.EdenSaves
+import ro.davidmontei.loom.data.saves.MelonDsSaves
+import ro.davidmontei.loom.data.saves.PpssppSaves
 import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.SaveSyncEngine
 import ro.davidmontei.loom.data.saves.SaveSyncNotifications
@@ -34,7 +36,14 @@ object SaveModule {
     fun edenSaves(settings: SettingsStore, catalog: CatalogDao, saves: SaveDao) = EdenSaves(settings, catalog, saves)
 
     @Provides @Singleton
-    fun saveUnitResolver(settings: SettingsStore, volumes: StorageVolumes, eden: EdenSaves) = SaveUnitResolver(settings, volumes, eden)
+    fun melonDsSaves(settings: SettingsStore, catalog: CatalogDao) = MelonDsSaves(settings, catalog)
+
+    @Provides @Singleton
+    fun ppssppSaves(settings: SettingsStore, catalog: CatalogDao, saves: SaveDao) = PpssppSaves(settings, catalog, saves)
+
+    @Provides @Singleton
+    fun saveUnitResolver(settings: SettingsStore, volumes: StorageVolumes, eden: EdenSaves, melonDs: MelonDsSaves, ppsspp: PpssppSaves) =
+        SaveUnitResolver(settings, volumes, eden, melonDs, ppsspp)
 
     @Provides @Singleton
     fun saveSyncEngine(
@@ -49,8 +58,8 @@ object SaveModule {
     ) = SaveSyncEngine(catalog, saves, server, credentials, settings, units, volumes, File(context.cacheDir, "save-sync"))
 
     @Provides @Singleton
-    fun saveRepository(engine: SaveSyncEngine, saves: SaveDao, eden: EdenSaves, @AppScope scope: CoroutineScope) =
-        SaveRepository(engine, saves, eden, scope)
+    fun saveRepository(engine: SaveSyncEngine, saves: SaveDao, eden: EdenSaves, ppsspp: PpssppSaves, @AppScope scope: CoroutineScope) =
+        SaveRepository(engine, saves, eden, ppsspp, scope)
 
     @Provides @Singleton fun saveSyncScheduler(workManager: WorkManager) = SaveSyncScheduler(workManager)
 

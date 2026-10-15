@@ -129,6 +129,62 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(saves.baseline(7, "autosave")!!.serverSaveId).isEqualTo(head.id)
     }
 
+    /**
+     * RomM answering an upload with its head itself: the head holds those bytes, and RomM has no
+     * record that the Thor has it. Loom tells it so, with the Thor's hash, and sends nothing more.
+     * RomM can't answer so today (it matches bytes by the hash it stored, and a head with the
+     * Thor's hash is adopted, not uploaded over), so it is made to here: a head it couldn't hash.
+     */
+    @Test fun anUploadAnsweredWithTheHeadItselfIsConfirmedNotSentAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        val head = romm.addSave(7, archiveOf(bytes(2)), hash = null)
+        assertThat(engine().sync(SaveSyncRequest.PULL).downloaded).containsExactly(7)
+        val changed = writeSave(pokemonX, bytes(3), minutesAgo = 5)
+        romm.uploadAnswer = {
+            mockwebserver3.MockResponse.Builder().code(200).setHeader("Content-Type", "application/json")
+                .body(romm.json(head).toString()).build()
+        }
+
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(7)
+
+        assertThat(romm.uploads().map { it.url.queryParameter("overwrite") }).containsExactly("false")
+        val confirmed = romm.requests.last { it.url.encodedPath == "/api/saves/${head.id}/downloaded" }
+        assertThat(RommJson.parseToJsonElement(confirmed.body!!.utf8()).jsonObject["content_hash"]!!.jsonPrimitive.content).isEqualTo(changed)
+        val baseline = saves.baseline(7, "autosave")!!
+        assertThat(baseline.localHash).isEqualTo(changed)
+        assertThat(baseline.serverSaveId).isEqualTo(head.id)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
+    /** RomM 5.4.0 makes the older version holding those bytes the newest itself: one upload, and that version is the head. */
+    @Test fun bytesRomm54HasInAnOlderVersionArePromotedNotSentAgain() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        val first = writeSave(pokemonX, bytes(1), minutesAgo = 30)
+        engine().sync(SaveSyncRequest.PUSH)
+        val older = romm.head(7)!!
+        writeSave(pokemonX, bytes(2), minutesAgo = 20)
+        engine().sync(SaveSyncRequest.PUSH)
+        writeSave(pokemonX, bytes(1), minutesAgo = 10)
+
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(7)
+
+        val uploads = romm.uploads()
+        assertThat(uploads).hasSize(3)
+        assertThat(uploads[2].url.queryParameter("overwrite")).isEqualTo("false")
+        val head = romm.head(7)!!
+        assertThat(head.id).isEqualTo(older.id)
+        assertThat(head.hash).isEqualTo(first)
+        val baseline = saves.baseline(7, "autosave")!!
+        assertThat(baseline.serverSaveId).isEqualTo(older.id)
+        assertThat(baseline.serverUpdatedAt).isEqualTo(head.updatedAt.toString())
+        assertThat(romm.syncHashes["dev-thor" to older.id]).isEqualTo(first)
+
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).isEmpty()
+        assertThat(romm.uploads()).hasSize(3)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
     @Test fun aSaveWrittenMomentsAgoWaitsForAQuietMinute() = runBlocking<Unit> {
         install(pokemonX)
         writeSave(pokemonX, bytes(1), minutesAgo = 0)
@@ -327,27 +383,136 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(romm.paths()).doesNotContain("POST /api/saves/${newer.id}/downloaded")
     }
 
-    @Test fun aServerSaveThatIsntAnArchiveIsNotRestored() = runBlocking<Unit> {
+    /**
+     * A bare save file on RomM, as another client might upload: no Azahar folder can come from it,
+     * now or ever, so it is one conflict saying why, not a failure every sync. While it is RomM's
+     * save, no sync downloads it again.
+     */
+    @Test fun aServerSaveThatIsntAnArchiveBecomesOneConflict() = runBlocking<Unit> {
         install(pokemonX)
         writeSave(pokemonX, bytes(1))
         engine().sync(SaveSyncRequest.PUSH)
-        romm.addSave(7, bytes(2)) // a bare save file, as another client might upload
+        val bare = romm.addSave(7, bytes(2))
 
         val report = engine().sync(SaveSyncRequest.PULL)
 
-        assertThat(report.failed.getValue(7)).contains("isn't a save archive")
+        assertThat(report.failed).isEmpty()
+        assertThat(report.conflicts).containsExactly(7)
+        val conflict = saves.conflict(7)!!
+        assertThat(conflict.reason).isEqualTo(SyncDecision.SERVER_UNREADABLE.name)
+        assertThat(conflict.serverSaveId).isEqualTo(bare.id)
+        assertThat(conflict.detail).isEqualTo("RomM's save for this game isn't a save archive Loom can restore")
+        assertThat(saves.unit(7)!!.detail).isEqualTo(conflict.detail)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.CONFLICT)
         assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+
+        for (request in listOf(SaveSyncRequest.PULL, SaveSyncRequest.PUSH, SaveSyncRequest.CHECK)) {
+            val again = engine().sync(request)
+            assertThat(again.failed).isEmpty()
+            assertThat(again.conflicts).containsExactly(7)
+        }
+        assertThat(contentRequests()).hasSize(1)
+        assertThat(saves.conflict(7)).isEqualTo(conflict)
+        assertThat(saves.unit(7)!!.detail).isEqualTo(conflict.detail)
     }
 
-    @Test fun aDownloadLargerThanASaveCanBeIsRefused() = runBlocking<Unit> {
+    /** Skipped, it stays quiet while RomM's save is the same; a save Loom can restore replaces it as usual. */
+    @Test fun itStaysAConflictUntilRommsSaveChanges() = runBlocking<Unit> {
         install(pokemonX)
         writeSave(pokemonX, bytes(1))
         engine().sync(SaveSyncRequest.PUSH)
-        romm.addSave(7, archiveOf(bytes(2)))
+        romm.addSave(7, bytes(2))
+        engine().sync(SaveSyncRequest.PULL)
+        assertThat(engine().resolveConflict(7, ConflictChoice.SKIP)).isEqualTo(ResolveResult.Done)
 
-        val report = engine(maxDownloadBytes = 100).sync(SaveSyncRequest.PULL)
+        val skipped = engine().sync(SaveSyncRequest.PULL)
+        assertThat(skipped.conflicts).isEmpty()
+        assertThat(skipped.failed).isEmpty()
+        assertThat(saves.conflict(7)!!.skipped).isTrue()
+        assertThat(contentRequests()).hasSize(1)
 
-        assertThat(report.failed.getValue(7)).contains("larger than a save can be")
+        val good = romm.addSave(7, archiveOf(bytes(3)))
+        val report = engine().sync(SaveSyncRequest.PULL)
+
+        assertThat(report.downloaded).containsExactly(7)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(3))
+        assertThat(saves.conflict(7)).isNull()
+        assertThat(saves.baseline(7, "autosave")!!.serverSaveId).isEqualTo(good.id)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
+    /** Restoring it, when only a look found RomM's save newer, finds the same: the conflict, and a look again from the answer. */
+    @Test fun restoringASaveLoomCantRestoreMakesItTheConflict() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        val bare = romm.addSave(7, bytes(2))
+        assertThat(engine().sync(SaveSyncRequest.CHECK).serverNewer).containsExactly(7)
+
+        val result = engine().restoreFromServer(7)
+
+        assertThat(result).isEqualTo(ResolveResult.Failed("RomM's save for this game isn't a save archive Loom can restore", stale = true))
+        assertThat(saves.conflict(7)!!.reason).isEqualTo(SyncDecision.SERVER_UNREADABLE.name)
+        assertThat(saves.conflict(7)!!.serverSaveId).isEqualTo(bare.id)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.CONFLICT)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(engine().sync(SaveSyncRequest.CHECK).conflicts).containsExactly(7)
+        assertThat(engine().restoreFromServer(7)).isInstanceOf(ResolveResult.Failed::class.java)
+        assertThat(romm.paths()).doesNotContain("POST /api/saves/${bare.id}/downloaded")
+    }
+
+    /**
+     * A RomM save larger than Loom downloads stays so while it is RomM's: one conflict saying so,
+     * not a failure every pull, each downloading it again and backing the Thor's save up again,
+     * pushing out older backups. Nothing that can't go in place is backed up for.
+     */
+    @Test fun aDownloadLargerThanASaveCanBeIsOneConflict() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        val large = romm.addSave(7, archiveOf(bytes(2)))
+
+        repeat(12) {
+            val report = engine(maxDownloadBytes = 100).sync(SaveSyncRequest.PULL)
+            assertThat(report.failed).isEmpty()
+            assertThat(report.conflicts).containsExactly(7)
+        }
+
+        val conflict = saves.conflict(7)!!
+        assertThat(conflict.reason).isEqualTo(SyncDecision.SERVER_UNREADABLE.name)
+        assertThat(conflict.serverSaveId).isEqualTo(large.id)
+        assertThat(conflict.detail).isEqualTo("RomM's save is over 100 B, more than Loom downloads; nothing was replaced")
+        assertThat(contentRequests()).hasSize(1)
+        assertThat(backups(pokemonX)).isEmpty()
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(engine(maxDownloadBytes = 100).resolveConflict(7, ConflictChoice.KEEP_SERVER))
+            .isEqualTo(ResolveResult.Failed(conflict.detail!!, stale = true))
+        assertThat(backups(pokemonX)).isEmpty()
+    }
+
+    /**
+     * A restore that fails the same way at every attempt (here the card refusing the new files)
+     * backs the Thor's save up once, not before each attempt: ten attempts would otherwise push
+     * out every older backup, one of them maybe the only copy of a save.
+     */
+    @Test fun aRestoreFailingEveryTimeKeepsTheOlderBackups() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        val older = File(volume, ".loom/save-backups/7/20261001-000000-000 Pokemon X.zip").apply {
+            parentFile!!.mkdirs(); writeBytes(archiveOf(bytes(9)))
+        }
+        romm.addSave(7, archiveOf(bytes(2)), device = "dev-argosy")
+        mover = SaveRestorer.FileMover { from, to ->
+            if (from.any { it.toString() == "new" }) throw IOException("card removed")
+            SaveRestorer.FileMover.Rename.move(from, to)
+        }
+
+        repeat(12) { assertThat(engine().sync(SaveSyncRequest.PULL).failed).containsKey(7) }
+        repeat(3) { assertThat(engine().restoreFromServer(7)).isInstanceOf(ResolveResult.Failed::class.java) }
+
+        assertThat(older.exists()).isTrue()
+        assertThat(backups(pokemonX)).hasSize(2)
         assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
     }
 
@@ -414,6 +579,106 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(report.conflicts).isEmpty()
         assertThat(state(pokemonX)).isEqualTo(SaveSyncState.LOCAL_MISSING)
         assertThat(romm.paths()).contains("GET /api/saves")
+    }
+
+    // --- RomM 5.4.0's baselines ---
+
+    /** What Loom told RomM when confirming it holds [saveId]. */
+    private fun downloadedBody(saveId: Int) = romm.requests.single { it.url.encodedPath == "/api/saves/$saveId/downloaded" }
+        .let { RommJson.parseToJsonElement(it.body!!.utf8()).jsonObject }
+
+    /** A restore tells RomM the hash its download was checked against, which 5.4.0 keeps as the Thor's baseline. */
+    @Test fun aRestoreTellsRommTheHashItChecked() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        val newer = romm.addSave(7, archiveOf(bytes(2)))
+
+        assertThat(engine().sync(SaveSyncRequest.PULL).downloaded).containsExactly(7)
+
+        val body = downloadedBody(newer.id)
+        assertThat(body["device_id"]!!.jsonPrimitive.content).isEqualTo("dev-thor")
+        assertThat(body["content_hash"]!!.jsonPrimitive.content).isEqualTo(newer.hash)
+        assertThat(romm.syncHashes["dev-thor" to newer.id]).isEqualTo(newer.hash)
+    }
+
+    @Test fun anAdoptedSaveTellsRommTheSharedHash() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        val local = writeSave(pokemonX, bytes(1))
+        val there = romm.addSave(7, archiveOf(bytes(1)))
+
+        assertThat(engine().sync(SaveSyncRequest.PUSH).adopted).containsExactly(7)
+
+        assertThat(downloadedBody(there.id)["content_hash"]!!.jsonPrimitive.content).isEqualTo(local)
+        assertThat(romm.syncHashes["dev-thor" to there.id]).isEqualTo(local)
+    }
+
+    /** RomM 5.3.1 reads only the device from `/downloaded`: Loom sends the hash without asking the version, and syncs the same. */
+    @Test fun romm531IgnoresTheHashItIsSent() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        val newer = romm.addSave(7, archiveOf(bytes(2)))
+
+        assertThat(engine().sync(SaveSyncRequest.PULL).downloaded).containsExactly(7)
+
+        assertThat(downloadedBody(newer.id)["content_hash"]!!.jsonPrimitive.content).isEqualTo(newer.hash)
+        assertThat(romm.syncRows["dev-thor" to newer.id]).isEqualTo(newer.updatedAt)
+        assertThat(romm.syncHashes).isEmpty()
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).isEmpty()
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
+    // --- RomM 5.4.0's deletes ---
+
+    /** The save deleted in RomM's web UI: 5.4.0 says `delete`, and Loom asks, deleting nothing and uploading nothing. */
+    @Test fun aSaveDeletedOnRommAsksToUploadItAgain() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.deleteSave(romm.head(7)!!.id)
+
+        val report = engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(romm.lastAnswer(7)).isEqualTo("delete")
+        assertThat(report.conflicts).containsExactly(7)
+        val conflict = saves.conflict(7)!!
+        assertThat(conflict.reason).isEqualTo(SyncDecision.SERVER_DELETED.name)
+        assertThat(conflict.serverSaveId).isNull()
+        assertThat(saves.unit(7)!!.detail).isEqualTo("This save was deleted on RomM: upload the Thor's again, or leave RomM without it")
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(romm.uploads()).hasSize(1)
+
+        assertThat(engine().resolveConflict(7, ConflictChoice.SKIP)).isEqualTo(ResolveResult.Done)
+        assertThat(engine().sync(SaveSyncRequest.PULL).conflicts).isEmpty() // asked once; skipped stays skipped
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(romm.uploads()).hasSize(1)
+    }
+
+    /** The newest version deleted on RomM, so an older one is its head: 5.4.0 says `download`, and Loom asks in those words. */
+    @Test fun aRolledBackSaveSaysRommWentBack() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1), minutesAgo = 30)
+        engine().sync(SaveSyncRequest.PUSH)
+        val older = romm.head(7)!!
+        writeSave(pokemonX, bytes(2), minutesAgo = 20)
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.deleteSave(romm.head(7)!!.id)
+
+        val report = engine().sync(SaveSyncRequest.PULL)
+
+        assertThat(romm.lastAnswer(7)).isEqualTo("download")
+        assertThat(report.downloaded).isEmpty()
+        assertThat(report.conflicts).containsExactly(7)
+        val conflict = saves.conflict(7)!!
+        assertThat(conflict.reason).isEqualTo(SyncDecision.SERVER_ROLLED_BACK.name)
+        assertThat(conflict.serverSaveId).isEqualTo(older.id)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(2))
+        assertThat(contentRequests()).isEmpty()
     }
 
     // --- without RomM ---
@@ -529,7 +794,7 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
 
     // --- runs ---
 
-    /** Negotiate cancels the device's other sessions: two runs must never be open at once. */
+    /** Two runs could act on one save, and RomM before 5.4.0 cancels the device's other sessions: one run at a time. */
     @Test fun runsNeverOverlap() = runBlocking<Unit> {
         install(pokemonX)
         writeSave(pokemonX, bytes(1))
@@ -702,6 +967,60 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
             assertThat(it.needsPairing).isTrue()
         }
         assertThat(romm.uploads()).isEmpty()
+    }
+
+    /** Sync switched off for the Thor on RomM's Devices page: negotiate answers 400, and the run says what to do instead. */
+    @Test fun withSyncSwitchedOffInRommARunSaysSoWithoutPairAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.switchSync("dev-thor", on = false)
+
+        val report = engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(report.unavailable).isEqualTo(SaveSyncEngine.SYNC_OFF)
+        assertThat(report.needsPairing).isFalse()
+        assertThat(report.summary()).isEqualTo(SaveSyncEngine.SYNC_OFF)
+        assertThat(romm.uploads()).isEmpty()
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.LOCAL_NEWER) // the Thor's side, as found
+
+        romm.switchSync("dev-thor", on = true)
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(7)
+    }
+
+    /** Deleted on RomM's Devices page: a restore says to pair again, as a run does, and touches nothing. */
+    @Test fun aRestoreForADeviceRommDeletedAsksToPairAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        saveFolder(pokemonX).deleteRecursively()
+        romm.deleteDevice("dev-thor")
+
+        assertThat(engine().restoreFromServer(7)).isEqualTo(ResolveResult.Failed(SaveSyncEngine.NO_DEVICE))
+        assertThat(contentRequests()).isEmpty()
+        assertThat(saveFolder(pokemonX).exists()).isFalse()
+        engine().sync(SaveSyncRequest.PUSH).let {
+            assertThat(it.unavailable).isEqualTo(SaveSyncEngine.NO_DEVICE)
+            assertThat(it.needsPairing).isTrue()
+        }
+    }
+
+    /** No answer to a conflict goes through while sync is off for the Thor: neither side changes, and it stays to answer. */
+    @Test fun aConflictAnswerForADeviceWithSyncOffChangesNothing() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.addSave(7, archiveOf(bytes(2)))
+        assertThat(engine().sync(SaveSyncRequest.PUSH).conflicts).containsExactly(7)
+        romm.switchSync("dev-thor", on = false)
+
+        for (choice in listOf(ConflictChoice.KEEP_THOR, ConflictChoice.KEEP_SERVER, ConflictChoice.KEEP_BOTH)) {
+            assertThat(engine().resolveConflict(7, choice)).isEqualTo(ResolveResult.Failed(SaveSyncEngine.SYNC_OFF))
+        }
+        assertThat(engine().restoreFromServer(7)).isEqualTo(ResolveResult.Failed(SaveSyncEngine.SYNC_OFF))
+        assertThat(romm.uploads()).isEmpty()
+        assertThat(contentRequests()).isEmpty()
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(backups(pokemonX)).isEmpty()
+        assertThat(saves.conflict(7)!!.skipped).isFalse()
     }
 
     /** A pasted token isn't bound to a device; the device Loom paired as is found by its identifier. */

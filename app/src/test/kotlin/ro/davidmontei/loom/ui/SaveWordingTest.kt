@@ -36,6 +36,11 @@ class SaveWordingTest {
         assertThat(line(SaveSyncState.SERVER_NEWER)).isEqualTo("Save: newer on RomM")
         assertThat(line(SaveSyncState.LOCAL_MISSING)).isEqualTo("Save: missing on the Thor; RomM has a copy")
         assertThat(line(SaveSyncState.CONFLICT)).isEqualTo("Save: changed on the Thor and on RomM. Choose which to keep.")
+        // A conflict's own reason, as the queue gives it: only some say both sides changed.
+        assertThat(line(SaveSyncState.CONFLICT, conflictReason(SyncDecision.SERVER_DELETED.name)))
+            .isEqualTo("Save: in conflict. This save was deleted on RomM: upload the Thor's again, or leave RomM without it")
+        assertThat(line(SaveSyncState.CONFLICT, "RomM's save holds ULUS10065DATA00, not folders starting with ULUS10064; nothing was replaced"))
+            .isEqualTo("Save: in conflict. RomM's save holds ULUS10065DATA00, not folders starting with ULUS10064; nothing was replaced")
         assertThat(saveLine(GameSave(supported = true, SaveSyncState.MOVED, "Eden now keeps this game's save in its profile folder", "eden")))
             .isEqualTo("Save: in two Eden folders, each holding a different save. Choose which one Loom syncs.")
         assertThat(line(SaveSyncState.UNSUPPORTED, "Loom can't read this game's title ID"))
@@ -69,7 +74,10 @@ class SaveWordingTest {
             SyncDecision.FIRST_SYNC_DIFFERS, "The Thor and RomM each have a different save, and they were never synced",
             SyncDecision.SERVER_WENT_BACK, "RomM's newest save is older than the one last synced: it may have been deleted",
             SyncDecision.SERVER_SLOT_GONE, "RomM no longer has this game's save",
+            SyncDecision.SERVER_DELETED, "This save was deleted on RomM: upload the Thor's again, or leave RomM without it",
+            SyncDecision.SERVER_ROLLED_BACK, "RomM's newest save was deleted, so its save is an older one now",
             SyncDecision.FOREIGN_EMULATOR, "RomM's newer save was made by another emulator",
+            SyncDecision.SERVER_UNREADABLE, "Loom can't put RomM's save in place of the Thor's",
         )
         assertThat(conflictReason("SOMETHING_NEW")).isEqualTo("SOMETHING_NEW") // a reason recorded by a newer Loom
     }
@@ -105,10 +113,20 @@ class SaveWordingTest {
         assertThat(gone.serverHasSave).isFalse()
         assertThat(gone.skipped).isTrue()
         assertThat(gone.busy).isFalse()
+        assertThat(gone.serverUnreadable).isFalse()
+
+        // RomM's save Loom can't restore: why, in the words Loom found it in.
+        val unreadable = TitledConflict(recorded.copy(reason = SyncDecision.SERVER_UNREADABLE.name, detail = "RomM's save holds ULUS10065DATA00"),
+            "Pokemon X", "azahar").toItem(emptyMap(), busy = emptySet())
+        assertThat(unreadable.reason).isEqualTo("RomM's save holds ULUS10065DATA00")
+        assertThat(unreadable.serverUnreadable).isTrue()
     }
 
     @Test fun emulatorsAreNamedAsTheUserKnowsThem() {
         assertThat(emulatorName("azahar")).isEqualTo("Azahar")
+        assertThat(emulatorName("melonds")).isEqualTo("melonDS")
+        assertThat(emulatorName("ppsspp")).isEqualTo("PPSSPP")
+        assertThat(emulatorName("ppsspp_gold")).isEqualTo("PPSSPP Gold")
         assertThat(emulatorName("citra")).isEqualTo("citra")
         assertThat(emulatorName(null)).isEqualTo("the emulator")
     }

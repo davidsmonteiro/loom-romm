@@ -90,6 +90,9 @@ class ScreenshotTest {
         rule.onNodeWithTag("section-SAVES").performClick()
         settle()
         rule.saveScreenshot("settings-saves")
+        rule.onNodeWithTag("azahar-card").performClick()
+        settle()
+        rule.saveScreenshot("settings-saves-azahar")
     }
 
     @Test fun settingsServer() {

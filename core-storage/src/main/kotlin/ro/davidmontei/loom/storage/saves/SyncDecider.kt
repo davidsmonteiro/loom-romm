@@ -8,7 +8,8 @@ const val SAVE_SLOT = "autosave"
 
 /**
  * What Loom recorded the last time a game's slot was in sync on this device: the three-way base
- * RomM 5.3.1 doesn't keep. Written after every upload, download and adopt.
+ * RomM doesn't keep per slot (5.4.0 keeps one per save version, lost once another client uploads
+ * a newer one). Written after every upload, download and adopt.
  */
 data class SaveBaseline(
     /** Loom's hash of the local save unit right after that sync. */
@@ -37,7 +38,10 @@ enum class NegotiatedAction {
     CONFLICT,
     NO_OP,
 
-    /** `delete` (RomM 5.4.0) or anything newer: Loom never acts on it alone. */
+    /** RomM 5.4.0: the slot the device still holds a save of was emptied on the server. Loom never deletes for it. */
+    DELETE,
+
+    /** Anything a newer RomM answers: Loom never acts on it alone. */
     OTHER,
 }
 
@@ -104,16 +108,28 @@ enum class SyncDecision(val outcome: SyncOutcome) {
     /** (e) The slot is empty on the server although it held the baseline's version. */
     SERVER_SLOT_GONE(SyncOutcome.CONFLICT),
 
-    /** (f) The server's newer save was made by another emulator: it is never applied automatically. */
+    /** (e) RomM 5.4.0 says the save the device holds was deleted there, and the slot is empty. */
+    SERVER_DELETED(SyncOutcome.CONFLICT),
+
+    /** (e) RomM 5.4.0 confirms [SERVER_WENT_BACK]: the device holds a version it deleted, so its head is an older one. */
+    SERVER_ROLLED_BACK(SyncOutcome.CONFLICT),
+
+    /** (f) The server's newer save was made by another emulator ([EmulatorIds]): it is never applied automatically. */
     FOREIGN_EMULATOR(SyncOutcome.CONFLICT),
+
+    /**
+     * (g) The server's save can't go in place of the device's: it isn't laid out as the emulator
+     * keeps its saves. Never returned by [SyncDecider.decide]; a download that finds it records it.
+     */
+    SERVER_UNREADABLE(SyncOutcome.CONFLICT),
 }
 
 /**
- * Loom's own sync rule for one game's slot (design §3). RomM 5.3.1's negotiate pairs on timestamps
- * when the device has no sync row for the slot head, which happens whenever another device or the
- * web player uploaded last; it can then answer `download` over unsynced local progress. So Loom
- * decides from its baseline and content hashes, and when negotiate asks for anything else, the
- * game becomes a conflict for the user to settle.
+ * Loom's own sync rule for one game's slot (design §3). RomM's negotiate (5.4.0's too) pairs on
+ * timestamps when the device has no sync row for the slot head, which happens whenever another
+ * device or the web player uploaded last; it can then answer `download` over unsynced local
+ * progress. So Loom decides from its baseline and content hashes, and when negotiate asks for
+ * anything else, the game becomes a conflict for the user to settle.
  */
 object SyncDecider {
     /**
@@ -134,6 +150,10 @@ object SyncDecider {
         val own = ownRule(localHash, localEmulator, baseline, server)
         return when {
             negotiated == null -> own
+            // RomM 5.4.0 knows what was deleted there, which Loom's own rule can't tell: it asks in those words.
+            // Even a save Loom would upload as new on the device: it was on RomM once.
+            negotiated == NegotiatedAction.DELETE && server == null && localHash != null -> SyncDecision.SERVER_DELETED
+            negotiated == NegotiatedAction.DOWNLOAD && own == SyncDecision.SERVER_WENT_BACK -> SyncDecision.SERVER_ROLLED_BACK
             // Loom's conflicts stand, and identical bytes can't be in conflict.
             own.outcome == SyncOutcome.CONFLICT || own.outcome == SyncOutcome.ADOPT -> own
             negotiated == NegotiatedAction.CONFLICT -> SyncDecision.SERVER_SAYS_CONFLICT
@@ -160,11 +180,11 @@ object SyncDecider {
             return when {
                 server == null -> SyncDecision.NEW_ON_DEVICE
                 local != null -> SyncDecision.FIRST_SYNC_DIFFERS
-                server.emulator != emulator -> SyncDecision.FOREIGN_EMULATOR
+                !EmulatorIds.same(server.emulator, emulator) -> SyncDecision.FOREIGN_EMULATOR
                 else -> SyncDecision.NEW_ON_SERVER
             }
         }
-        // 5.3.1 has no tombstones: uploading would quietly re-create what someone deleted.
+        // Someone emptied the slot on RomM: uploading would quietly re-create what they deleted.
         if (server == null) return SyncDecision.SERVER_SLOT_GONE
         val localChanged = local != base.localHash
         // The web player rewrites its row in place, so the hash counts as much as the id.
@@ -174,7 +194,7 @@ object SyncDecider {
             !serverChanged -> if (local == null) SyncDecision.LOCAL_MISSING else SyncDecision.LOCAL_CHANGED
             !server.updatedAt.isAfter(base.serverUpdatedAt) -> SyncDecision.SERVER_WENT_BACK
             localChanged && local != null -> SyncDecision.BOTH_CHANGED
-            server.emulator != emulator -> SyncDecision.FOREIGN_EMULATOR
+            !EmulatorIds.same(server.emulator, emulator) -> SyncDecision.FOREIGN_EMULATOR
             else -> SyncDecision.SERVER_CHANGED
         }
     }

@@ -45,8 +45,8 @@ import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.RomEntity
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.db.SaveUnitEntity
-import ro.davidmontei.loom.data.db.SwitchTitleEntity
-import ro.davidmontei.loom.data.db.SwitchTitleSource
+import ro.davidmontei.loom.data.db.SaveKeyEntity
+import ro.davidmontei.loom.data.db.SaveKeySource
 import ro.davidmontei.loom.data.db.VerifiedBy
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.download.QueueGame
@@ -56,6 +56,8 @@ import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.saves.EdenSaves
+import ro.davidmontei.loom.data.saves.MelonDsSaves
+import ro.davidmontei.loom.data.saves.PpssppSaves
 import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.SaveSyncEngine
@@ -113,8 +115,9 @@ class LibraryViewModelTest {
             rom(20, 2, "genesis", "Sonic the Hedgehog", "Sonic the Hedgehog (USA, Europe).zip"),
         ))
         val eden = EdenSaves(settings, db.catalogDao(), db.saveDao())
-        val engine = SaveSyncEngine(db.catalogDao(), db.saveDao(), server, credentials, settings, SaveUnitResolver(settings, volumes, eden), volumes,
-            File(tmp.root, "cache"))
+        val ppsspp = PpssppSaves(settings, db.catalogDao(), db.saveDao())
+        val units = SaveUnitResolver(settings, volumes, eden, MelonDsSaves(settings, db.catalogDao()), ppsspp)
+        val engine = SaveSyncEngine(db.catalogDao(), db.saveDao(), server, credentials, settings, units, volumes, File(tmp.root, "cache"))
         val downloads = DownloadRepository(db.downloadDao(), db.catalogDao(), server, mapping, settings, volumes, QueueKicker(workManager))
         val folders = FolderChooser(settings, mapping)
         val syncScheduler = CatalogSyncScheduler(workManager)
@@ -123,7 +126,7 @@ class LibraryViewModelTest {
             downloads,
             InstallManager(db.catalogDao(), settings, mapping, volumes),
             syncScheduler, server, settings, folders, QueueGame(db.catalogDao(), downloads, folders, syncScheduler),
-            SaveRepository(engine, db.saveDao(), eden, scope),
+            SaveRepository(engine, db.saveDao(), eden, ppsspp, scope),
             reachability,
         )
     }
@@ -227,7 +230,7 @@ class LibraryViewModelTest {
         vm.selectPlatform(2)
         val genesis = gamesOnScreen { games -> games.any { it.id == 20 && it.save != null } }
         assertThat(genesis.single().save)
-            .isEqualTo(GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Loom syncs 3DS (Azahar) and Switch (Eden) saves only, for now", null))
+            .isEqualTo(GameSave(supported = false, SaveSyncState.UNSUPPORTED, "Loom syncs 3DS, Switch, DS and PSP saves only, for now", null))
     }
 
     /**
@@ -256,7 +259,7 @@ class LibraryViewModelTest {
         val message = async { vm.messages.first() }
         vm.chooseSaveFolder("0100AAAA00000000").join()
         assertThat(vm.saveFolderQuestion.value).isNull()
-        assertThat(db.saveDao().switchTitle(40)!!.titleId).isEqualTo("0100AAAA00000000")
+        assertThat(db.saveDao().saveKey("eden", 40)!!.saveKey).isEqualTo("0100AAAA00000000")
         assertThat(withTimeout(5_000) { message.await() }).startsWith("Wonder's save is Eden's 0100AAAA00000000 folder")
         assertThat(gamesOnScreen { games -> games.single().save?.folderChosen == true }.single().save!!.folderChosen).isTrue()
     }
@@ -269,7 +272,7 @@ class LibraryViewModelTest {
         db.catalogDao().upsertPlatforms(listOf(PlatformEntity(4, "switch", "switch", "Nintendo Switch", "Nintendo Switch", 1, "t")))
         db.catalogDao().upsertRoms(listOf(rom(40, 4, "switch", "Wonder", "Wonder.xci")))
         installed(40, 4, "switch/Wonder.xci")
-        db.saveDao().upsertSwitchTitle(SwitchTitleEntity(40, "0100AAAA00000000", SwitchTitleSource.OWNER, null, 0))
+        db.saveDao().upsertSaveKey(SaveKeyEntity("eden", 40, "0100AAAA00000000", SaveKeySource.OWNER, null, 0))
         val users = File(roms, "saves/Eden/user/save/0000000000000000")
         val profile = File(users, "4E431822D6DEFD527268BA35B5C09533/0100AAAA00000000").apply { mkdirs() }
         File(profile, "game_data.sav").writeBytes(ByteArray(64))

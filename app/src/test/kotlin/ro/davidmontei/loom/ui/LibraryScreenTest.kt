@@ -37,6 +37,7 @@ import org.robolectric.annotation.Config
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.PlatformSummary
+import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.saves.EdenSaves
@@ -984,6 +985,31 @@ class LibraryScreenTest {
         state = state.copy(saveFolderQuestion = wonderQuestion.copy(current = "01001F5010DFA000"))
         show()
         rule.onNodeWithText("2 files · 293 KB · chosen now", substring = true, useUnmergedTree = true).assertExists()
+    }
+
+    private val luminesQuestion get() = SaveFolderQuestion(
+        romId = 1, title = "Lumines", emulator = "ppsspp",
+        options = listOf(
+            SaveFolderOption("ULUS10064", 4, 9_000, now - 60_000, folderCount = 2),
+            SaveFolderOption("NPUZ00001", 2, 3_000, now - 86_400_000, folderCount = 1),
+        ),
+        current = null, kind = SaveFolderQuestion.Kind.PREFIX,
+    )
+
+    /** A PSP game's question lists the disc IDs its save folders can start with, each with its folders' count. */
+    @Test fun aPspGamesQuestionListsDiscIdsAndTheirFolders() {
+        state = state.copy(saveFolderQuestion = luminesQuestion)
+        show()
+        rule.onNodeWithText("Which PPSSPP save folders are Lumines's?").assertExists()
+        rule.onNodeWithText("Loom can't tell the disc ID that starts this game's save folders' names.", substring = true).assertExists()
+        rule.onNodeWithText("2 folders · ${formatBytes(9_000)}", substring = true, useUnmergedTree = true).assertExists()
+        rule.onNodeWithText("1 folder · ${formatBytes(3_000)}", substring = true, useUnmergedTree = true).assertExists()
+        rule.onNodeWithTag("save-folder-ULUS10064", useUnmergedTree = true).assertIsFocused()
+        press(Key.DirectionRight)
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("saveFolder:NPUZ00001")
+        update { it.copy(saveFolderQuestion = luminesQuestion.copy(options = emptyList())) }
+        rule.onNodeWithText("PPSSPP has no save folders that aren't another game's. Play the game until it saves, then choose.").assertExists()
     }
 
     @Test fun withNoFolderToChooseTheQuestionSaysWhy() {

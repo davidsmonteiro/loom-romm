@@ -29,9 +29,11 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import ro.davidmontei.loom.data.db.RecentInstall
 import ro.davidmontei.loom.data.saves.ConflictChoice
+import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.mapping.SystemFolder
+import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.ui.components.dateTime
 import ro.davidmontei.loom.ui.folders.FolderQuestion
 import ro.davidmontei.loom.ui.queue.ConflictItem
@@ -392,14 +394,56 @@ class QueueScreenTest {
         rule.onNodeWithText("Keep server").assertIsFocused()
     }
 
-    /** RomM's save gone from the slot: there is nothing on RomM to keep, alone or beside the Thor's. */
-    @Test fun aServerSideWithoutASaveCantBeKept() {
-        show(sample.copy(conflicts = listOf(pokemonX.copy(serverUpdatedMs = null, serverEmulator = null, serverBytes = null, serverDevice = null))))
+    /**
+     * RomM's save deleted there: nothing on RomM to keep, alone or beside the Thor's. The Thor's can go
+     * up again, or Skip leaves RomM without it; nothing offers to delete the Thor's.
+     */
+    @Test fun aDeletedSavesChoiceOffersUploadAgainAndSkip() {
+        val deleted = pokemonX.copy(reason = conflictReason(SyncDecision.SERVER_DELETED.name),
+            serverUpdatedMs = null, serverEmulator = null, serverBytes = null, serverDevice = null)
+        show(sample.copy(conflicts = listOf(deleted)))
         press(Key.DirectionCenter)
+        rule.onNodeWithText("Upload again puts the Thor's save back on RomM. Skip leaves RomM without it, and the Thor's save as it is.")
+            .assertExists()
+        rule.onNodeWithText("Skip").assertIsFocused()
+        rule.onNodeWithText("Keep Thor").assertDoesNotExist()
+        rule.onNodeWithText("Keep server").assertIsNotEnabled()
+        rule.onNodeWithText("Keep both").assertIsNotEnabled()
+        press(Key.DirectionRight)
+        rule.onNodeWithText("Upload again").assertIsFocused()
+        press(Key.DirectionRight) // nothing to its right can be pressed
+        rule.onNodeWithText("Upload again").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("resolve:7:KEEP_THOR")
+        rule.onNodeWithTag("conflict-7").assertIsFocused()
+    }
+
+    /**
+     * RomM's save Loom can't restore (here a bare file for Azahar): the choice says why, and only the
+     * Thor's side can be kept. B skips as ever.
+     */
+    @Test fun keepServerIsntOfferedForASaveLoomCantRestore() {
+        val unreadable = pokemonX.copy(reason = "RomM's save for this game isn't a save archive Loom can restore", serverUnreadable = true)
+        show(sample.copy(conflicts = listOf(unreadable)))
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Pokemon X: which save to keep?").assertExists()
+        rule.onNodeWithText("Keep Thor makes the Thor's save RomM's newest. Skip leaves both as they are; Loom asks again if either one changes.")
+            .assertExists()
+        rule.onNodeWithText("Skip").assertIsFocused()
         rule.onNodeWithText("Keep server").assertIsNotEnabled()
         rule.onNodeWithText("Keep both").assertIsNotEnabled()
         press(Key.DirectionRight)
         rule.onNodeWithText("Keep Thor").assertIsFocused()
+        press(Key.DirectionRight) // nothing to its right can be pressed
+        rule.onNodeWithText("Keep Thor").assertIsFocused()
+        back()
+        assertThat(calls).containsExactly("resolve:7:SKIP")
+
+        update { it.copy(conflicts = listOf(unreadable.copy(thorModifiedMs = null, thorBytes = null))) }
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Skip leaves RomM's save as it is; Loom asks again if either side changes.").assertExists()
+        rule.onNodeWithText("Keep Thor").assertIsNotEnabled()
+        rule.onNodeWithText("Keep server").assertIsNotEnabled()
     }
 
     /** Settled meanwhile (in the background, or from the library): the choice closes, and a later conflict doesn't reopen it. */
@@ -523,6 +567,19 @@ class QueueScreenTest {
         rule.onNodeWithText("Change save folder").assertDoesNotExist()
         press(Key.DirectionLeft)
         rule.onNodeWithText("Skip").assertIsFocused() // nothing left of it
+    }
+
+    /** A PSP game's pick is of save folders, as the dialog says; Change save folder asks for them again. */
+    @Test fun aPspGamesPickIsOfItsSaveFolders() {
+        val lumines = wonder.copy(romId = 50, title = "Lumines", serverEmulator = "ppsspp", emulator = "ppsspp")
+        show(sample.copy(conflicts = listOf(lumines)))
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("You picked this game's PPSSPP save folders: if the Thor's save isn't its, Change save folder picks again.",
+            substring = true, useUnmergedTree = true).assertExists()
+        press(Key.DirectionLeft)
+        button("Change save folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("askSaveFolder:50:ppsspp")
     }
 
     /** The same question as in the game's details: focus on the newest folder, and A takes the one focused. */

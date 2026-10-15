@@ -48,6 +48,8 @@ import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.romm.pairing.RommConnector
 import ro.davidmontei.loom.ui.settings.SettingsViewModel
 import ro.davidmontei.loom.ui.settings.edenFolderSaved
+import ro.davidmontei.loom.ui.settings.melonDsFolderSaved
+import ro.davidmontei.loom.ui.settings.ppssppFolderSaved
 import java.io.File
 
 /** Settings' save sync: where Azahar's data is found, choosing its folder, and the automatic upload switch. */
@@ -186,6 +188,47 @@ class SettingsSaveSyncViewModelTest {
         val empty = tmp.newFolder("Empty")
         assertThat(edenFolderSaved(empty)).isEqualTo("Saved, but there's no user/save in ${empty.path} yet. Choose the folder Eden saves in.")
         assertThat(edenFolderSaved(null)).isEqualTo("Loom looks for Eden's saves in the ROMs folder's saves/Eden again")
+    }
+
+    /** melonDS's folder is found in the ROMs folder's saves/melonDS; one chosen is kept, and Settings says whether it is there. */
+    @Test fun melonDsFolderIsFoundOrChosen() = runBlocking<Unit> {
+        File(roms, "saves/melonDS").mkdirs()
+        val vm = viewModel()
+        assertThat(withTimeout(5_000) { vm.state.first { it.storage.romsRoot != null } }.storage.melonDsFound)
+            .isEqualTo(File(roms, "saves/melonDS").path)
+        val chosen = tmp.newFolder("melonDS saves")
+        val message = async { vm.messages.first() }
+        vm.setMelonDsFolder(chosen).join()
+        assertThat(settings.snapshot().melonDsSaveDir).isEqualTo(chosen.path)
+        assertThat(withTimeout(5_000) { message.await() }).isEqualTo("Saved. Loom finds DS saves in ${chosen.path}: set melonDS's Save file directory to it too")
+        vm.setMelonDsFolder(null).join()
+        assertThat(settings.snapshot().melonDsSaveDir).isNull()
+        assertThat(melonDsFolderSaved(File(tmp.root, "nowhere"))).isEqualTo("Saved, but there's no folder at ${File(tmp.root, "nowhere").path}. Choose the folder melonDS saves in.")
+        assertThat(melonDsFolderSaved(null)).isEqualTo("Loom looks for melonDS's saves in the ROMs folder's saves/melonDS again")
+        vm.viewModelScope.cancel()
+    }
+
+    /** PPSSPP's memory stick is found in the ROMs folder's saves/PPSSPP once PPSSPP keeps its settings there; one chosen is kept. */
+    @Test fun ppssppsMemoryStickIsFoundOrChosen() = runBlocking<Unit> {
+        File(roms, "saves/PPSSPP/PSP/SAVEDATA").mkdirs()
+        val vm = viewModel()
+        assertThat(withTimeout(5_000) { vm.state.first { it.storage.romsRoot != null } }.storage.ppssppFound).isNull() // PPSSPP hasn't used it
+        File(roms, "saves/PPSSPP/PSP/SYSTEM").mkdirs()
+        File(roms, "saves/PPSSPP/PSP/SYSTEM/ppsspp.ini").writeText("[General]\n")
+        vm.refreshDevice().join()
+        assertThat(withTimeout(5_000) { vm.state.first { it.storage.ppssppFound != null } }.storage.ppssppFound)
+            .isEqualTo(File(roms, "saves/PPSSPP").path)
+        val message = async { vm.messages.first() }
+        vm.setPpssppFolder(File(roms, "saves/PPSSPP/PSP")).join()
+        assertThat(settings.snapshot().ppssppMemoryStick).isEqualTo(File(roms, "saves/PPSSPP/PSP").path)
+        assertThat(withTimeout(5_000) { message.await() }).isEqualTo("Saved. Loom finds PSP saves in ${File(roms, "saves/PPSSPP/PSP").path}")
+        vm.setPpssppFolder(null).join()
+        assertThat(settings.snapshot().ppssppMemoryStick).isNull()
+        val elsewhere = tmp.newFolder("Memory Stick")
+        assertThat(ppssppFolderSaved(elsewhere))
+            .isEqualTo("Saved, but PPSSPP hasn't used ${elsewhere.path} as its memory stick yet. Set its Memory Stick folder there too.")
+        assertThat(ppssppFolderSaved(null)).isEqualTo("Loom looks for PPSSPP's memory stick in the ROMs folder's saves/PPSSPP again")
+        vm.viewModelScope.cancel()
     }
 
     @Test fun theAutomaticUploadSwitchStartsAndStopsThePeriodicScan() = runBlocking<Unit> {

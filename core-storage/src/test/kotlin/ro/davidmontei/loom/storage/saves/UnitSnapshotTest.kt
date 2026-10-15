@@ -29,6 +29,26 @@ class UnitSnapshotTest {
         assertThat(UnitSnapshot.of(unit).newestModified).isEqualTo(first.newestModified)
     }
 
+    /** melonDS's empty placeholder is no save, yet a scan still sees it appear, and the game write to it. */
+    @Test fun anEmptyPlaceholdersSnapshotIsNoSave() {
+        val file = tmp.root.toPath().resolve("Mario Kart DS (USA).sav")
+        val missing = UnitSnapshot.ofFile(file)
+        Files.write(file, ByteArray(0))
+        val placeholder = UnitSnapshot.ofFile(file)
+        assertThat(placeholder.isEmpty).isTrue()
+        assertThat(placeholder.totalBytes).isEqualTo(0)
+        assertThat(placeholder.newestModified).isNull()
+        assertThat(placeholder.fingerprint).isNotEqualTo(missing.fingerprint)
+
+        Files.write(file, ByteArray(512))
+        Files.setLastModifiedTime(file, FileTime.from(Instant.parse("2026-10-13T17:49:45Z")))
+        val saved = UnitSnapshot.ofFile(file)
+        assertThat(saved.fileCount).isEqualTo(1)
+        assertThat(saved.totalBytes).isEqualTo(512)
+        assertThat(saved.newestModified).isEqualTo(Instant.parse("2026-10-13T17:49:45Z"))
+        assertThat(saved.fingerprint).isNotEqualTo(placeholder.fingerprint)
+    }
+
     @Test fun aMissingUnitIsEmpty() {
         val snapshot = UnitSnapshot.of(listOf(SaveRoot("data", tmp.root.toPath().resolve("nothing/data"))))
         assertThat(snapshot.isEmpty).isTrue()

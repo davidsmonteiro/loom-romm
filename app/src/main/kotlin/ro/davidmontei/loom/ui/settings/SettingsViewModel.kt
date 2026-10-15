@@ -32,6 +32,8 @@ import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.saves.EdenSaves
+import ro.davidmontei.loom.data.saves.MelonDsSaves
+import ro.davidmontei.loom.data.saves.PpssppSaves
 import ro.davidmontei.loom.data.saves.SaveSyncTriggers
 import ro.davidmontei.loom.data.saves.SaveUnitResolver
 import ro.davidmontei.loom.data.sent.SendToDeviceState
@@ -53,6 +55,7 @@ import ro.davidmontei.loom.storage.mapping.ResolvedPlatform
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.storage.saves.EdenProfile
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
+import ro.davidmontei.loom.storage.saves.PpssppSaveLocator
 import java.io.File
 import javax.inject.Inject
 
@@ -83,6 +86,10 @@ data class StorageInfo(
     val prodKeys: String? = null,
     /** There is a prod.keys where Loom looks, but none holds a header_key it can use. */
     val prodKeysWithoutKey: Boolean = false,
+    /** melonDS's save folder when Settings doesn't name one: the ROMs folder's saves/melonDS, when it is there. */
+    val melonDsFound: String? = null,
+    /** PPSSPP's memory stick when Settings doesn't name one: the ROMs folder's saves/PPSSPP, when PPSSPP keeps its settings there. */
+    val ppssppFound: String? = null,
 )
 
 data class SettingsUiState(
@@ -167,6 +174,8 @@ class SettingsViewModel @Inject constructor(
                 findAzaharFolder(root, n3dsFolders)?.path, edenFound?.path,
                 edenDir?.let { runCatching { EdenSaveLocator(it.toPath()).profileSummaries() }.getOrNull() }.orEmpty(),
                 usable?.path, usable == null && keyFiles.isNotEmpty(),
+                melonDsFound = root?.let(MelonDsSaves::defaultSaveDir)?.takeIf(File::isDirectory)?.path,
+                ppssppFound = root?.let(PpssppSaves::defaultMemoryStick)?.takeIf { PpssppSaveLocator.holdsPpssppData(it.toPath()) }?.path,
             )
         }
     }
@@ -285,6 +294,20 @@ class SettingsViewModel @Inject constructor(
         _messages.send("Loom syncs the Switch saves of Eden's profile ${shortProfile(profile)}")
     }
 
+    /** [dir] null goes back to looking for melonDS's saves in the ROMs folder's saves/melonDS. */
+    fun setMelonDsFolder(dir: File?) = viewModelScope.launch {
+        store.setMelonDsSaveDir(dir?.path)
+        refreshDevice()
+        _messages.send(withContext(Dispatchers.IO) { melonDsFolderSaved(dir) })
+    }
+
+    /** [dir] null goes back to looking for PPSSPP's memory stick in the ROMs folder's saves/PPSSPP. */
+    fun setPpssppFolder(dir: File?) = viewModelScope.launch {
+        store.setPpssppMemoryStick(dir?.path)
+        refreshDevice()
+        _messages.send(withContext(Dispatchers.IO) { ppssppFolderSaved(dir) })
+    }
+
     fun licenseText(): String = context.assets.open("licenses/gpl-3.0.txt").bufferedReader().use { it.readText() }
     fun interLicense(): String = context.assets.open("licenses/inter-OFL.txt").bufferedReader().use { it.readText() }
 }
@@ -308,6 +331,20 @@ fun edenFolderSaved(dir: File?): String = when {
     dir == null -> "Loom looks for Eden's saves in the ROMs folder's ${EdenSaves.DEFAULT_FOLDER} again"
     EdenSaveLocator.holdsEdenData(dir.toPath()) -> "Saved. Loom finds Switch saves in ${dir.path}"
     else -> "Saved, but there's no user/save in ${dir.path} yet. Choose the folder Eden saves in."
+}
+
+/** What Settings says once melonDS's save folder is chosen ([dir]), or set back to the ROMs folder's saves/melonDS (null). */
+fun melonDsFolderSaved(dir: File?): String = when {
+    dir == null -> "Loom looks for melonDS's saves in the ROMs folder's ${MelonDsSaves.DEFAULT_FOLDER} again"
+    dir.isDirectory -> "Saved. Loom finds DS saves in ${dir.path}: set melonDS's Save file directory to it too"
+    else -> "Saved, but there's no folder at ${dir.path}. Choose the folder melonDS saves in."
+}
+
+/** What Settings says once PPSSPP's memory stick is chosen ([dir]), or set back to the ROMs folder's saves/PPSSPP (null). */
+fun ppssppFolderSaved(dir: File?): String = when {
+    dir == null -> "Loom looks for PPSSPP's memory stick in the ROMs folder's ${PpssppSaves.DEFAULT_FOLDER} again"
+    PpssppSaveLocator.holdsPpssppData(dir.toPath()) -> "Saved. Loom finds PSP saves in ${dir.path}"
+    else -> "Saved, but PPSSPP hasn't used ${dir.path} as its memory stick yet. Set its Memory Stick folder there too."
 }
 
 /** An Eden profile (32 hex digits) short enough for a chip: its first and last four. */

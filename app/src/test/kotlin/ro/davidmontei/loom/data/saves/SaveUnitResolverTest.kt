@@ -5,17 +5,20 @@ import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.junit.runner.RunWith
+import ro.davidmontei.loom.storage.saves.SaveUnit
 import java.io.File
 
 /** From an installed 3DS game to its Azahar save folder, or why not. */
 @RunWith(AndroidJUnit4::class)
 class SaveUnitResolverTest : SaveSyncTestBase() {
-    private val resolver get() = SaveUnitResolver(settings, volumes, eden())
+    private val resolver get() = resolver()
 
     private suspend fun resolve(game: Game): ResolvedSave {
         val dao = db.catalogDao()
         return resolver.resolve(dao.rom(game.romId)!!, dao.install(game.romId)!!)
     }
+
+    private val ResolvedSave.Ready.roots get() = (unit as SaveUnit.Folders).roots
 
     @Test fun aCartridgeImageNamesItsSaveFolder() = runBlocking<Unit> {
         install(pokemonX)
@@ -24,6 +27,20 @@ class SaveUnitResolverTest : SaveSyncTestBase() {
         assertThat(ready.roots.single().name).isEqualTo("data")
         assertThat(ready.roots.single().folder.toFile()).isEqualTo(saveFolder(pokemonX))
         assertThat(ready.fileName).isEqualTo("Pokemon X.zip")
+    }
+
+    /**
+     * Loom 0.3 recorded a save's place as its folder's path, and a baseline recorded for another
+     * place is of another save: an Azahar or Eden game's unit must keep that path to stay in sync.
+     */
+    @Test fun aFolderUnitsPathIsTheOneBaselinesRecorded() = runBlocking<Unit> {
+        install(pokemonX)
+        putProdKeys()
+        installSwitch(wonder)
+        val dao = db.catalogDao()
+        val switch = resolver.resolve(dao.rom(wonder.romId)!!, dao.install(wonder.romId)!!) as ResolvedSave.Ready
+        assertThat((resolve(pokemonX) as ResolvedSave.Ready).unitPath).isEqualTo(saveFolder(pokemonX).path)
+        assertThat(switch.unitPath).isEqualTo(edenFolder(wonder).path)
     }
 
     /** RomM's sigil can name an update's title (0004000e); only a game's own title has the save. */
@@ -49,12 +66,11 @@ class SaveUnitResolverTest : SaveSyncTestBase() {
     @Test fun otherPlatformsSayWhyTheirSavesArentSynced() {
         assertThat(SaveUnitResolver.supportsPlatform("3ds")).isTrue()
         assertThat(SaveUnitResolver.supportsPlatform("new-nintendo-3ds")).isTrue()
-        assertThat(SaveUnitResolver.supportsPlatform("nds")).isFalse()
+        assertThat(SaveUnitResolver.supportsPlatform("gba")).isFalse()
         assertThat(SaveUnitResolver.unsupportedReason("psx")).isEqualTo("DuckStation keeps its memory cards in Android/data, where Loom can't reach them")
         assertThat(SaveUnitResolver.unsupportedReason("ngc")).startsWith("Dolphin")
         assertThat(SaveUnitResolver.unsupportedReason("wiiu")).startsWith("Cemu")
-        assertThat(SaveUnitResolver.unsupportedReason("psp")).isEqualTo("Loom doesn't sync PPSSPP saves yet")
-        assertThat(SaveUnitResolver.unsupportedReason("snes")).isEqualTo("Loom syncs 3DS (Azahar) and Switch (Eden) saves only, for now")
+        assertThat(SaveUnitResolver.unsupportedReason("snes")).isEqualTo("Loom syncs 3DS, Switch, DS and PSP saves only, for now")
     }
 
     /** Eden's save folder moved to the card makes Switch games syncable, under Eden's emulator id (Argosy's too). */
@@ -70,6 +86,37 @@ class SaveUnitResolverTest : SaveSyncTestBase() {
         assertThat(ready.roots.single().name).isEqualTo(wonder.titleId)
         assertThat(ready.roots.single().folder.toFile()).isEqualTo(edenFolder(wonder))
         assertThat(ready.fileName).isEqualTo("Super Mario Bros Wonder.zip")
+    }
+
+    /** melonDS's save folder in ROMs/saves makes DS games syncable, a DSi game on cartridge too, under melonDS's id. */
+    @Test fun dsGamesAreSyncedThroughMelonDs() = runBlocking<Unit> {
+        assertThat(SaveUnitResolver.emulatorForPlatform("nds")).isEqualTo("melonds")
+        assertThat(SaveUnitResolver.emulatorForPlatform("nintendo-dsi")).isEqualTo("melonds")
+        installDs(marioDs, file = "Mario (USA).nds")
+        installDs(zeldaDs, file = "Zelda.zip", platform = "nintendo-dsi")
+        val dao = db.catalogDao()
+        for ((game, save) in listOf(marioDs to "Mario (USA).sav", zeldaDs to "Zelda.sav")) {
+            val ready = resolver.resolve(dao.rom(game.romId)!!, dao.install(game.romId)!!) as ResolvedSave.Ready
+            assertThat(ready.emulator).isEqualTo("melonds")
+            assertThat((ready.unit as SaveUnit.SingleFile).file.toFile()).isEqualTo(File(melonDs, save))
+            assertThat(ready.fileName).isEqualTo(save) // raw, under the save's own name, as Argosy uploads it
+            assertThat(ready.unitPath).isEqualTo(File(melonDs, save).path)
+        }
+    }
+
+    /** PPSSPP's memory stick in ROMs/saves makes PSP games and minis syncable, under PPSSPP's id. */
+    @Test fun pspGamesAreSyncedThroughPpsspp() = runBlocking<Unit> {
+        assertThat(SaveUnitResolver.emulatorForPlatform("psp")).isEqualTo("ppsspp")
+        assertThat(SaveUnitResolver.emulatorForPlatform("psp-minis")).isEqualTo("ppsspp")
+        installPsp(patapon, fixture = "game.pbp", platform = "psp-minis")
+        val dao = db.catalogDao()
+        val ready = resolver.resolve(dao.rom(patapon.romId)!!, dao.install(patapon.romId)!!) as ResolvedSave.Ready
+        assertThat(ready.emulator).isEqualTo("ppsspp")
+        val unit = ready.unit as SaveUnit.Prefixed
+        assertThat(unit.parent.toFile()).isEqualTo(saveData)
+        assertThat(unit.prefix).isEqualTo("NPUZ00001") // its PBP's PARAM.SFO
+        assertThat(ready.fileName).isEqualTo("Patapon.zip")
+        assertThat(ready.unitPath).isEqualTo("${saveData.path}/NPUZ00001*")
     }
 
     @Test fun azaharsFolderIsTheOneHoldingItsSdCard() {

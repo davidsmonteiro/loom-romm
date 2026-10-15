@@ -19,6 +19,10 @@ import ro.davidmontei.loom.data.db.TitledSaveUnit
 import ro.davidmontei.loom.romm.RommException
 import ro.davidmontei.loom.storage.saves.AzaharSaveLocator
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
+import ro.davidmontei.loom.storage.saves.EmulatorIds
+import ro.davidmontei.loom.storage.saves.MelonDsSaveLocator
+import ro.davidmontei.loom.storage.saves.PpssppSaveLocator
+import ro.davidmontei.loom.storage.saves.PspDiscId
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import java.nio.file.Path
 
@@ -40,6 +44,7 @@ class SaveRepository(
     private val engine: SaveSyncEngine,
     private val saves: SaveDao,
     private val eden: EdenSaves,
+    private val ppsspp: PpssppSaves,
     private val scope: CoroutineScope,
     /** A clock that only moves forward, in milliseconds, for how soon a game's save is looked at again. */
     private val now: () -> Long = { System.nanoTime() / 1_000_000 },
@@ -102,11 +107,17 @@ class SaveRepository(
 
     suspend fun serverSaveInfo(romId: Int, saveId: Int): ServerSaveInfo? = engine.serverSaveInfo(romId, saveId)
 
-    /** The Switch games whose Eden save folder the owner chose: they can choose another. */
-    fun observeChosenFolders(): Flow<Set<Int>> = saves.observeOwnerChosenSwitchTitles().map { it.toSet() }
+    /**
+     * The games whose save folders the owner chose, as for a Switch game whose title ID Loom can't
+     * read or a PSP game whose disc ID it can't tell: they can choose again.
+     */
+    fun observeChosenFolders(): Flow<Set<Int>> = saves.observeOwnerChosenSaveKeys().map { it.toSet() }
 
-    /** The Eden save folders the owner can pick [romId]'s from. */
-    suspend fun saveFolderChoice(romId: Int): EdenFolderChoice = eden.folderChoice(romId)
+    /** What the owner can pick [romId]'s save folders from, as [emulator] keeps them: Eden's title folders, PPSSPP's disc IDs. */
+    suspend fun saveFolderChoice(romId: Int, emulator: String?): FolderChoice = when (emulator) {
+        PpssppSaveLocator.EMULATOR_ID -> ppsspp.folderChoice(romId)
+        else -> eden.folderChoice(romId)
+    }
 
     /**
      * The owner's answer to "which Eden save folder is this game's?": remembered, then Loom looks
@@ -115,6 +126,15 @@ class SaveRepository(
     suspend fun chooseSaveFolder(romId: Int, title: String, titleId: SwitchTitleId): String = request {
         eden.chooseFolder(romId, titleId)
         "$title's save is Eden's $titleId folder" + lookAfterChoosing(romId)
+    }
+
+    /**
+     * The owner's answer to "which PPSSPP save folders are this game's?": remembered, then Loom
+     * looks at the game's save again (moving nothing), so its details show where it stands.
+     */
+    suspend fun choosePrefix(romId: Int, title: String, discId: PspDiscId): String = request {
+        ppsspp.choosePrefix(romId, discId)
+        "$title's saves are PPSSPP's folders starting with $discId" + lookAfterChoosing(romId)
     }
 
     /** The Switch games whose synced folder the owner chose, of the two Eden kept their save in: they can choose again. */
@@ -182,13 +202,20 @@ class SaveRepository(
 
     /** The user's answer to [romId]'s save conflict. Keep server and Keep both need the emulator closed. */
     suspend fun resolve(romId: Int, title: String, choice: ConflictChoice): String = request {
-        val replacesASave = saves.conflict(romId)?.localHash != null
+        val conflict = saves.conflict(romId)
+        val replacesASave = conflict?.localHash != null
         when (val result = engine.resolveConflict(romId, choice)) {
             ResolveResult.Done -> when (choice) {
-                ConflictChoice.KEEP_THOR -> "RomM now has the Thor's save of $title; its old one stays in RomM's history"
+                // With none on RomM (deleted there), there is no old one to keep.
+                ConflictChoice.KEEP_THOR -> "RomM now has the Thor's save of $title" +
+                    if (conflict?.serverSaveId != null) "; its old one stays in RomM's history" else ""
                 ConflictChoice.KEEP_SERVER -> "The Thor now has RomM's save of $title" + backedUp(replacesASave)
                 ConflictChoice.KEEP_BOTH -> "RomM keeps the Thor's save of $title as a separate copy, and the Thor now has RomM's"
-                ConflictChoice.SKIP -> "Left both saves of $title as they are. Loom asks again if either one changes."
+                ConflictChoice.SKIP -> when {
+                    conflict?.serverSaveId == null -> "Left the Thor's save of $title as it is, and RomM without it. Loom asks again if either side changes."
+                    conflict.localHash == null -> "Left RomM's save of $title as it is, and the Thor without it. Loom asks again if either side changes."
+                    else -> "Left both saves of $title as they are. Loom asks again if either one changes."
+                }
             }
             is ResolveResult.Failed -> "Nothing changed for $title: ${result.reason}" + lookAgain(romId, result)
         }
@@ -242,10 +269,16 @@ class SaveRepository(
     }
 }
 
+/** What the owner picks for a game of [emulator]'s whose save Loom can't place: its "save folder", or PPSSPP's "save folders". */
+fun saveFolderWords(emulator: String?): String = if (emulator == PpssppSaveLocator.EMULATOR_ID) "save folders" else "save folder"
+
 /** An emulator id Loom gives RomM, as the user knows it. */
 fun emulatorName(id: String?): String = when (id) {
     AzaharSaveLocator.EMULATOR_ID -> "Azahar"
     EdenSaveLocator.EMULATOR_ID -> "Eden"
+    MelonDsSaveLocator.EMULATOR_ID -> "melonDS"
+    PpssppSaveLocator.EMULATOR_ID -> "PPSSPP"
+    EmulatorIds.PPSSPP_GOLD -> "PPSSPP Gold"
     null -> "the emulator"
     else -> id
 }

@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
@@ -17,7 +18,9 @@ import mockwebserver3.MockResponse
 import mockwebserver3.RecordedRequest
 import okhttp3.MultipartReader
 import okio.Buffer
+import ro.davidmontei.loom.romm.ROMM_5_4
 import ro.davidmontei.loom.romm.RommJson
+import ro.davidmontei.loom.romm.RommVersion
 import ro.davidmontei.loom.storage.saves.SaveHasher
 import java.nio.file.Files
 import java.nio.file.Path
@@ -30,7 +33,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * slot) and compares through this device's sync rows (`compare_save_state`); an upload is refused
  * with 409 when the device never synced the slot head, deduplicated by hash, and writes a sync
  * row; `/content` with optimistic=false writes none; `/downloaded` does. Tests can also make
- * negotiate answer something else, or the upload fail. Devices are looked up in [devices].
+ * negotiate answer something else, or the upload fail. Devices are looked up in [devices]:
+ * negotiate answers 404 for one that isn't there, 400 for one with sync switched off.
+ * With [rommVersion] at 5.4.0 or later, it behaves as 5.4.0 does where Loom can tell.
  */
 class FakeRomm(private val scratch: Path) : Dispatcher() {
     class Save(
@@ -50,9 +55,15 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
     val saves = CopyOnWriteArrayList<Save>()
     /** (device, save id) → last_synced_at. */
     val syncRows = mutableMapOf<Pair<String, Int>, Instant>()
-    val devices = mutableListOf<JsonObject>()
+    /** RomM 5.4.0: (device, save id) → the device's baseline hash on that sync row (`last_sync_hash`), null once cleared. */
+    val syncHashes = mutableMapOf<Pair<String, Int>, String?>()
+    val devices = CopyOnWriteArrayList<JsonObject>()
     val requests = CopyOnWriteArrayList<RecordedRequest>()
+    /** Every operation negotiate answered, in order. */
+    val answered = CopyOnWriteArrayList<JsonObject>()
     val completed = CopyOnWriteArrayList<Triple<Int, Int, Int>>()
+    /** RomM 5.4.0's `deleted_assets`: per (ROM, slot), the hashes its deleted versions held and when they went. */
+    private val removed = mutableMapOf<Pair<Int, String>, MutableList<Pair<String, Instant>>>()
 
     /** Replaces negotiate's operations for a ROM with this action (the server and slot stay as they are). */
     val negotiateSays = mutableMapOf<Int, String>()
@@ -64,6 +75,9 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
     @Volatile var onRequest: ((RecordedRequest) -> Unit)? = null
     /** How long negotiate takes, to catch two runs overlapping. */
     var negotiateDelayMs = 0L
+    /** The RomM release this server behaves as. */
+    var rommVersion = "5.3.1"
+    private val is54 get() = RommVersion.parse(rommVersion)!! >= ROMM_5_4
 
     private val openSessions = AtomicInteger()
     @Volatile var mostOpenSessions = 0
@@ -81,6 +95,17 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
     }
 
     fun head(romId: Int): Save? = saves.filter { it.romId == romId && it.slot == "autosave" }.maxByOrNull { it.updatedAt }
+
+    /** Deletes a version, as in RomM's web UI; 5.4.0 records the loss. */
+    fun deleteSave(id: Int) {
+        val save = saves.single { it.id == id }
+        saves.remove(save)
+        clock = clock.plusSeconds(1)
+        if (is54 && save.slot != null && save.hash != null) removed.getOrPut(save.romId to save.slot) { mutableListOf() } += save.hash to clock
+    }
+
+    /** Negotiate's last action for [romId]. */
+    fun lastAnswer(romId: Int): String? = answered.lastOrNull { it.int("rom_id") == romId }?.string("action")
 
     fun paths(): List<String> = requests.map { "${it.method} ${it.url.encodedPath}" }
 
@@ -108,10 +133,13 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
     // --- negotiate (endpoints/sync.py) ---
 
     private fun negotiate(body: JsonObject): MockResponse {
+        val device = body["device_id"]!!.jsonPrimitive.content
+        // `sync/__init__.py:204-215`
+        val known = devices.firstOrNull { it.string("id") == device } ?: return error(404, "Device with ID $device not found")
+        if (!known.getValue("sync_enabled").jsonPrimitive.boolean) return error(400, "Sync is disabled for this device")
         val open = openSessions.incrementAndGet()
         mostOpenSessions = maxOf(mostOpenSessions, open)
         if (negotiateDelayMs > 0) Thread.sleep(negotiateDelayMs)
-        val device = body["device_id"]!!.jsonPrimitive.content
         val clientSaves = body["saves"]!!.jsonArray.map { it.jsonObject }
         val scope = body["rom_ids"]!!.jsonArray.map { it.jsonPrimitive.int }.toSet() + clientSaves.map { it.int("rom_id") }
         val heads = saves.filter { it.slot != null && it.romId in scope }.groupBy { it.romId to it.slot!! }
@@ -120,12 +148,16 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
         val matched = mutableSetOf<Int>()
         for (cs in clientSaves) {
             val head = heads[cs.int("rom_id") to cs.string("slot")!!]
+            // 5.4.0 (`comparison.py`): a client still holding a version deleted here, since before it was.
+            val removedHere = removedBefore(cs.int("rom_id"), cs.string("slot")!!, cs.string("content_hash"), Instant.parse(cs.string("updated_at")))
             if (head == null) {
-                ops += op("upload", cs.int("rom_id"), null, cs.string("file_name")!!, cs.string("emulator"), "Save exists on client but not on server")
+                ops += if (removedHere) op("delete", cs.int("rom_id"), null, cs.string("file_name")!!, cs.string("emulator"), "Save was deleted on the server")
+                else op("upload", cs.int("rom_id"), null, cs.string("file_name")!!, cs.string("emulator"), "Save exists on client but not on server")
                 continue
             }
             matched += head.id
-            val action = compare(cs.string("content_hash"), Instant.parse(cs.string("updated_at")), head, syncRows[device to head.id])
+            val action = if (removedHere && cs.string("content_hash") != head.hash) "download"
+                else compare(cs.string("content_hash"), Instant.parse(cs.string("updated_at")), head, syncRows[device to head.id])
             ops += op(negotiateSays[head.romId] ?: action, head.romId, head, reason = "compared")
         }
         for (head in heads.values) {
@@ -134,12 +166,18 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
             if (synced != null && !head.updatedAt.isAfter(synced)) continue // "the client deleted it"
             ops += op(negotiateSays[head.romId] ?: "download", head.romId, head, reason = "Save exists on server but not on client")
         }
+        answered += ops
         val session = nextSession++
         return ok(buildJsonObject {
             put("session_id", session); put("operations", JsonArray(ops))
-            for (a in listOf("upload", "download", "conflict", "no_op")) put("total_$a", ops.count { it.string("action") == a })
+            for (a in listOf("upload", "download", "conflict", "no_op") + listOfNotNull("delete".takeIf { is54 })) {
+                put("total_$a", ops.count { it.string("action") == a })
+            }
         })
     }
+
+    private fun removedBefore(romId: Int, slot: String, hash: String?, clientAt: Instant) =
+        hash != null && removed[romId to slot].orEmpty().any { (lost, at) -> lost == hash && !clientAt.isAfter(at) }
 
     /** `handler/sync/comparison.py`. */
     private fun compare(clientHash: String?, clientAt: Instant, head: Save, synced: Instant?): String {
@@ -194,18 +232,36 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
         }
         val hash = hashOf(bytes)
         if (slot != null && !overwrite) {
-            saves.firstOrNull { it.romId == romId && it.slot == slot && it.hash == hash }?.let { return ok(json(it)) }
+            saves.firstOrNull { it.romId == romId && it.slot == slot && it.hash == hash }?.let { matched ->
+                // 5.3.1 answers the matched version as it is, recording nothing. 5.4.0 makes it the
+                // slot's newest unless it already is (`promote_to_slot_head`), and records the device.
+                if (is54) {
+                    val head = head(romId)!!
+                    if (matched !== head) {
+                        clock = clock.plusSeconds(1)
+                        matched.updatedAt = maxOf(clock, head.updatedAt.plusSeconds(1))
+                    }
+                    if (device != null) recordSync(device, matched, url.queryParameter("content_hash"))
+                }
+                return ok(json(matched))
+            }
         }
         clock = clock.plusSeconds(1)
         val stored = if (slot != null) "${fileName.substringBeforeLast('.')} [$clock].${fileName.substringAfterLast('.')}" else fileName
         val save = Save(nextId++, romId, stored, slot, url.queryParameter("emulator"), bytes, hash, clock, device)
         saves += save
-        if (device != null) syncRows[device to save.id] = save.updatedAt
+        if (device != null) recordSync(device, save, url.queryParameter("content_hash"))
         if (slot != null && url.queryParameter("autocleanup") == "true") {
             val keep = url.queryParameter("autocleanup_limit")!!.toInt()
             saves.filter { it.romId == romId && it.slot == slot }.sortedByDescending { it.updatedAt }.drop(keep).forEach { saves.remove(it) }
         }
         return ok(json(save))
+    }
+
+    /** The device's sync row for [save]; 5.4.0 also keeps the hash the device sent as its baseline (`_record_device_sync`). */
+    private fun recordSync(device: String, save: Save, sentHash: String?) {
+        syncRows[device to save.id] = save.updatedAt
+        if (is54) syncHashes[device to save.id] = sentHash
     }
 
     private fun list(request: RecordedRequest): MockResponse {
@@ -223,7 +279,10 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
 
     private fun downloaded(path: String, body: JsonObject): MockResponse {
         val save = saves.first { it.id == path.split('/')[3].toInt() }
-        syncRows[body.string("device_id")!! to save.id] = save.updatedAt
+        val device = body.string("device_id")!!
+        syncRows[device to save.id] = save.updatedAt
+        // 5.4.0 (`saves.py:596-628`): only the save's own hash proves what the device holds; any other, or none, clears it.
+        if (is54) syncHashes[device to save.id] = body.string("content_hash")?.takeIf { it == save.hash }
         return ok(json(save))
     }
 
@@ -242,9 +301,20 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
         put("server_updated_at", (head?.updatedAt?.toString()).json()); put("server_content_hash", head?.hash.json())
     }
 
-    fun device(id: String, identifier: String, name: String = "AYN Thor (Loom)") = buildJsonObject {
+    fun device(id: String, identifier: String, name: String = "AYN Thor (Loom)", syncEnabled: Boolean = true) = buildJsonObject {
         put("id", id); put("name", name); put("platform", "android"); put("client", "loom"); put("client_version", "0.2.0")
-        put("client_device_identifier", identifier); put("sync_enabled", true); put("last_seen", "2026-10-14T10:00:00+00:00")
+        put("client_device_identifier", identifier); put("sync_enabled", syncEnabled); put("last_seen", "2026-10-14T10:00:00+00:00")
+    }
+
+    /** Deletes a device, as RomM 5.4.0's Devices page does. */
+    fun deleteDevice(id: String) {
+        devices.removeAll { it.string("id") == id }
+    }
+
+    /** Switches save sync for a device on or off, as RomM 5.4.0's Devices page does. */
+    fun switchSync(id: String, on: Boolean) {
+        val i = devices.indexOfFirst { it.string("id") == id }
+        devices[i] = JsonObject(devices[i] + ("sync_enabled" to JsonPrimitive(on)))
     }
 
     private fun savePart(request: RecordedRequest): Pair<String, ByteArray> {
@@ -274,6 +344,8 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
 
     private fun json(request: RecordedRequest): JsonObject = RommJson.parseToJsonElement(request.body!!.utf8()).jsonObject
     private fun ok(body: JsonElement) = MockResponse.Builder().code(200).setHeader("Content-Type", "application/json").body(body.toString()).build()
+    private fun error(code: Int, detail: String) =
+        MockResponse.Builder().code(code).setHeader("Content-Type", "application/json").body(buildJsonObject { put("detail", detail) }.toString()).build()
     private fun JsonObject.int(key: String) = getValue(key).jsonPrimitive.int
     private fun JsonObject.string(key: String) = (get(key) as? JsonPrimitive)?.takeUnless { it is JsonNull }?.content
     private fun String?.json(): JsonElement = this?.let(::JsonPrimitive) ?: JsonNull

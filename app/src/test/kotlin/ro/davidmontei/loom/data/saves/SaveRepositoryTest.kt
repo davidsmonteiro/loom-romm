@@ -30,7 +30,7 @@ import java.time.Duration
 @RunWith(AndroidJUnit4::class)
 class SaveRepositoryTest : SaveSyncTestBase() {
     private val screen = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val repository get() = SaveRepository(engine(), db.saveDao(), eden(), scope)
+    private val repository get() = SaveRepository(engine(), db.saveDao(), eden(), ppssppSaves(), scope)
 
     @After fun tearDownScreen() = screen.cancel()
 
@@ -69,7 +69,7 @@ class SaveRepositoryTest : SaveSyncTestBase() {
     // --- the look a game's details ask for ---
 
     private var lookClockMs = 1_000_000L
-    private fun lookingRepository() = SaveRepository(engine(), db.saveDao(), eden(), scope, now = { lookClockMs })
+    private fun lookingRepository() = SaveRepository(engine(), db.saveDao(), eden(), ppssppSaves(), scope, now = { lookClockMs })
     private fun negotiations() = romm.requests.filter { it.url.encodedPath == "/api/sync/negotiate" }
     private suspend fun SaveRepository.lookDone(romId: Int) = withTimeout(10_000) { looks.first { it[romId] != SaveLook.Looking } }
 
@@ -415,6 +415,50 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         assertThat(db.saveDao().conflict(7)!!.localHash).isNull()
 
         assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_SERVER)).isEqualTo("The Thor now has RomM's save of Pokemon X")
+    }
+
+    /** A save deleted on RomM has no old version left there to mention. */
+    @Test fun uploadingADeletedSaveAgainSaysRommHasIt() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.deleteSave(romm.head(7)!!.id)
+        engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_THOR)).isEqualTo("RomM now has the Thor's save of Pokemon X")
+    }
+
+    /** Skip leaves the saves there are: with one side holding none, it doesn't speak of two. */
+    @Test fun skippingAConflictWithOneSaveSaysSo() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.deleteSave(romm.head(7)!!.id)
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.SKIP))
+            .isEqualTo("Left the Thor's save of Pokemon X as it is, and RomM without it. Loom asks again if either side changes.")
+
+        install(omegaRuby)
+        romm.addSave(8, archiveOf(bytes(2)), emulator = "citra") // another emulator's, so a conflict with none on the Thor
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(db.saveDao().conflict(8)!!.localHash).isNull()
+        assertThat(repository.resolve(8, "Pokemon Omega Ruby", ConflictChoice.SKIP))
+            .isEqualTo("Left RomM's save of Pokemon Omega Ruby as it is, and the Thor without it. Loom asks again if either side changes.")
+    }
+
+    /** Sync switched off for the Thor on RomM: Upload save and a restore say so, and where to switch it back on. */
+    @Test fun withSyncSwitchedOffOnRommEachRequestSaysSo() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.addSave(7, archiveOf(bytes(2)))
+        romm.switchSync("dev-thor", on = false)
+
+        assertThat(repository.upload(7, "Pokemon X")).isEqualTo(SaveSyncEngine.SYNC_OFF)
+        assertThat(repository.restore(7, "Pokemon X")).isEqualTo("Didn't restore Pokemon X's save: ${SaveSyncEngine.SYNC_OFF}")
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
     }
 
     @Test fun anUnreachableServerIsSaidPlainly() = runBlocking<Unit> {

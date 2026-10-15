@@ -7,6 +7,8 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import ro.davidmontei.loom.storage.saves.SaveFixtures.AZAHAR_MAIN
 import ro.davidmontei.loom.storage.saves.SaveFixtures.AZAHAR_METADATA
+import ro.davidmontei.loom.storage.saves.SaveFixtures.RAW_SAVE
+import ro.davidmontei.loom.storage.saves.SaveFixtures.RAW_SAVE_MD5
 import ro.davidmontei.loom.storage.saves.SaveFixtures.folderOf
 import ro.davidmontei.loom.storage.saves.SaveFixtures.zipOf
 import java.io.IOException
@@ -140,6 +142,34 @@ class SaveRestorerTest {
         }
     }
 
+    /**
+     * Eden keeps every game's save folder in one profile folder, so a restore Loom died in leaves
+     * its work folder where another game's restore looks too. Whichever game is read first undoes
+     * it, instead of failing to read its own save until the other game is read.
+     */
+    @Test fun anotherGamesUnfinishedRestoreInTheSameFolderIsUndone() {
+        val profile = path("user/save/0000000000000000/4E431822D6DEFD527268BA35B5C09533")
+        for (dieAt in 1..4) {
+            tmp.root.listFiles()!!.forEach { it.deleteRecursively() }
+            val wonder = listOf(SaveRoot("0100A0B00C0D0000", folderOf(profile.resolve("0100A0B00C0D0000"), "game_data.sav" to byteArrayOf(1))))
+            val arceus = listOf(SaveRoot("01002B300C1D2000",
+                folderOf(profile.resolve("01002B300C1D2000"), "game_data.sav" to byteArrayOf(2), "option_data.sav" to byteArrayOf(3))))
+            val before = contents(wonder + arceus)
+            val archive = zipOf(path("arceus.zip"), "01002B300C1D2000/game_data.sav" to byteArrayOf(9), "01002B300C1D2000/new.sav" to byteArrayOf(8))
+            var moves = 0
+            val dying = SaveRestorer { from, to ->
+                if (++moves == dieAt) throw ProcessDeath()
+                SaveRestorer.FileMover.Rename.move(from, to)
+            }
+            assertThrows(ProcessDeath::class.java) { dying.restore(archive, arceus, SaveHasher.hashUnit(arceus)) }
+
+            assertThat(SaveRestorer().recover(wonder)).isTrue()
+            assertThat(contents(wonder + arceus)).isEqualTo(before)
+            assertThat(Files.list(profile).use { l -> l.iterator().asSequence().map { it.fileName.toString() }.toList() })
+                .containsExactly("0100A0B00C0D0000", "01002B300C1D2000")
+        }
+    }
+
     /** A move never replaces a file: a mistake fails instead of overwriting part of a save. */
     @Test fun aMoveRefusesATargetThatExists() {
         val from = folderOf(path("a"), "main" to byteArrayOf(1)).resolve("main")
@@ -221,6 +251,310 @@ class SaveRestorerTest {
         assertThat(contents(unit)).isEqualTo(before)
         assertThat(workFolders()).isEmpty()
         assertThat(SaveRestorer().recover(unit)).isFalse()
+    }
+
+    // --- one raw file: a DS game's .sav, in the one melonDS folder every game saves in ---
+
+    private val melonDs get() = path("saves/melonDS")
+
+    /** Mario Kart DS's save holding [bytes]; null for no file at all. */
+    private fun rawSave(bytes: ByteArray? = byteArrayOf(1, 2, 3)): SaveUnit.SingleFile {
+        val file = Files.createDirectories(melonDs).resolve("Mario Kart DS (USA).sav")
+        if (bytes != null) Files.write(file, bytes)
+        return SaveUnit.SingleFile(file)
+    }
+
+    private fun serverRaw(bytes: ByteArray = RAW_SAVE): Path = path("server.sav").also { Files.write(it, bytes) }
+
+    private fun melonDsFiles(): List<String> = Files.list(melonDs).use { l -> l.iterator().asSequence().map { it.fileName.toString() }.sorted().toList() }
+
+    @Test fun replacesARawSave() {
+        val unit = rawSave()
+        val restoredHash = SaveRestorer().restore(serverRaw(), unit, unit.hash())
+
+        assertThat(Files.readAllBytes(unit.file)).isEqualTo(RAW_SAVE)
+        assertThat(restoredHash).isEqualTo(RAW_SAVE_MD5)
+        assertThat(unit.hash()).isEqualTo(RAW_SAVE_MD5)
+        assertThat(melonDsFiles()).containsExactly("Mario Kart DS (USA).sav") // no work folder left
+    }
+
+    /** melonDS's empty placeholder is no save, so the restore expects none, and still puts the save in its place. */
+    @Test fun replacesMelonDsEmptyPlaceholder() {
+        val unit = rawSave(ByteArray(0))
+        assertThat(SaveRestorer().restore(serverRaw(), unit, expectedCurrent = null)).isEqualTo(RAW_SAVE_MD5)
+        assertThat(Files.readAllBytes(unit.file)).isEqualTo(RAW_SAVE)
+        assertThat(melonDsFiles()).containsExactly("Mario Kart DS (USA).sav")
+    }
+
+    @Test fun restoresWhereThereWasNoFile() {
+        val unit = rawSave(bytes = null)
+        assertThat(SaveRestorer().restore(serverRaw(), unit, expectedCurrent = null)).isEqualTo(RAW_SAVE_MD5)
+        assertThat(Files.readAllBytes(unit.file)).isEqualTo(RAW_SAVE)
+        assertThat(melonDsFiles()).containsExactly("Mario Kart DS (USA).sav")
+    }
+
+    @Test fun refusesWhenTheFileChangedSinceItWasBackedUp() {
+        val unit = rawSave()
+        val backedUp = unit.hash()
+        Files.write(unit.file, byteArrayOf(4, 5)) // melonDS wrote meanwhile
+        assertThrows(SaveChangedException::class.java) { SaveRestorer().restore(serverRaw(), unit, backedUp) }
+        assertThat(Files.readAllBytes(unit.file)).isEqualTo(byteArrayOf(4, 5))
+
+        Files.write(unit.file, ByteArray(0))
+        val placeholder = unit.hash()
+        Files.write(unit.file, byteArrayOf(6)) // the game's first save, over the placeholder
+        assertThrows(SaveChangedException::class.java) { SaveRestorer().restore(serverRaw(), unit, placeholder) }
+        assertThat(Files.readAllBytes(unit.file)).isEqualTo(byteArrayOf(6))
+        assertThat(melonDsFiles()).containsExactly("Mario Kart DS (USA).sav")
+    }
+
+    /** An empty download is no save to restore, and one larger than the emulator's saves can be isn't one either. */
+    @Test fun anEmptyOrOversizedRawSaveIsRefused() {
+        val unit = rawSave()
+        assertThrows(SaveArchiveException::class.java) { SaveRestorer().restore(serverRaw(ByteArray(0)), unit, unit.hash()) }
+        assertThrows(SaveArchiveException::class.java) { SaveRestorer().restore(serverRaw(), unit, unit.hash(), maxUnitBytes = 1024) }
+        assertThat(Files.readAllBytes(unit.file)).isEqualTo(byteArrayOf(1, 2, 3))
+        assertThat(melonDsFiles()).containsExactly("Mario Kart DS (USA).sav")
+    }
+
+    /** The card fails halfway through the swap: the old file is put back, the empty placeholder too. */
+    @Test fun aFailureMidSwapPutsTheOldFileBack() {
+        for (old in listOf(byteArrayOf(1, 2, 3), ByteArray(0))) for (failAt in 1..2) {
+            tmp.root.listFiles()!!.forEach { it.deleteRecursively() }
+            val unit = rawSave(old)
+            var moves = 0
+            val failing = SaveRestorer { from, to ->
+                if (++moves == failAt) throw IOException("card removed")
+                SaveRestorer.FileMover.Rename.move(from, to)
+            }
+            assertThrows("failing move $failAt", IOException::class.java) { failing.restore(serverRaw(), unit, unit.hash()) }
+            assertThat(Files.readAllBytes(unit.file)).isEqualTo(old)
+            assertThat(melonDsFiles()).containsExactly("Mario Kart DS (USA).sav")
+        }
+    }
+
+    /**
+     * Loom dies halfway through the swap: the next look undoes it, whether it is at this game's
+     * save or another's in the same folder.
+     */
+    @Test fun aDeathMidSwapOfARawSaveIsUndoneByRecover() {
+        for (dieAt in 1..2) for (byOther in listOf(false, true)) {
+            tmp.root.listFiles()!!.forEach { it.deleteRecursively() }
+            val unit = rawSave()
+            val other = SaveUnit.SingleFile(melonDs.resolve("Tetris DS (USA).sav").also { Files.write(it, byteArrayOf(7)) })
+            var moves = 0
+            val dying = SaveRestorer { from, to ->
+                if (++moves == dieAt) throw ProcessDeath()
+                SaveRestorer.FileMover.Rename.move(from, to)
+            }
+            assertThrows(ProcessDeath::class.java) { dying.restore(serverRaw(), unit, unit.hash()) }
+            assertThat(melonDsFiles().filter { it.startsWith(".loom-restore-") }).hasSize(1)
+
+            assertThat(SaveRestorer().recover(if (byOther) other else unit)).isTrue()
+            assertThat(Files.readAllBytes(unit.file)).isEqualTo(byteArrayOf(1, 2, 3))
+            assertThat(Files.readAllBytes(other.file)).isEqualTo(byteArrayOf(7))
+            assertThat(melonDsFiles()).containsExactly("Mario Kart DS (USA).sav", "Tetris DS (USA).sav")
+        }
+    }
+
+    /**
+     * Loom died with Mario Kart's old file aside, and the game ran in melonDS before the next look:
+     * melonDS made an empty file where the old one goes. That placeholder gives way, so the old
+     * save is back, whichever game is looked at first. An old file that was a placeholder itself
+     * gives way to what is there now, such as the game's first save.
+     */
+    @Test fun anEmptyFileMelonDsMadeWhileTheOldOneWasAsideGivesWay() {
+        for (old in listOf(byteArrayOf(1, 2, 3), ByteArray(0))) for (byOther in listOf(false, true)) {
+            tmp.root.listFiles()!!.forEach { it.deleteRecursively() }
+            val unit = rawSave(old)
+            val other = SaveUnit.SingleFile(melonDs.resolve("Tetris DS (USA).sav").also { Files.write(it, byteArrayOf(7)) })
+            var moves = 0
+            val dying = SaveRestorer { from, to ->
+                if (++moves == 2) throw ProcessDeath() // the old file is aside, RomM's not yet in
+                SaveRestorer.FileMover.Rename.move(from, to)
+            }
+            assertThrows(ProcessDeath::class.java) { dying.restore(serverRaw(), unit, unit.hash()) }
+            val now = if (old.isEmpty()) byteArrayOf(4, 5) else ByteArray(0)
+            Files.write(unit.file, now)
+
+            assertThat(SaveRestorer().recover(if (byOther) other else unit)).isTrue()
+            assertThat(Files.readAllBytes(unit.file)).isEqualTo(if (old.isEmpty()) now else old)
+            assertThat(Files.readAllBytes(other.file)).isEqualTo(byteArrayOf(7))
+            assertThat(melonDsFiles()).containsExactly("Mario Kart DS (USA).sav", "Tetris DS (USA).sav")
+        }
+    }
+
+    /**
+     * A restore that can't be undone, as the game saved in melonDS where its old save goes, is its
+     * own game's to report, naming where the old save is kept: other games in the folder still
+     * look and restore.
+     */
+    @Test fun aRestoreThatCantBeUndoneStopsOnlyItsOwnGame() {
+        val unit = rawSave()
+        val other = SaveUnit.SingleFile(melonDs.resolve("Tetris DS (USA).sav").also { Files.write(it, byteArrayOf(7)) })
+        var moves = 0
+        val dying = SaveRestorer { from, to ->
+            if (++moves == 2) throw ProcessDeath()
+            SaveRestorer.FileMover.Rename.move(from, to)
+        }
+        assertThrows(ProcessDeath::class.java) { dying.restore(serverRaw(), unit, unit.hash()) }
+        Files.write(unit.file, byteArrayOf(4, 5)) // the game's first save, over melonDS's placeholder
+
+        assertThat(SaveRestorer().recover(other)).isTrue()
+        assertThat(SaveRestorer().restore(serverRaw(), other, other.hash())).isEqualTo(RAW_SAVE_MD5)
+        assertThat(Files.readAllBytes(other.file)).isEqualTo(RAW_SAVE)
+
+        val e = assertThrows(IOException::class.java) { SaveRestorer().recover(unit) }
+        val work = melonDsFiles().single { it.startsWith(".loom-restore-") }
+        assertThat(e.message).contains(work)
+        assertThat(Files.readAllBytes(unit.file)).isEqualTo(byteArrayOf(4, 5))
+        assertThat(Files.readAllBytes(melonDs.resolve("$work/old/Mario Kart DS (USA).sav"))).isEqualTo(byteArrayOf(1, 2, 3))
+    }
+
+    /** A swap that completes but doesn't hash as the download (a card that loses writes) is undone. */
+    @Test fun aRawRestoreThatDoesntCheckOutIsUndone() {
+        val unit = rawSave()
+        val lossy = SaveRestorer { from, to ->
+            SaveRestorer.FileMover.Rename.move(from, to)
+            if (from.parent.fileName.toString() == "new") Files.write(to, byteArrayOf(0)) // new/Mario Kart DS (USA).sav
+        }
+        assertThrows(SaveArchiveException::class.java) { lossy.restore(serverRaw(), unit, unit.hash()) }
+        assertThat(Files.readAllBytes(unit.file)).isEqualTo(byteArrayOf(1, 2, 3))
+        assertThat(melonDsFiles()).containsExactly("Mario Kart DS (USA).sav")
+    }
+
+    // --- every folder starting with a disc ID: a PSP game's saves, in the SAVEDATA every game shares ---
+
+    private val saveData get() = path("PSP/SAVEDATA")
+
+    /** ULUS10064's save on the card, another game's, and ULUS10064's installed data, which isn't its save. */
+    private fun pspCard() {
+        folderOf(saveData.resolve("ULUS10064DATA00"), "DATA.BIN" to byteArrayOf(1, 1), "PARAM.SFO" to byteArrayOf(2))
+        folderOf(saveData.resolve("ULUS10064DATA01"), "DATA.BIN" to byteArrayOf(3), "sub/EXTRA.BIN" to byteArrayOf(4))
+        folderOf(saveData.resolve("ULUS10065DATA00"), "DATA.BIN" to byteArrayOf(5))
+        folderOf(saveData.resolve("ULUS10064INSTALL"), "PARAM.SFO" to byteArrayOf(6), "DATA.DAT" to byteArrayOf(7))
+    }
+
+    /** ULUS10064's unit made of [folders]: the card's, widened with the archive's as the caller does. */
+    private fun pspUnit(vararg folders: String, prefix: String = "ULUS10064") =
+        SaveUnit.Prefixed(saveData, prefix, folders.map { SaveRoot(it, saveData.resolve(it)) }, leftOut = setOf("ULUS10064INSTALL"))
+
+    /** An archive as Argosy writes one: each folder's directory entry, then its files. */
+    private fun pspArchive(): Path = zipOf(path("psp.zip"),
+        "ULUS10064DATA00/" to null, "ULUS10064DATA00/DATA.BIN" to byteArrayOf(9, 9), "ULUS10064DATA00/PARAM.SFO" to byteArrayOf(8),
+        "ULUS10064DATA02/" to null, "ULUS10064DATA02/DATA.BIN" to byteArrayOf(7, 7, 7),
+        "ULUS10065DATA00/" to null, "ULUS10065DATA00/DATA.BIN" to byteArrayOf(0))
+
+    /** Every file and folder in SAVEDATA with its bytes (a folder's are null), work folders aside. */
+    private fun saveDataTree(): Map<String, List<Byte>?> = Files.walk(saveData).use { walk ->
+        walk.iterator().asSequence().filter { it != saveData }.map { saveData.relativize(it).joinToString("/") }
+            .filterNot { it.startsWith(".loom-restore-") }
+            .associateWith { name -> saveData.resolve(name).let { if (Files.isDirectory(it)) null else Files.readAllBytes(it).toList() } }
+    }
+
+    @Test fun aFolderTheCardLacksComesFromTheArchive() {
+        pspCard()
+        val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")
+        val hash = SaveRestorer().restore(pspArchive(), unit, unit.hash())
+
+        assertThat(Files.readAllBytes(saveData.resolve("ULUS10064DATA02/DATA.BIN"))).isEqualTo(byteArrayOf(7, 7, 7))
+        assertThat(Files.readAllBytes(saveData.resolve("ULUS10064DATA00/DATA.BIN"))).isEqualTo(byteArrayOf(9, 9))
+        assertThat(hash).isEqualTo(SaveHasher.hashZip(pspArchive(), setOf("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")))
+        assertThat(unit.hash()).isEqualTo(hash)
+    }
+
+    /** As Argosy's restore deletes a game's folders before unzipping: one the archive lacks doesn't stay behind, empty. */
+    @Test fun aFolderTheArchiveLacksIsEmptiedThenRemoved() {
+        pspCard()
+        val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")
+        SaveRestorer().restore(pspArchive(), unit, unit.hash())
+
+        assertThat(Files.exists(saveData.resolve("ULUS10064DATA01"))).isFalse()
+        assertThat(saveDataTree().keys.filter { it.startsWith("ULUS10064DATA") }).containsExactly(
+            "ULUS10064DATA00", "ULUS10064DATA00/DATA.BIN", "ULUS10064DATA00/PARAM.SFO", "ULUS10064DATA02", "ULUS10064DATA02/DATA.BIN",
+        )
+        assertThat(Files.list(saveData).use { l -> l.iterator().asSequence().none { it.fileName.toString().startsWith(".") } }).isTrue()
+    }
+
+    /** A restore that fails takes out the folders it made, and leaves those it emptied as they were. */
+    @Test fun aRollbackRemovesTheFoldersItMade() {
+        for (failAt in 1..7) {
+            tmp.root.listFiles()!!.forEach { it.deleteRecursively() }
+            pspCard()
+            val before = saveDataTree()
+            val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")
+            var moves = 0
+            val failing = SaveRestorer { from, to ->
+                if (++moves == failAt) throw IOException("card removed")
+                SaveRestorer.FileMover.Rename.move(from, to)
+            }
+            assertThrows("failing move $failAt", IOException::class.java) { failing.restore(pspArchive(), unit, unit.hash()) }
+            assertThat(saveDataTree()).isEqualTo(before)
+            assertThat(Files.list(saveData).use { it.count() }).isEqualTo(4) // no work folder left
+        }
+    }
+
+    /** Another game's folders, and this game's installed data, are never part of its restore, whatever the archive holds. */
+    @Test fun otherGamesFoldersInTheParentAreNeverTouched() {
+        pspCard()
+        Files.write(saveData.resolve("notes.txt"), byteArrayOf(1))
+        val untouched = saveDataTree().filterKeys { !it.startsWith("ULUS10064DATA") }
+        val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")
+        SaveRestorer().restore(pspArchive(), unit, unit.hash())
+
+        assertThat(saveDataTree().filterKeys { !it.startsWith("ULUS10064DATA") }).isEqualTo(untouched)
+        assertThat(untouched.keys).containsAtLeast("ULUS10065DATA00/DATA.BIN", "ULUS10064INSTALL/DATA.DAT", "notes.txt")
+    }
+
+    /** Loom dies midway: the next look at this game, or at another's in SAVEDATA, puts the card back as it was. */
+    @Test fun recoverUndoesAPrefixedRestore() {
+        for (dieAt in 1..7) for (byOther in listOf(false, true)) {
+            tmp.root.listFiles()!!.forEach { it.deleteRecursively() }
+            pspCard()
+            val before = saveDataTree()
+            val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")
+            var moves = 0
+            val dying = SaveRestorer { from, to ->
+                if (++moves == dieAt) throw ProcessDeath()
+                SaveRestorer.FileMover.Rename.move(from, to)
+            }
+            assertThrows(ProcessDeath::class.java) { dying.restore(pspArchive(), unit, unit.hash()) }
+
+            val other = pspUnit("ULUS10065DATA00", prefix = "ULUS10065")
+            assertThat(SaveRestorer().recover(if (byOther) other else pspUnit("ULUS10064DATA00", "ULUS10064DATA01"))).isTrue()
+            assertThat(saveDataTree()).isEqualTo(before)
+            assertThat(Files.list(saveData).use { it.count() }).isEqualTo(4)
+        }
+    }
+
+    /** As for a raw save: another PSP game's restore that can't be undone never stops this game's. */
+    @Test fun anotherPspGamesRestoreThatCantBeUndoneDoesntStopThisOne() {
+        pspCard()
+        val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")
+        var moves = 0
+        val dying = SaveRestorer { from, to ->
+            if (++moves == 5) throw ProcessDeath() // the four old files aside, RomM's not yet in
+            SaveRestorer.FileMover.Rename.move(from, to)
+        }
+        assertThrows(ProcessDeath::class.java) { dying.restore(pspArchive(), unit, unit.hash()) }
+        folderOf(saveData.resolve("ULUS10064DATA00"), "DATA.BIN" to byteArrayOf(6)) // PPSSPP saved anew meanwhile
+
+        val other = pspUnit("ULUS10065DATA00", prefix = "ULUS10065")
+        assertThat(SaveRestorer().recover(other)).isTrue()
+        assertThat(SaveRestorer().restore(pspArchive(), other, other.hash())).isEqualTo(SaveHasher.hashZip(pspArchive(), setOf("ULUS10065DATA00")))
+        assertThrows(IOException::class.java) { SaveRestorer().recover(unit) }
+        assertThat(Files.readAllBytes(saveData.resolve("ULUS10064DATA00/DATA.BIN"))).isEqualTo(byteArrayOf(6))
+    }
+
+    /** A game with no save on the card yet: its unit has no folder, and still restores. */
+    @Test fun aPrefixedUnitWithNoFolderYetRestores() {
+        Files.createDirectories(saveData)
+        val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA02")
+        assertThat(unit.hash()).isNull()
+        val hash = SaveRestorer().restore(pspArchive(), unit, expectedCurrent = null)
+        assertThat(unit.hash()).isEqualTo(hash)
+        assertThat(Files.list(saveData).use { l -> l.iterator().asSequence().map { it.fileName.toString() }.sorted().toList() })
+            .containsExactly("ULUS10064DATA00", "ULUS10064DATA02")
     }
 
     private class ProcessDeath : Error("killed")

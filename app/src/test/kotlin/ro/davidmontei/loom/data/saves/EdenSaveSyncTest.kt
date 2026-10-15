@@ -8,9 +8,10 @@ import org.junit.runner.RunWith
 import org.robolectric.shadows.ShadowLog
 import ro.davidmontei.loom.data.db.InstallKind
 import ro.davidmontei.loom.data.db.SaveSyncState
-import ro.davidmontei.loom.data.db.SwitchTitleSource
+import ro.davidmontei.loom.data.db.SaveKeySource
 import ro.davidmontei.loom.storage.saves.SaveHasher
 import ro.davidmontei.loom.storage.saves.SaveRestorer
+import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import ro.davidmontei.loom.storage.saves.SyncDecision
 import java.io.File
@@ -56,9 +57,9 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         installSwitch(wonder)
         writeEdenSave(wonder, bytes(1))
         engine().sync(SaveSyncRequest.PUSH)
-        val recorded = saves.switchTitle(wonder.romId)!!
-        assertThat(recorded.titleId).isEqualTo("0100A0B00C0D0000")
-        assertThat(recorded.source).isEqualTo(SwitchTitleSource.IMAGE)
+        val recorded = saves.saveKey("eden", wonder.romId)!!
+        assertThat(recorded.saveKey).isEqualTo("0100A0B00C0D0000")
+        assertThat(recorded.source).isEqualTo(SaveKeySource.IMAGE)
 
         File(volume, "ROMs/prod.keys").delete() // nothing to read the image with now
         engine().sync(SaveSyncRequest.PUSH)
@@ -85,8 +86,8 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         fun holdsKey(bytes: ByteArray) = String(bytes, Charsets.ISO_8859_1).let { it.contains(key, ignoreCase = true) || it.contains(raw) }
         fun holdsKey(text: String?) = text != null && holdsKey(text.toByteArray(Charsets.ISO_8859_1))
         // The database: what Loom recorded of the game.
-        val title = saves.switchTitle(wonder.romId)!!
-        assertThat(listOf(title.titleId, title.imageFingerprint).none(::holdsKey)).isTrue()
+        val title = saves.saveKey("eden", wonder.romId)!!
+        assertThat(listOf(title.saveKey, title.imageFingerprint).none(::holdsKey)).isTrue()
         val unit = saves.unit(wonder.romId)!!
         assertThat(listOf(unit.detail, unit.unitPath, unit.fingerprint, unit.localHash).none(::holdsKey)).isTrue()
         // Every file Loom wrote (settings, scratch space, the card's backups) and RomM's stored saves.
@@ -108,15 +109,15 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         assertThat(state(wonder)).isEqualTo(SaveSyncState.NEEDS_FOLDER)
         assertThat(romm.uploads()).isEmpty()
 
-        val choice = eden().folderChoice(wonder.romId) as EdenFolderChoice.Options
-        assertThat(choice.folders.map { it.titleId.toString() }).containsExactly(arceus.titleId, wonder.titleId).inOrder() // newest first
+        val choice = eden().folderChoice(wonder.romId) as FolderChoice.Options
+        assertThat(choice.options.map { it.key }).containsExactly(arceus.titleId, wonder.titleId).inOrder() // newest first
         assertThat(choice.current).isNull()
 
         eden().chooseFolder(wonder.romId, SwitchTitleId.parse(wonder.titleId)!!)
         assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(wonder.romId)
         assertThat(archiveEntries(romm.head(wonder.romId)!!.bytes)).contains("0100A0B00C0D0000/game_data.sav")
-        assertThat(saves.switchTitle(wonder.romId)!!.source).isEqualTo(SwitchTitleSource.OWNER)
-        assertThat((eden().folderChoice(wonder.romId) as EdenFolderChoice.Options).current.toString()).isEqualTo(wonder.titleId)
+        assertThat(saves.saveKey("eden", wonder.romId)!!.source).isEqualTo(SaveKeySource.OWNER)
+        assertThat((eden().folderChoice(wonder.romId) as FolderChoice.Options).current).isEqualTo(wonder.titleId)
     }
 
     /**
@@ -145,7 +146,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         eden().chooseFolder(wonder.romId, SwitchTitleId.parse(wonder.titleId)!!)
         engine().sync(SaveSyncRequest.PUSH)
         assertThat(state(wonder)).isNotEqualTo(SaveSyncState.NEEDS_FOLDER)
-        assertThat(saves.switchTitle(wonder.romId)!!.imageFingerprint).isNotNull() // checked against the image, not read again
+        assertThat(saves.saveKey("eden", wonder.romId)!!.imageFingerprint).isNotNull() // checked against the image, not read again
     }
 
     /** A pick the game's file agrees with, or can't speak to (no prod.keys), stands. */
@@ -157,7 +158,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         putProdKeys()
         engine().sync(SaveSyncRequest.PUSH)
         assertThat(state(wonder)).isEqualTo(SaveSyncState.IN_SYNC)
-        assertThat(saves.switchTitle(wonder.romId)!!.source).isEqualTo(SwitchTitleSource.OWNER)
+        assertThat(saves.saveKey("eden", wonder.romId)!!.source).isEqualTo(SaveKeySource.OWNER)
     }
 
     /** A prod.keys without a usable header_key, or whose key opens nothing, doesn't hide a good one in the Switch folder. */
@@ -196,7 +197,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         installSwitch(wonder)
         writeEdenSave(wonder, bytes(1))
         engine().sync(SaveSyncRequest.PUSH)
-        assertThat(saves.switchTitle(wonder.romId)).isNotNull()
+        assertThat(saves.saveKey("eden", wonder.romId)).isNotNull()
 
         File(volume, "ROMs/prod.keys").delete()
         val image = File(volume, "ROMs/switch/Super Mario Bros Wonder.xci")
@@ -204,9 +205,9 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         installSwitch(arceus)
         engine().sync(SaveSyncRequest.PUSH)
 
-        assertThat(saves.switchTitle(wonder.romId)).isNull()
-        val choice = eden().folderChoice(arceus.romId) as EdenFolderChoice.Options
-        assertThat(choice.folders.map { it.titleId.toString() }).contains(wonder.titleId)
+        assertThat(saves.saveKey("eden", wonder.romId)).isNull()
+        val choice = eden().folderChoice(arceus.romId) as FolderChoice.Options
+        assertThat(choice.options.map { it.key }).contains(wonder.titleId)
     }
 
     /**
@@ -277,7 +278,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
     @Test fun keepingTheSyncedFolderCarriesOnAndLeavesTheOtherAlone() = runBlocking<Unit> {
         wonderInBothFolders()
         val profile = folderBytes(edenFolder(wonder))
-        val repository = SaveRepository(engine(), saves, eden(), scope)
+        val repository = SaveRepository(engine(), saves, eden(), ppssppSaves(), scope)
 
         assertThat(repository.chooseSyncedFolder(wonder.romId, wonder.title, consoleWide.toPath()))
             .isEqualTo("Loom now syncs Super Mario Bros Wonder's save from Eden's console-wide folder, and leaves the other as it is")
@@ -301,7 +302,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         wonderInBothFolders()
         val console = folderBytes(consoleWide)
         val profileHash = SaveHasher.hashUnit(edenUnit(wonder))
-        val repository = SaveRepository(engine(), saves, eden(), scope)
+        val repository = SaveRepository(engine(), saves, eden(), ppssppSaves(), scope)
 
         assertThat(repository.chooseSyncedFolder(wonder.romId, wonder.title, edenFolder(wonder).toPath())).isEqualTo(
             "Loom now syncs Super Mario Bros Wonder's save from Eden's profile folder, and leaves the other as it is. " +
@@ -334,8 +335,8 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
 
     /**
      * A wrong pick: RomM holds the game's save, the Thor's picked folder another game's. Keeping
-     * RomM's says the archive is for another title instead of failing obscurely, and picking the
-     * right folder clears the conflict.
+     * RomM's says the archive is for another title instead of failing obscurely, and the conflict
+     * says so from then on; picking the right folder clears it.
      */
     @Test fun aConflictFromAWrongPickIsExplainedAndUndoneByPickingAgain() = runBlocking<Unit> {
         installSwitch(wonder)
@@ -347,13 +348,16 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
 
         val kept = engine().resolveConflict(wonder.romId, ConflictChoice.KEEP_SERVER)
 
-        assertThat(kept).isEqualTo(ResolveResult.Failed(
-            "RomM's save is for title 0100A0B00C0D0000, not 01002B300C1D2000, the save folder this game uses. " +
-                "If that folder is the wrong one, change it in the game's details; nothing was replaced",
-        ))
+        val why = "RomM's save is for title 0100A0B00C0D0000, not 01002B300C1D2000, the save folder this game uses. " +
+            "If that folder is the wrong one, change it in the game's details; nothing was replaced"
+        assertThat(kept).isEqualTo(ResolveResult.Failed(why, stale = true))
         assertThat(File(edenFolder(arceus), "game_data.sav").readBytes()).isEqualTo(bytes(2))
+        assertThat(saves.conflict(wonder.romId)!!.reason).isEqualTo(SyncDecision.SERVER_UNREADABLE.name)
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(saves.conflict(wonder.romId)!!.detail).isEqualTo(why)
+        assertThat(detail(wonder)).isEqualTo(why)
 
-        val repository = SaveRepository(engine(), saves, eden(), scope)
+        val repository = SaveRepository(engine(), saves, eden(), ppssppSaves(), scope)
         repository.chooseSaveFolder(wonder.romId, wonder.title, SwitchTitleId.parse(wonder.titleId)!!)
         assertThat(saves.conflict(wonder.romId)).isNull()
         assertThat(state(wonder)).isEqualTo(SaveSyncState.SERVER_NEWER) // RomM's save, for the Thor to take when asked
@@ -371,8 +375,8 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         engine().sync(SaveSyncRequest.PUSH)
         assertThat(state(wonder)).isEqualTo(SaveSyncState.NEEDS_FOLDER)
 
-        val choice = eden().folderChoice(wonder.romId) as EdenFolderChoice.Options
-        assertThat(choice.folders.map { it.titleId.toString() }).containsExactly(wonder.titleId)
+        val choice = eden().folderChoice(wonder.romId) as FolderChoice.Options
+        assertThat(choice.options.map { it.key }).containsExactly(wonder.titleId)
     }
 
     @Test fun aKeyThatDoesntOpenTheImageAsksToo() = runBlocking<Unit> {
@@ -423,7 +427,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         // Whose saves comes first: a game's folder can only be picked from a profile's.
         engine().sync(SaveSyncRequest.PUSH)
         assertThat(detail(wonder)).isEqualTo(EdenSaves.SEVERAL_PROFILES)
-        assertThat(eden().folderChoice(wonder.romId)).isEqualTo(EdenFolderChoice.Unavailable(EdenSaves.SEVERAL_PROFILES))
+        assertThat(eden().folderChoice(wonder.romId)).isEqualTo(FolderChoice.Unavailable(EdenSaves.SEVERAL_PROFILES))
 
         putProdKeys()
         engine().sync(SaveSyncRequest.PUSH)
@@ -503,8 +507,39 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         assertThat(File(edenFolder(wonder), "option_data.sav").exists()).isTrue()
     }
 
-    /** A save larger than Loom restores for Eden isn't uploaded: it could never come back. */
-    @Test fun aSaveTooLargeToRestoreIsntUploaded() = runBlocking<Unit> {
+    /**
+     * Loom died swapping a restored save in for one game, leaving its work folder in the profile
+     * folder every game's save is in. The next game read undoes that restore and syncs, instead of
+     * failing every run until the other game is read.
+     */
+    @Test fun aSwitchGameIsReadWhileAnotherGamesRestoreIsUnfinished() = runBlocking<Unit> {
+        putProdKeys()
+        installSwitch(wonder)
+        installSwitch(arceus)
+        writeEdenSave(wonder, bytes(1))
+        writeEdenSave(arceus, bytes(2))
+        engine().sync(SaveSyncRequest.PUSH)
+        val work = File(edenFolder(arceus).parentFile, ".loom-restore-1")
+        File(work, "old/${arceus.titleId}").mkdirs()
+        File(work, "journal").writeText("${arceus.titleId}/game_data.sav\n\n${arceus.titleId}/game_data.sav")
+        File(edenFolder(arceus), "game_data.sav").renameTo(File(work, "old/${arceus.titleId}/game_data.sav"))
+        File(edenFolder(arceus), "game_data.sav").writeBytes(bytes(9)) // the new file was in place
+        val changed = writeEdenSave(wonder, bytes(3), minutesAgo = 5)
+
+        val report = engine().sync(SaveSyncRequest.upload(wonder.romId))
+
+        assertThat(report.failed).isEmpty()
+        assertThat(report.uploaded).containsExactly(wonder.romId)
+        assertThat(romm.head(wonder.romId)!!.hash).isEqualTo(changed)
+        assertThat(File(edenFolder(arceus), "game_data.sav").readBytes()).isEqualTo(bytes(2))
+        assertThat(work.exists()).isFalse()
+    }
+
+    /**
+     * A save larger than Loom restores for Eden isn't uploaded: it could never come back. That
+     * stands until the save shrinks, so the game says why, once, rather than failing every run.
+     */
+    @Test fun aSaveTooLargeToRestoreSaysWhyAndIsntCountedAsFailed() = runBlocking<Unit> {
         edenMaxUnitBytes = 8 * 1024
         putProdKeys()
         installSwitch(wonder)
@@ -512,9 +547,22 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
 
         val report = engine().sync(SaveSyncRequest.PUSH)
 
-        assertThat(report.failed.getValue(wonder.romId)).isEqualTo("This save is 16.0 KB, more than Loom restores (8.0 KB), so it isn't uploaded")
+        val why = "Eden keeps ${formatBytes(16 * 1024 + 7)} in this game's save, more than Loom syncs (${formatBytes(8 * 1024)})"
+        assertThat(report.failed).isEmpty()
+        assertThat(report.unsupported).containsExactly(wonder.romId, why)
+        assertThat(report.summary()).isEqualTo("no changes")
         assertThat(romm.uploads()).isEmpty()
-        assertThat(state(wonder)).isEqualTo(SaveSyncState.ERROR)
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.UNSUPPORTED)
+        assertThat(detail(wonder)).isEqualTo(why)
+        // A look says the same, rather than promising an upload with the next sync.
+        assertThat(engine().sync(SaveSyncRequest.CHECK).unsupported).containsExactly(wonder.romId, why)
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.UNSUPPORTED)
+        val repository = SaveRepository(engine(), saves, eden(), ppssppSaves(), scope)
+        assertThat(repository.upload(wonder.romId, wonder.title)).isEqualTo("Super Mario Bros Wonder's save isn't synced: $why")
+
+        writeEdenSave(wonder, bytes(2)) // small again
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(wonder.romId)
+        assertThat(state(wonder)).isEqualTo(SaveSyncState.IN_SYNC)
     }
 
     /** A restore unpacks at most what Loom allows for the game's emulator, whatever the default. */

@@ -16,10 +16,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SaveBaselineEntity::class,
         SaveConflictEntity::class,
         SaveUnitEntity::class,
-        SwitchTitleEntity::class,
+        SaveKeyEntity::class,
         SyncedFolderEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class LoomDatabase : RoomDatabase() {
@@ -102,5 +102,27 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
 val MIGRATION_5_6 = object : Migration(5, 6) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE `download_jobs` ADD COLUMN `install_request_id` TEXT")
+    }
+}
+
+/**
+ * Version 7 (DS and PSP saves): what names each game's save in its emulator's save folder is kept
+ * per emulator and game, in one table: Eden's title IDs move there, read or chosen as they were,
+ * and PPSSPP's disc IDs join them. A save conflict can say why RomM's save can't be restored.
+ */
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `save_keys` (`emulator` TEXT NOT NULL, `rom_id` INTEGER NOT NULL, `save_key` TEXT NOT NULL, " +
+                "`source` TEXT NOT NULL, `image_fingerprint` TEXT, `recorded_at` INTEGER NOT NULL, PRIMARY KEY(`emulator`, `rom_id`))",
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_save_keys_emulator_save_key` ON `save_keys` (`emulator`, `save_key`)")
+        db.execSQL(
+            "INSERT INTO `save_keys` (`emulator`, `rom_id`, `save_key`, `source`, `image_fingerprint`, `recorded_at`) " +
+                "SELECT 'eden', `rom_id`, `title_id`, `source`, `image_fingerprint`, `recorded_at` FROM `switch_titles`",
+        )
+        db.execSQL("DROP TABLE `switch_titles`")
+        db.execSQL("ALTER TABLE `save_conflicts` ADD COLUMN `detail` TEXT")
+        db.execSQL("ALTER TABLE `save_conflicts` ADD COLUMN `unit_path` TEXT")
     }
 }

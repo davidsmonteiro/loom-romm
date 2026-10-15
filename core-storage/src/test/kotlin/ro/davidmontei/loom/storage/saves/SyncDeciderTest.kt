@@ -4,6 +4,7 @@ import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
 import org.junit.Test
 import ro.davidmontei.loom.storage.saves.NegotiatedAction.CONFLICT
+import ro.davidmontei.loom.storage.saves.NegotiatedAction.DELETE
 import ro.davidmontei.loom.storage.saves.NegotiatedAction.DOWNLOAD
 import ro.davidmontei.loom.storage.saves.NegotiatedAction.NO_OP
 import ro.davidmontei.loom.storage.saves.NegotiatedAction.OTHER
@@ -20,6 +21,8 @@ import ro.davidmontei.loom.storage.saves.SyncDecision.NEW_ON_SERVER
 import ro.davidmontei.loom.storage.saves.SyncDecision.NOTHING_TO_SYNC
 import ro.davidmontei.loom.storage.saves.SyncDecision.SAME_CONTENT
 import ro.davidmontei.loom.storage.saves.SyncDecision.SERVER_CHANGED
+import ro.davidmontei.loom.storage.saves.SyncDecision.SERVER_DELETED
+import ro.davidmontei.loom.storage.saves.SyncDecision.SERVER_ROLLED_BACK
 import ro.davidmontei.loom.storage.saves.SyncDecision.SERVER_SAYS_CONFLICT
 import ro.davidmontei.loom.storage.saves.SyncDecision.SERVER_SLOT_GONE
 import ro.davidmontei.loom.storage.saves.SyncDecision.SERVER_WENT_BACK
@@ -90,7 +93,8 @@ class SyncDeciderTest {
         Case("(b) negotiate wants a download while nothing changed", "h0", synced, headAtSync, DISAGREES_WITH_SERVER, DOWNLOAD),
         Case("(b) negotiate wants an upload of a save only the server changed", "h0", synced, newerHead, DISAGREES_WITH_SERVER, UPLOAD),
         Case("(b) negotiate offers the head to a Thor that deleted its save", null, synced, headAtSync, DISAGREES_WITH_SERVER, DOWNLOAD),
-        Case("(b) RomM 5.4.0's delete is never acted on alone", "h0", synced, headAtSync, DISAGREES_WITH_SERVER, OTHER),
+        Case("(b) an answer from a newer RomM is never acted on alone", "h0", synced, headAtSync, DISAGREES_WITH_SERVER, OTHER),
+        Case("(b) a delete while RomM still has a head", "h0", synced, headAtSync, DISAGREES_WITH_SERVER, DELETE),
         Case("(d) first sync, different saves", "h1", null, headAtSync, FIRST_SYNC_DIFFERS),
         Case("(d) first sync, server couldn't hash its save", "h1", null, headAtSync.copy(contentHash = null), FIRST_SYNC_DIFFERS),
         Case("(e) the server's newest version was deleted",
@@ -101,10 +105,23 @@ class SyncDeciderTest {
         Case("(e) slot emptied on the server", "h0", synced, null, SERVER_SLOT_GONE),
         Case("(e) trap: slot emptied, negotiate says upload (would re-create it)", "h0", synced, null, SERVER_SLOT_GONE, UPLOAD),
         Case("(e) slot emptied while the Thor played on", "h1", synced, null, SERVER_SLOT_GONE),
+        Case("(e) RomM 5.4.0 says the Thor's save was deleted there", "h0", synced, null, SERVER_DELETED, DELETE),
+        Case("(e) RomM 5.4.0 says a save Loom never synced from here was deleted there", "h1", null, null, SERVER_DELETED, DELETE),
+        Case("(e) RomM 5.4.0 says the Thor holds a version it deleted",
+            "h2", synced.copy(localHash = "h2", serverSaveId = 11, serverHash = "h2", serverUpdatedAt = t1), headAtSync, SERVER_ROLLED_BACK, DOWNLOAD),
         Case("(f) newer save from another emulator", "h0", synced, newerHead.copy(emulator = "mgba"), FOREIGN_EMULATOR),
         Case("(f) trap: negotiate says download a web player save", "h0", synced, newerHead.copy(emulator = "mgba"), FOREIGN_EMULATOR, DOWNLOAD),
         Case("(f) newer save uploaded without an emulator", "h0", synced, newerHead.copy(emulator = null), FOREIGN_EMULATOR),
         Case("(f) new device, the server's save is another emulator's", null, null, headAtSync.copy(emulator = "mgba"), FOREIGN_EMULATOR),
+    )
+
+    /** Every local save, baseline and head [noCombinationLosesASave] tries. */
+    private val locals = listOf(null, "h0", "h1", "h2", "hL")
+    private val baselines = listOf(null, synced, synced.copy(localHash = "hL", serverHash = "hS"))
+    private val heads = listOf(
+        null, headAtSync, newerHead, headAtSync.copy(updatedAt = t1), headAtSync.copy(contentHash = "h2", updatedAt = t1),
+        newerHead.copy(emulator = "mgba"), newerHead.copy(emulator = null), newerHead.copy(contentHash = null),
+        ServerHead(9, "h3", t0.minusSeconds(60), "azahar"), ServerHead(12, "h3", t0, "azahar"),
     )
 
     @Test fun everyCaseDecidesAsTheDesignSays() {
@@ -114,10 +131,10 @@ class SyncDeciderTest {
         }
     }
 
-    /** Every reason the decider can give is covered above (the 409 one is recorded by the upload). */
+    /** Every reason the decider can give is covered above (the 409 one is recorded by the upload, the unreadable one by the download). */
     @Test fun theTableCoversEveryDecision() {
         val covered = cases.map { it.expected }.toSet()
-        assertThat(SyncDecision.entries.toSet() - covered).containsExactly(SyncDecision.UPLOAD_REJECTED)
+        assertThat(SyncDecision.entries.toSet() - covered).containsExactly(SyncDecision.UPLOAD_REJECTED, SyncDecision.SERVER_UNREADABLE)
     }
 
     /**
@@ -126,18 +143,11 @@ class SyncDeciderTest {
      * server is unchanged; and never against what negotiate said.
      */
     @Test fun noCombinationLosesASave() {
-        val locals = listOf(null, "h0", "h1", "h2", "hL")
-        val baselines = listOf(null, synced, synced.copy(localHash = "hL", serverHash = "hS"))
-        val heads = listOf(
-            null, headAtSync, newerHead, headAtSync.copy(updatedAt = t1), headAtSync.copy(contentHash = "h2", updatedAt = t1),
-            newerHead.copy(emulator = "mgba"), newerHead.copy(emulator = null), newerHead.copy(contentHash = null),
-            ServerHead(9, "h3", t0.minusSeconds(60), "azahar"), ServerHead(12, "h3", t0, "azahar"),
-        )
         val answers = listOf(null) + NegotiatedAction.entries
         for (local in locals) for (base in baselines) for (head in heads) for (answer in answers) {
             val decision = SyncDecider.decide(local, "azahar", base, head, answer)
             val what = "local=$local base=$base head=$head negotiated=$answer -> $decision"
-            assertWithMessage(what).that(decision).isNotEqualTo(SyncDecision.UPLOAD_REJECTED)
+            assertWithMessage(what).that(decision).isNoneOf(SyncDecision.UPLOAD_REJECTED, SyncDecision.SERVER_UNREADABLE)
             when (decision.outcome) {
                 SyncOutcome.DOWNLOAD -> {
                     assertWithMessage(what).that(local == null || local == base?.localHash).isTrue()
@@ -158,6 +168,36 @@ class SyncDeciderTest {
                 assertWithMessage(what).that(answer.name).isEqualTo(decision.outcome.name)
             }
         }
+    }
+
+    /**
+     * RomM 5.4.0's `delete` is a question, never an action: Loom has no way to delete the Thor's
+     * save, and doesn't quietly upload it back either. With the slot empty, the question says why.
+     */
+    @Test fun deleteIsNeverFollowedAlone() {
+        for (local in locals) for (base in baselines) for (head in heads) {
+            val decision = SyncDecider.decide(local, "azahar", base, head, DELETE)
+            val what = "local=$local base=$base head=$head -> $decision"
+            if (local != null && head == null) assertWithMessage(what).that(decision).isEqualTo(SERVER_DELETED)
+            assertWithMessage(what).that(decision.outcome).isAnyOf(SyncOutcome.CONFLICT, SyncOutcome.ADOPT)
+        }
+    }
+
+    /**
+     * PPSSPP Gold, as Argosy uploads it, keeps PPSSPP's saves on PPSSPP's memory stick: its newer
+     * save is taken as PPSSPP's own. Other emulators of the same system stay foreign: DeSmuME's
+     * save is never melonDS's.
+     */
+    @Test fun ppssppGoldsSaveIsPpssppsOwn() {
+        assertThat(SyncDecider.decide("h0", "ppsspp", synced, newerHead.copy(emulator = "ppsspp_gold"))).isEqualTo(SERVER_CHANGED)
+        assertThat(SyncDecider.decide(null, "ppsspp", null, headAtSync.copy(emulator = "ppsspp_gold"))).isEqualTo(NEW_ON_SERVER)
+        assertThat(SyncDecider.decide("h0", "ppsspp", synced, newerHead.copy(emulator = "ppsspp"))).isEqualTo(SERVER_CHANGED)
+        assertThat(SyncDecider.decide("h0", "melonds", synced, newerHead.copy(emulator = "melonds"))).isEqualTo(SERVER_CHANGED)
+        assertThat(SyncDecider.decide("h0", "melonds", synced, newerHead.copy(emulator = "desmume"))).isEqualTo(FOREIGN_EMULATOR)
+        assertThat(SyncDecider.decide("h0", "ppsspp", synced, newerHead.copy(emulator = "retroarch"))).isEqualTo(FOREIGN_EMULATOR)
+        assertThat(EmulatorIds.same("ppsspp_gold", "ppsspp")).isTrue()
+        assertThat(EmulatorIds.same(null, "ppsspp")).isFalse()
+        assertThat(EmulatorIds.same("azahar", "eden")).isFalse()
     }
 
     @Test fun reportedTimeKeepsAnUnchangedSaveAtItsSyncTime() {

@@ -692,8 +692,9 @@ private fun GameDialog(
             game.progress?.let { LoomProgressBar(it) }
             game.save?.let { save ->
                 Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                    Text(saveLine(save), style = MaterialTheme.typography.bodyLarge, color = saveColor(save), maxLines = 2,
-                        overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("save-line"))
+                    // Without save buttons below it, a reason has room in full: what to set in melonDS or PPSSPP.
+                    Text(saveLine(save), style = MaterialTheme.typography.bodyLarge, color = saveColor(save),
+                        maxLines = if (saveActions.isEmpty()) 4 else 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("save-line"))
                     if (saveActions.isNotEmpty()) {
                         Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
                             saveActions.forEach { action ->

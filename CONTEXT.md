@@ -1,6 +1,6 @@
 # Loom
 
-Loom moves games from a RomM server into the folders the Cocoon frontend scans on an AYN Thor, removes them again when space is needed, and keeps 3DS and Switch saves in sync with RomM. Cocoon stays the place to browse and play; Loom is the store you visit occasionally.
+Loom moves games from a RomM server into the folders the Cocoon frontend scans on an AYN Thor, removes them again when space is needed, and keeps 3DS, Switch, DS and PSP saves in sync with RomM. Cocoon stays the place to browse and play; Loom is the store you visit occasionally.
 
 ## Language
 
@@ -41,7 +41,7 @@ The single directory on the Thor whose subfolders Cocoon scans, e.g. `/storage/9
 _Avoid_: library path, base dir
 
 **System folder**:
-The subfolder of the ROMs root holding one system's games, the one Cocoon is set up to read for it, e.g. `snes`, `gc`, `n3ds`. The ROMs root's `saves` folder, where emulators' saves can be kept (`ROMs/saves/Eden`), is never one.
+The subfolder of the ROMs root holding one system's games, the one Cocoon is set up to read for it, e.g. `snes`, `gc`, `n3ds`. The ROMs root's `saves` folder, where emulators' saves can be kept (`ROMs/saves/Eden`, `ROMs/saves/melonDS`, `ROMs/saves/PPSSPP`), is never one.
 _Avoid_: platform folder, rom dir
 
 **Candidate folder**:
@@ -106,7 +106,7 @@ A game's own saved progress as its emulator keeps it (cartridge save, memory car
 _Avoid_: save state, save file (a save can be a folder)
 
 **Save unit**:
-Everything Loom syncs as one game's save, travelling as one file: a single save file, or folders zipped under fixed root names (`data/` for a 3DS title, the title ID folder itself for a Switch game, as Argosy does). Extdata and states are not part of it.
+Everything Loom syncs as one game's save, travelling as one file, as Argosy uploads it: folders zipped under fixed root names (`data/` for a 3DS title, the title ID folder itself for a Switch game), one raw file uploaded as itself (a DS game's `.sav`), or every folder starting with a game's disc ID, each zipped under its own name (a PSP game's, its installed game data left out). Extdata and states are not part of it.
 _Avoid_: save folder, save dir
 
 **Slot**:
@@ -118,11 +118,11 @@ What Loom recorded the last time a game's slot was in sync on the Thor: its own 
 _Avoid_: last sync, sync row (that is RomM's record of the device's last download or upload)
 
 **Save backup**:
-A zip of a save unit Loom takes before it replaces that save, kept on the same card in `.loom/save-backups/<rom id>/` (outside the ROMs root), newest ten per game.
+A copy of a save unit, as Loom uploads it (a zip, or a DS game's `.sav` itself), that Loom takes before it replaces that save, kept on the same card in `.loom/save-backups/<rom id>/` (outside the ROMs root), newest ten per game.
 _Avoid_: snapshot, copy
 
 **Save conflict**:
-A slot where Loom won't pick a side on its own: both sides changed since the baseline, the server's save went back or came from another emulator, or RomM disagrees with Loom. The user chooses Keep Thor, Keep server, Keep both or Skip.
+A slot where Loom won't pick a side on its own: both sides changed since the baseline, the server's save went back, was deleted or came from another emulator, RomM disagrees with Loom, or RomM's save can't be put in place of the Thor's (it isn't laid out as the emulator keeps saves). The user chooses Keep Thor, Keep server, Keep both or Skip, as far as each can be done.
 
 **Save sync run**:
 One pass over some or all installed games' saves: read and hash each, negotiate with RomM, decide each game from its baseline, then upload, restore or record a conflict. Never two at once.
@@ -137,11 +137,27 @@ Putting RomM's save in place of the Thor's, only when the user asks, once they h
 _Avoid_: pull, download (for what the user does)
 
 **Emulator id**:
-The name a save is synced under in RomM's `emulator` field: `azahar` for Azahar, `eden` for Eden. A newer save on RomM under another emulator id is never restored without asking.
+The name a save is synced under in RomM's `emulator` field: `azahar` for Azahar, `eden` for Eden, `melonds` for melonDS, `ppsspp` for PPSSPP, as Argosy and RomM's web player name them. A newer save on RomM under another emulator id is never restored without asking; PPSSPP Gold's `ppsspp_gold` counts as `ppsspp`.
 
 **Title ID**:
 The 16-hex-digit id of a game's own title (the application, not an update or DLC), which names its save folder: in Azahar's `title/00040000/<low>/`, in Eden's `<profile>/<title ID>/`. For 3DS games RomM or the cartridge header gives it; for Switch games Loom reads it from the image with the header key, or the owner picks the save folder.
 _Avoid_: game id, program id (an NCA's program id is a title ID only for the application's program)
+
+**Disc ID**:
+A PSP game's id, four capitals and five digits (`ULUS10064`), which starts the names of its save folders in PPSSPP (`ULUS10064DATA00`). RomM gives it when it read one (`save_target`, `title_id`); otherwise Loom reads it from the game's ISO, CSO or PBP, or the owner picks the save folders.
+_Avoid_: game id, serial, title ID (that is a 3DS or Switch game's)
+
+**Memory stick**:
+The folder PPSSPP keeps as a PSP's memory stick, `ROMs/saves/PPSSPP` on the Thor, holding `PSP/SAVEDATA` (every game's save folders) and `PSP/SYSTEM` (PPSSPP's settings).
+_Avoid_: memstick, PSP folder (that is the folder inside it)
+
+**Installed game data**:
+What some PSP games copy from the disc into `SAVEDATA`, beside their saves and under the same disc ID: not progress, so never synced. A folder is installed data when it has a `PARAM.SFO` Loom can read, of at most 64 KiB, holding neither `SAVEDATA_PARAMS` nor `SAVEDATA_FILE_LIST`: Argosy's rule.
+_Avoid_: install (that is a game on the card)
+
+**Save key**:
+What names a game's save among every game's in an emulator's shared folder: a Switch game's title ID in Eden's, a PSP game's disc ID in PPSSPP's. Loom keeps one per emulator and game, with where it came from (the image, RomM or the owner); two installed games with one save key sync neither.
+_Avoid_: save id
 
 **Header key**:
 The `header_key` in the owner's `prod.keys`, dumped from their Switch: it decrypts the NCA headers holding a Switch game's title ID. Read from the card only when a title ID is needed, held in memory for that read; never stored, logged or uploaded.
@@ -151,5 +167,5 @@ _Avoid_: prod key, keys (prod.keys holds many keys; Loom only ever uses this one
 A user folder (32 hex digits) in Eden's `user/save/0000000000000000/`, holding that user's saves. Loom syncs one profile's saves: the only one, or the one chosen in Settings. The all-zeros folder holds per-console saves and is no profile. When Eden holds a game's save in both (it saved per console, then per user), the owner picks which one Loom syncs; the other is left alone.
 
 **Archival copy**:
-A save version uploaded outside every slot, which negotiate never pairs. Keep both puts the Thor's save there, as "<game> (Thor <UTC date and time>).zip".
+A save version uploaded outside every slot, which negotiate never pairs. Keep both puts the Thor's save there, as "<game> (Thor <UTC date and time>).zip" (`.sav` for a DS save).
 _Avoid_: backup (backups stay on the card)
