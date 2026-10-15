@@ -3,9 +3,10 @@ package ro.davidmontei.loom.romm.dto
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-// Hand-written mirrors of RomM 5.3.1 schemas (components/schemas in /openapi.json), declaring only
+// Hand-written mirrors of RomM 5.4.0 schemas (components/schemas in /openapi.json), declaring only
 // the fields Loom reads. Unknown fields are ignored by the Json config. Nullability follows the
-// schema exactly; RommSchemaConformanceTest checks every class here against the committed snapshot.
+// schema exactly; RommSchemaConformanceTest checks every class here against the committed snapshot,
+// and that a field older servers don't send is optional (5.3.1's snapshot is kept for that).
 
 /** `HeartbeatResponse` (only the part Loom needs). */
 @Serializable

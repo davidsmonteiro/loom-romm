@@ -35,6 +35,11 @@ class RommApiTest {
         assertThat(server.takeRequest().url.encodedPath).isEqualTo("/romm/api/heartbeat")
     }
 
+    @Test fun the540HeartbeatReadsToo() = runTest {
+        server.enqueue(json(RommFixtures.HEARTBEAT_5_4_0))
+        assertThat(rommCall { api.heartbeat() }.system.version).isEqualTo("5.4.0")
+    }
+
     @Test fun platformsParse() = runTest {
         server.enqueue(json(JsonArray(listOf(platform(1, "snes"), platform(2, "ngc", name = "GameCube"))).toString()))
         val platforms = rommCall { api.platforms() }

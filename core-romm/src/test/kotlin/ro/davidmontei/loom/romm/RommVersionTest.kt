@@ -24,4 +24,12 @@ class RommVersionTest {
         assertThat(RommVersion.parse(ROMM_CONTRACT_VERSION)!!).isAtLeast(MIN_SUPPORTED_ROMM)
         assertThat(RommVersion(5, 10, 0)).isGreaterThan(RommVersion(5, 9, 3))
     }
+
+    @Test fun romm54IsWhereSendToDeviceStarts() {
+        assertThat(RommVersion.parse("5.3.1")!!).isLessThan(ROMM_5_4)
+        assertThat(RommVersion.parse("5.4.0")!!).isAtLeast(ROMM_5_4)
+        assertThat(RommVersion.parse("5.4.0-beta.2")!!).isAtLeast(ROMM_5_4)
+        assertThat(RommVersion.parse("development")!!).isAtLeast(ROMM_5_4)
+        assertThat(RommVersion.parse(ROMM_CONTRACT_VERSION)!!).isAtLeast(ROMM_5_4)
+    }
 }

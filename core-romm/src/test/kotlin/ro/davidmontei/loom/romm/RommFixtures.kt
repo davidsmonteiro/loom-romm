@@ -20,6 +20,13 @@ object RommFixtures {
         "METADATA_SOURCES":{"ANY_SOURCE_ENABLED":true},"FILESYSTEM":{"FS_PLATFORMS":[]},
         "OIDC":{"ENABLED":true,"PROVIDER":"authentik"}}"""
 
+    /** 5.4.0 adds DEVICE_INSTALL (send to device), CONVERTO and NOTIFICATIONS. */
+    const val HEARTBEAT_5_4_0 = """{"SYSTEM":{"VERSION":"5.4.0","GIT_BRANCH":null,"SHOW_SETUP_WIZARD":false},
+        "METADATA_SOURCES":{"ANY_SOURCE_ENABLED":true},"FILESYSTEM":{"FS_PLATFORMS":[],"TITLE_ID_EXTRACTION_ENABLED":true},
+        "OIDC":{"ENABLED":true,"PROVIDER":"authentik"},"NOTIFICATIONS":{"EMAIL_ENABLED":false,"EMAILS_RESET_LINKS":false},
+        "DEVICE_INSTALL":{"ENABLED":true,"EXCLUDED_PLATFORM_SLUGS":["win","win3x","win9x","windows-apps"]},
+        "CONVERTO":{"ENABLED":false}}"""
+
     fun platform(id: Int, slug: String, fsSlug: String = slug, name: String = slug.uppercase(), roms: Int = 1) =
         buildJsonObject {
             put("id", id); put("slug", slug); put("fs_slug", fsSlug); put("name", name)

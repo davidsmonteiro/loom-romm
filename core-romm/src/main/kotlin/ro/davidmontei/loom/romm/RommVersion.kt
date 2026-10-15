@@ -1,10 +1,13 @@
 package ro.davidmontei.loom.romm
 
 /** The RomM release whose OpenAPI schema the DTOs in this module were written against. */
-const val ROMM_CONTRACT_VERSION = "5.3.1"
+const val ROMM_CONTRACT_VERSION = "5.4.0"
 
 /** Device-authorization pairing arrived in RomM 5.0.0; Loom doesn't support anything older. */
 val MIN_SUPPORTED_ROMM = RommVersion(5, 0, 0)
+
+/** The first RomM with device installs ("send to device") and server-side save baselines. */
+val ROMM_5_4 = RommVersion(5, 4, 0)
 
 /**
  * A RomM server version. Pre-release and build suffixes ("5.4.0-beta.1") are dropped, so a

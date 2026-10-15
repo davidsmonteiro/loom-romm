@@ -32,7 +32,7 @@ Loom does not launch games, replace the home screen, or emulate anything. It doe
 
 | | |
 |---|---|
-| RomM | 5.0 or newer. Built and tested against **5.3.1**; 5.4 is compatible. |
+| RomM | 5.0 or newer. Built and tested against **5.4.0**. |
 | Device | Android 11+ (minSdk 30). Designed for the AYN Thor's top screen, which runs Android 13. |
 | Permissions | **All files access**, to write into the folders Cocoon scans. Loom is sideloaded, so Play policy doesn't apply. Also notifications, and an optional battery-optimisation exemption so downloads restart in the background. |
 
@@ -268,7 +268,7 @@ LOOM_TOKEN=rmm_… ./gradlew :core-romm:liveCheck -Promm.url=https://romm.exampl
 `ScreenshotTest` renders each screen at the Thor's top-screen size into `app/build/screenshots/`.
 
 Modules:
-- **`:core-romm`** (Kotlin/JVM): the RomM API client and pairing. DTOs are checked field by field against RomM 5.3.1's committed OpenAPI schema.
+- **`:core-romm`** (Kotlin/JVM): the RomM API client and pairing. DTOs are checked field by field against RomM 5.4.0's committed OpenAPI schema, and against 5.3.1's to keep older servers readable.
 - **`:core-storage`** (Kotlin/JVM): platform mapping, filename sanitiser, layout planner, `.m3u` builder, the download state machine and the transfer/verify/promote engine, and save sync's file side (hashing, archives, the sync rule, backups, restores, finding 3DS and Switch saves and reading their title IDs). Its tests use a Range-honouring fake RomM server, crash the engine at every phase, and read synthetic Switch images made with an independent AES-XTS (`src/test/resources/switch/make_fixtures.py`).
 - **`:app`:** Room, WorkManager, Hilt, Compose UI.
 

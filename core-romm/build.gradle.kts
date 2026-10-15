@@ -1,4 +1,4 @@
-// RomM API client: DTOs mirrored from the RomM 5.3.1 OpenAPI schema, Retrofit service, pairing flows.
+// RomM API client: DTOs mirrored from the RomM 5.4.0 OpenAPI schema, Retrofit service, pairing flows.
 // Pure Kotlin/JVM so every API test runs against MockWebServer without Android.
 plugins {
     alias(libs.plugins.kotlin.jvm)

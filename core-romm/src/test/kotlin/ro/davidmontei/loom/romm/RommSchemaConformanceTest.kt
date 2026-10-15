@@ -13,8 +13,10 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Test
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Query
 import ro.davidmontei.loom.romm.api.RommApi
 import ro.davidmontei.loom.romm.api.SAVE_FILE_FIELD
@@ -47,14 +49,13 @@ import ro.davidmontei.loom.romm.dto.UserDto
 /**
  * Checks the hand-written DTOs and the Retrofit interface against the OpenAPI schema served by
  * RomM [ROMM_CONTRACT_VERSION] (snapshot in test resources). Re-generate the snapshot from a
- * server's `/openapi.json` when bumping the contract; this test then lists every drift.
+ * server's `/openapi.json` when bumping the contract; this test then lists every drift. The
+ * oldest snapshot kept, RomM 5.3.1's, checks that the response DTOs still read older servers.
  */
 class RommSchemaConformanceTest {
 
-    private val openApi: JsonObject = Json.parseToJsonElement(
-        javaClass.getResource("/romm-openapi-$ROMM_CONTRACT_VERSION.json")!!.readText(),
-    ).jsonObject
-    private val schemas = openApi["components"]!!.jsonObject["schemas"]!!.jsonObject
+    private val openApi = snapshot(ROMM_CONTRACT_VERSION)
+    private val schemas = openApi.schemas()
 
     @Test fun snapshotIsTheContractVersion() {
         val version = openApi["info"]!!.jsonObject["version"]!!.jsonPrimitive.content
@@ -62,25 +63,37 @@ class RommSchemaConformanceTest {
     }
 
     @Test fun responseDtosMatchSchemas() {
-        check(HeartbeatDto.serializer(), "HeartbeatResponse")
-        check(SystemDto.serializer(), "SystemDict")
-        check(UserDto.serializer(), "UserSchema")
-        check(PlatformDto.serializer(), "PlatformSchema")
-        check(RomDto.serializer(), "SimpleRomSchema")
-        check(RomDto.serializer(), "DetailedRomSchema")
-        check(RomFileDto.serializer(), "RomFileSchema")
-        check(ArchiveMemberDto.serializer(), "RomArchiveMember")
-        check(RomPageDto.serializer(), "CustomLimitOffsetPage_SimpleRomSchema_")
-        check(DeviceAuthInitResponse.serializer(), "DeviceAuthInitResponse")
-        check(DeviceAuthTokenResponse.serializer(), "DeviceAuthTokenResponse")
-        check(ClientTokenCreateDto.serializer(), "ClientTokenCreateSchema")
-        check(SyncNegotiateResponseDto.serializer(), "SyncNegotiateResponse", newerFields = setOf("total_delete"))
-        check(SyncOperationDto.serializer(), "SyncOperationSchema")
-        check(SyncCompleteResponseDto.serializer(), "SyncCompleteResponse")
-        check(SyncSessionDto.serializer(), "SyncSessionSchema")
-        check(SaveDto.serializer(), "SaveSchema")
-        check(DeviceSyncDto.serializer(), "DeviceSyncSchema")
-        check(DeviceDto.serializer(), "DeviceSchema")
+        for ((serializer, schemaName) in RESPONSES + RESPONSES_SINCE_5_4) check(serializer, schemaName)
+    }
+
+    /**
+     * Loom still supports RomM 5.0 to 5.3, so a field it can't do without (neither optional nor
+     * nullable in Kotlin) must be required, and never null, in 5.3.1's schema too. A field newer
+     * RomMs added must be optional or nullable.
+     */
+    @Test fun responseDtosStillReadRomm531() {
+        val older = snapshot("5.3.1").schemas()
+        for ((serializer, schemaName) in RESPONSES) {
+            val schema = older[schemaName]?.jsonObject
+            assertWithMessage("5.3.1 has schema $schemaName").that(schema).isNotNull()
+            val properties = schema!!["properties"]!!.jsonObject
+            val required = schema["required"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty().toSet()
+            val d = serializer.descriptor
+            for (i in 0 until d.elementsCount) {
+                val name = d.getElementName(i)
+                val where = "${d.serialName}.$name vs 5.3.1 $schemaName"
+                val property = properties[name]?.jsonObject
+                if (!d.getElementDescriptor(i).isNullable && !d.isElementOptional(i)) {
+                    assertWithMessage("$where: must be required").that(required).contains(name)
+                    assertWithMessage("$where: schema allows null, Kotlin doesn't")
+                        .that(isNullable(older, property!!)).isFalse()
+                }
+                if (property != null) {
+                    assertWithMessage("$where: JSON type").that(kindOf(d.getElementDescriptor(i)))
+                        .isIn(schemaTypes(older, property))
+                }
+            }
+        }
     }
 
     @Test fun requestDtosMatchSchemas() {
@@ -106,6 +119,8 @@ class RommSchemaConformanceTest {
         for (method in RommApi::class.java.declaredMethods) {
             val (verb, annotated) = method.getAnnotation(GET::class.java)?.let { "get" to it.value }
                 ?: method.getAnnotation(POST::class.java)?.let { "post" to it.value }
+                ?: method.getAnnotation(PUT::class.java)?.let { "put" to it.value }
+                ?: method.getAnnotation(DELETE::class.java)?.let { "delete" to it.value }
                 ?: continue
             // A query fixed in the annotation ("…/content?optimistic=false") is checked like a @Query.
             val path = annotated.substringBefore('?')
@@ -134,17 +149,7 @@ class RommSchemaConformanceTest {
         }
     }
 
-    /**
-     * [newerFields] are sent by a newer RomM but not by the contract version: they must be optional
-     * in Kotlin (so the contract version still parses) and absent from the snapshot (so a bump
-     * turns them into plain fields).
-     */
-    private fun check(
-        serializer: KSerializer<*>,
-        schemaName: String,
-        isRequest: Boolean = false,
-        newerFields: Set<String> = emptySet(),
-    ) {
+    private fun check(serializer: KSerializer<*>, schemaName: String, isRequest: Boolean = false) {
         val schema = schemas[schemaName]?.jsonObject
         assertWithMessage("schema $schemaName exists").that(schema).isNotNull()
         val properties = schema!!["properties"]!!.jsonObject
@@ -153,15 +158,10 @@ class RommSchemaConformanceTest {
         for (i in 0 until d.elementsCount) {
             val name = d.getElementName(i)
             val where = "${d.serialName}.$name vs $schemaName"
-            if (name in newerFields) {
-                assertWithMessage("$where: newer field is in the snapshot").that(properties[name]).isNull()
-                assertWithMessage("$where: newer field must be optional").that(d.isElementOptional(i)).isTrue()
-                continue
-            }
             val property = properties[name]?.jsonObject
             assertWithMessage("$where: field exists").that(property).isNotNull()
             val element = d.getElementDescriptor(i)
-            val schemaNullable = isNullable(property!!)
+            val schemaNullable = isNullable(schemas, property!!)
             if (isRequest) {
                 // We may omit optional fields, but must always send required ones.
                 if (name in required) {
@@ -175,20 +175,25 @@ class RommSchemaConformanceTest {
                     assertWithMessage("$where: schema allows null, Kotlin doesn't").that(schemaNullable).isFalse()
                 }
             }
-            assertWithMessage("$where: JSON type").that(kindOf(element)).isIn(schemaTypes(property))
+            assertWithMessage("$where: JSON type").that(kindOf(element)).isIn(schemaTypes(schemas, property))
         }
     }
 
-    private fun isNullable(property: JsonObject): Boolean =
-        schemaTypes(property).contains("null")
+    private fun snapshot(version: String): JsonObject =
+        Json.parseToJsonElement(javaClass.getResource("/romm-openapi-$version.json")!!.readText()).jsonObject
+
+    private fun JsonObject.schemas(): JsonObject = this["components"]!!.jsonObject["schemas"]!!.jsonObject
+
+    private fun isNullable(schemas: JsonObject, property: JsonObject): Boolean =
+        schemaTypes(schemas, property).contains("null")
 
     /** JSON types a property allows, following anyOf and $ref (enums resolve to their type). */
-    private fun schemaTypes(property: JsonObject): Set<String> = when {
+    private fun schemaTypes(schemas: JsonObject, property: JsonObject): Set<String> = when {
         property["\$ref"] != null -> {
             val target = schemas[property["\$ref"]!!.jsonPrimitive.content.substringAfterLast('/')]!!.jsonObject
-            if (target["type"] != null || target["anyOf"] != null) schemaTypes(target) else setOf("object")
+            if (target["type"] != null || target["anyOf"] != null) schemaTypes(schemas, target) else setOf("object")
         }
-        property["anyOf"] != null -> property["anyOf"]!!.jsonArray.flatMap { schemaTypes(it.jsonObject) }.toSet()
+        property["anyOf"] != null -> property["anyOf"]!!.jsonArray.flatMap { schemaTypes(schemas, it.jsonObject) }.toSet()
         property["type"] is JsonPrimitive -> setOf(property["type"]!!.jsonPrimitive.content)
         property["type"] is JsonArray -> property["type"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet()
         else -> setOf("object") // untyped {} accepts anything we'd send as an object
@@ -205,13 +210,36 @@ class RommSchemaConformanceTest {
     }
 
     private companion object {
+        /** Responses every supported RomM serves; [responseDtosStillReadRomm531] checks them too. */
+        val RESPONSES: List<Pair<KSerializer<*>, String>> = listOf(
+            HeartbeatDto.serializer() to "HeartbeatResponse",
+            SystemDto.serializer() to "SystemDict",
+            UserDto.serializer() to "UserSchema",
+            PlatformDto.serializer() to "PlatformSchema",
+            RomDto.serializer() to "SimpleRomSchema",
+            RomDto.serializer() to "DetailedRomSchema",
+            RomFileDto.serializer() to "RomFileSchema",
+            ArchiveMemberDto.serializer() to "RomArchiveMember",
+            RomPageDto.serializer() to "CustomLimitOffsetPage_SimpleRomSchema_",
+            DeviceAuthInitResponse.serializer() to "DeviceAuthInitResponse",
+            DeviceAuthTokenResponse.serializer() to "DeviceAuthTokenResponse",
+            ClientTokenCreateDto.serializer() to "ClientTokenCreateSchema",
+            SyncNegotiateResponseDto.serializer() to "SyncNegotiateResponse",
+            SyncOperationDto.serializer() to "SyncOperationSchema",
+            SyncCompleteResponseDto.serializer() to "SyncCompleteResponse",
+            SyncSessionDto.serializer() to "SyncSessionSchema",
+            SaveDto.serializer() to "SaveSchema",
+            DeviceSyncDto.serializer() to "DeviceSyncSchema",
+            DeviceDto.serializer() to "DeviceSchema",
+        )
+
+        /** Responses only RomM 5.4 serves, to calls Loom makes once it knows the server is 5.4. */
+        val RESPONSES_SINCE_5_4: List<Pair<KSerializer<*>, String>> = emptyList()
+
         /**
          * Query parameters Loom sends for a newer RomM. FastAPI ignores parameters a route doesn't
          * declare, so the contract version accepts them unread.
          */
-        val NEWER_QUERY_PARAMS = mapOf(
-            // RomM 5.4.0 records it as this device's baseline for the slot.
-            "POST /api/saves" to setOf("content_hash"),
-        )
+        val NEWER_QUERY_PARAMS = emptyMap<String, Set<String>>()
     }
 }
