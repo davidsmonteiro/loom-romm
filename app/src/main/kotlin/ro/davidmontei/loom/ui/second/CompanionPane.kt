@@ -160,11 +160,12 @@ fun QueueStripRow(strip: QueueStrip, modifier: Modifier = Modifier) {
                     modifier = Modifier.weight(1f))
             }
         }
+        // The counts in full, the save conflicts last among them: the bar takes what they leave.
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
             strip.current?.let { LoomProgressBar(it.fraction, Modifier.weight(1f), height = 4.dp) }
             if (strip.counts.isNotEmpty()) {
                 Text(strip.counts, style = MaterialTheme.typography.labelMedium.tabular(), color = LoomColors.TextMuted, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    overflow = TextOverflow.Ellipsis)
             }
         }
     }

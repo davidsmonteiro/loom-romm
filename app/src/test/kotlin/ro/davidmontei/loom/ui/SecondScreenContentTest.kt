@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
@@ -11,8 +12,10 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -96,10 +99,33 @@ class SecondScreenContentTest {
         rule.onNodeWithText("12 more in the queue · 3 failed · 2 save conflicts").assertExists()
         val cover = rule.onNodeWithTag("panel-cover").fetchSemanticsNode().boundsInRoot
         assertThat(cover.bottom).isAtMost(rule.onNodeWithTag("queue-strip").fetchSemanticsNode().boundsInRoot.top)
+        assertWithMessage("the counts").that(ellipsized("12 more in the queue · 3 failed · 2 save conflicts")).isFalse()
         rule.saveScreenshot("second-screen-game-queue")
         strip = QueueStrip(null, waiting = 0, failed = 0, conflicts = 1) // nothing downloading: one line
         rule.assertFitsIn("second-screen")
         rule.onNodeWithText("1 save conflict").assertExists()
+    }
+
+    /**
+     * Found by review: beside a download's bar the counts had half the line, and the save conflicts,
+     * which come last, were cut off. The bar takes what the counts leave.
+     */
+    @Test fun theStripCountsSaveConflictsWhileADownloadRuns() {
+        val downloading = QueueScreenTest.item(1, "Final Fantasy VII (USA)", JobPhase.DOWNLOADING, done = 1_300_000_000, speed = 11_800_000)
+        show(CompanionContent.Game(tallest, "Nintendo 3DS", null), QueueStrip(downloading, waiting = 1, failed = 0, conflicts = 1))
+        for (queue in listOf(QueueStrip(downloading, 1, 0, 1), QueueStrip(downloading, 2, 1, 1), QueueStrip(downloading, 12, 3, 2))) {
+            strip = queue
+            rule.assertFitsIn("second-screen")
+            assertWithMessage(queue.counts).that(ellipsized(queue.counts)).isFalse()
+        }
+    }
+
+    /** Whether the one-line text [text] ends in an ellipsis. */
+    private fun ellipsized(text: String): Boolean {
+        val node = rule.onNodeWithText(text, useUnmergedTree = true).fetchSemanticsNode()
+        val layouts = mutableListOf<TextLayoutResult>()
+        node.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+        return layouts.single().isLineEllipsized(0)
     }
 
     /** The queue's conflict at its longest: a long title and reason, and RomM's side in full beside the Thor's. */
