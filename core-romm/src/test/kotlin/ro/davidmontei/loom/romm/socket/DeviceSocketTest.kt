@@ -20,6 +20,7 @@ import org.junit.Rule
 import org.junit.Test
 import java.net.SocketTimeoutException
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -130,6 +131,26 @@ class DeviceSocketTest {
         assertThat(events.first()).isEqualTo(DeviceEvent.Connected)
         assertThat((events.last() as DeviceEvent.Dropped).cause).isInstanceOf(SocketTimeoutException::class.java)
         assertThat(events).hasSize(2)
+    }
+
+    /**
+     * RomM's connect handler failed (its Redis out for a moment, say): it never answers the join, yet keeps
+     * pinging. The connection is dropped, so the next one can be let in, rather than kept open for nothing.
+     */
+    @Test fun aJoinRommNeverAnswersDropsTheSocket() {
+        val pinging = Executors.newSingleThreadScheduledExecutor()
+        try {
+            FakeRomm(pingInterval = 100, pingTimeout = 100, onConnect = { ws ->
+                pinging.scheduleWithFixedDelay({ ws.send("2") }, 0, 50, TimeUnit.MILLISECONDS)
+            }).upgradeHere()
+            val joining = DeviceSocket(OkHttpClient(), server.url("/romm/"), TOKEN, joinTimeoutMs = 1_000)
+
+            val events = within { joining.events().toList() }
+
+            assertThat((events.single() as DeviceEvent.Dropped).cause).isInstanceOf(SocketTimeoutException::class.java)
+        } finally {
+            pinging.shutdownNow()
+        }
     }
 
     /** RomM leaves the namespace when the token is rotated or the device deleted; the next connection finds out which. */

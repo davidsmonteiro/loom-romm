@@ -1,5 +1,6 @@
 package ro.davidmontei.loom.romm.socket
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
@@ -8,6 +9,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
 import okhttp3.HttpUrl
@@ -44,7 +46,10 @@ sealed interface DeviceEvent {
     /** The server, or a proxy in front of it, answered the WebSocket upgrade with [code], not 101. */
     data class UpgradeRefused(val code: Int) : DeviceEvent
 
-    /** The connection ended: a network error, silence past the ping timeout, or the server closing it. */
+    /**
+     * The connection ended: a network error, silence past the ping timeout, RomM not answering the join
+     * in time, or the server closing it.
+     */
     data class Dropped(val cause: Throwable?) : DeviceEvent
 }
 
@@ -55,12 +60,15 @@ sealed interface DeviceEvent {
  *
  * Engine.IO v4 over a WebSocket (Socket.IO v5): RomM pings and Loom answers; the device sends no events.
  * The token goes only in the namespace's connect payload, never in the URL, so [client] should add no
- * credentials of its own. [events] never reconnects: see [reconnecting].
+ * credentials of its own. [events] never reconnects: see [reconnecting]. RomM answers the join, accepting
+ * or refusing it, within [joinTimeoutMs], or the connection is dropped: its pings alone don't keep one
+ * it never let in.
  */
 class DeviceSocket(
     private val client: OkHttpClient,
     private val baseUrl: HttpUrl,
     private val token: String,
+    private val joinTimeoutMs: Long = JOIN_TIMEOUT_MS,
 ) {
     /**
      * Opens the socket when collected, and closes it when the collector stops: leaving the namespace
@@ -71,6 +79,10 @@ class DeviceSocket(
         val heard = Channel<Long>(Channel.CONFLATED)
         val silenceLimit = AtomicLong(HANDSHAKE_TIMEOUT_MS)
         val joined = AtomicBoolean(false)
+        // Asked to join the namespace, and RomM answered (let in or refused). A connect handler that fails on
+        // RomM's side (its Redis out for a moment, say) answers nothing, while the pings go on.
+        val asked = CompletableDeferred<Unit>()
+        val answered = CompletableDeferred<Unit>()
 
         fun end(last: DeviceEvent) {
             joined.set(false)
@@ -88,14 +100,21 @@ class DeviceSocket(
                 if (frame is SocketFrame.Open) silenceLimit.set(frame.pingIntervalMs + frame.pingTimeoutMs)
                 heard.trySend(silenceLimit.get())
                 when (frame) {
-                    is SocketFrame.Open -> webSocket.send(EngineIoFrames.connect(NAMESPACE, token))
+                    is SocketFrame.Open -> {
+                        webSocket.send(EngineIoFrames.connect(NAMESPACE, token))
+                        asked.complete(Unit)
+                    }
                     is SocketFrame.Ping -> webSocket.send(EngineIoFrames.pong(frame))
                     SocketFrame.Connected -> {
+                        answered.complete(Unit)
                         joined.set(true)
                         trySend(DeviceEvent.Connected)
                     }
                     is SocketFrame.Event -> frame.toDeviceEvent()?.let { trySend(it) }
-                    is SocketFrame.ConnectError -> end(DeviceEvent.Refused(frame.message.orEmpty()))
+                    is SocketFrame.ConnectError -> {
+                        answered.complete(Unit)
+                        end(DeviceEvent.Refused(frame.message.orEmpty()))
+                    }
                     SocketFrame.Disconnect, SocketFrame.Close -> end(DeviceEvent.Dropped(null))
                     null -> Unit
                 }
@@ -120,8 +139,18 @@ class DeviceSocket(
             }
         }
 
+        // Apart from the watchdog, which every ping feeds.
+        val joining = launch {
+            asked.await()
+            if (withTimeoutOrNull(joinTimeoutMs) { answered.await() } == null) {
+                end(DeviceEvent.Dropped(SocketTimeoutException("RomM didn't answer joining $NAMESPACE in $joinTimeoutMs ms")))
+                socket.cancel()
+            }
+        }
+
         awaitClose {
             watchdog.cancel()
+            joining.cancel()
             if (joined.getAndSet(false)) socket.send(EngineIoFrames.disconnect(NAMESPACE))
             socket.close(NORMAL_CLOSURE, null)
         }
@@ -142,6 +171,9 @@ class DeviceSocket(
 
         /** How long the socket may stay silent once open, before RomM's handshake says how long it pings. */
         const val HANDSHAKE_TIMEOUT_MS = 30_000L
+
+        /** How long RomM may take to let the device into the namespace, or refuse it. */
+        const val JOIN_TIMEOUT_MS = 30_000L
 
         private const val SWITCHING_PROTOCOLS = 101
         private const val NORMAL_CLOSURE = 1000
