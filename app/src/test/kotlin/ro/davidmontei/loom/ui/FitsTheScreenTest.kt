@@ -7,6 +7,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -434,5 +435,25 @@ class FitsTheScreenTest {
         rule.saveScreenshot("queue-folder-question")
         state = state.copy(folderQuestion = question.copy(allFolders = (1..178).map { SystemFolder("system$it", 0, "Some System $it") }))
         assertThat(overflow("Where does Cocoon look for ${question.platformName} games?")).isEqualTo(0f)
+    }
+
+    /**
+     * A game sent from RomM with a long title, waiting for its folder (the longest badge), under the note that
+     * RomM can't send more until Loom pairs again: "From RomM" and the badge keep their place and the title
+     * gives way, so the row stays one line high; the note fits on its line.
+     */
+    @Test fun aLongTitleSentFromRommStaysOnOneLine() {
+        val title = "Shin Megami Tensei: Digital Devil Saga 2 - Avatar Tuner (USA) (Rev 1) (Limited Collector's Edition)"
+        val sent = QueueScreenTest.sonic.copy(title = title, fromRomm = true)
+        val state = QueueScreenTest.sample.copy(active = listOf(sent) + QueueScreenTest.sample.active, rommNeedsPairing = true)
+        rule.setContent { LoomTestTheme { QueueContent(state, NoopQueueActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        assertThat(lineCount(title)).isEqualTo(1)
+        assertThat(lineCount("From RomM")).isEqualTo(1)
+        assertThat(ellipsized("From RomM")).isFalse()
+        assertThat(ellipsized("RomM can't send games here")).isFalse()
+        rule.saveScreenshot("queue-from-romm")
+        assertThat(rule.onNodeWithTag("job-${sent.jobId}").getBoundsInRoot().let { it.bottom - it.top })
+            .isEqualTo(rule.onNodeWithTag("job-1").getBoundsInRoot().let { it.bottom - it.top })
     }
 }

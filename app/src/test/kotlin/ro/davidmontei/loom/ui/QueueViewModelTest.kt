@@ -20,6 +20,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Before
@@ -41,6 +42,8 @@ import ro.davidmontei.loom.data.saves.ConflictChoice
 import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.SaveSyncRequest
 import ro.davidmontei.loom.data.saves.SaveSyncTestBase
+import ro.davidmontei.loom.data.sent.SendToDeviceStore
+import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.WaitReason
@@ -57,6 +60,7 @@ import java.io.File
 class QueueViewModelTest : SaveSyncTestBase() {
     private lateinit var vm: QueueViewModel
     private lateinit var mapping: MappingRepository
+    private val sendToDevice by lazy { SendToDeviceStore(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "d.preferences_pb") }) }
 
     @Before fun setUpQueue() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
@@ -71,7 +75,7 @@ class QueueViewModelTest : SaveSyncTestBase() {
         val folders = FolderChooser(settings, mapping)
         vm = QueueViewModel(
             downloads, SaveRepository(engine(), db.saveDao(), eden(), scope),
-            QueueGame(db.catalogDao(), downloads, folders, CatalogSyncScheduler(workManager)), folders,
+            QueueGame(db.catalogDao(), downloads, folders, CatalogSyncScheduler(workManager)), folders, settings, credentials, sendToDevice,
         )
     }
 
@@ -231,6 +235,26 @@ class QueueViewModelTest : SaveSyncTestBase() {
         File(volume, "ROMs/3ds").mkdirs()
     }
 
+    /** A game sent from RomM says so, and the queue says when RomM can't send games here until Loom pairs again. */
+    @Test fun aSentJobIsMarkedFromRomm() = runBlocking<Unit> {
+        db.downloadDao().insertJobWithParts(
+            DownloadJobEntity(romId = 8, platformId = 1, title = "Pokemon Omega Ruby", phase = JobPhase.QUEUED.name, planJson = "{}",
+                fingerprint = "f", volumeUuid = "6365-3230", stagingRoot = "/staging", romsRoot = "/roms", bytesTotal = 1,
+                queueOrder = 1, updatedAt = 1),
+        ) { emptyList() }
+        waitingForFolder(7, "Pokemon X", queueOrder = 2) // sent by RomM's request req-7
+
+        val state = withTimeout(5_000) { vm.state.first { it.active.size == 2 } }
+
+        assertThat(state.active.associate { it.title to it.fromRomm }).containsExactly("Pokemon X", true, "Pokemon Omega Ruby", false)
+        assertThat(state.rommNeedsPairing).isFalse()
+        settings.setServer(ServerConfig("http://romm.example.com/".toHttpUrl()), "5.4.0")
+        settings.setOnboardingComplete(true)
+        pair("dev-thor")
+        sendToDevice.setNeedsPairing(true) // RomM refused the device
+        withTimeout(5_000) { vm.state.first { it.rommNeedsPairing } }
+    }
+
     /** A sent game waiting for its folder comes first, says so, and can't be paused. */
     @Test fun aGameWaitingForItsFolderComesFirstAndSaysWhy() = runBlocking<Unit> {
         db.downloadDao().insertJobWithParts(
@@ -284,7 +308,7 @@ class QueueViewModelTest : SaveSyncTestBase() {
             mapping, settings, StorageVolumes(context), QueueKicker(workManager))
         val folders = FolderChooser(settings, mapping)
         vm = QueueViewModel(downloads, SaveRepository(engine(), db.saveDao(), eden(), scope),
-            QueueGame(db.catalogDao(), downloads, folders, CatalogSyncScheduler(workManager)), folders)
+            QueueGame(db.catalogDao(), downloads, folders, CatalogSyncScheduler(workManager)), folders, settings, credentials, sendToDevice)
 
         withTimeout(5_000) { while (db.downloadDao().job(jobId)!!.phase != JobPhase.QUEUED.name) delay(20) }
         assertThat(db.downloadDao().job(jobId)!!.plan().systemFolder).isEqualTo("3ds")

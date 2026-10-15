@@ -6,9 +6,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
@@ -584,6 +586,28 @@ class QueueScreenTest {
         show(withAFolderToChoose)
         rule.onNodeWithTag("job-10").assertIsFocused()
         rule.onNodeWithText("Choose its folder", useUnmergedTree = true).assertExists()
+    }
+
+    /** Sent from RomM's web UI: the row says so beside its badge, at the same height as the others. */
+    @Test fun aGameSentFromRommSaysSo() {
+        show(sample.copy(active = sample.active.map { if (it.jobId == 3L) it.copy(fromRomm = true) else it }))
+        rule.onNodeWithTag("job-3").assert(hasText("From RomM"))
+        rule.onNodeWithTag("job-1").assert(hasText("From RomM").not())
+        assertThat(rule.onNodeWithTag("job-3").getBoundsInRoot().let { it.bottom - it.top }).isEqualTo(rule.onNodeWithTag("job-1").getBoundsInRoot().let { it.bottom - it.top })
+    }
+
+    /** RomM refuses the device: the queue says games sent from it can't come, and where to fix that, even when it's empty. */
+    @Test fun theQueueSaysWhenRommCantSendGamesHere() {
+        val note = "RomM can't send games here until Loom pairs again (Settings › Downloads)"
+        show()
+        rule.onNodeWithText(note).assertDoesNotExist()
+        state = sample.copy(rommNeedsPairing = true)
+        rule.waitForIdle()
+        rule.onNodeWithText(note).assertExists()
+        state = QueueUiState(emptyList(), emptyList(), emptyList(), rommNeedsPairing = true)
+        rule.waitForIdle()
+        rule.onNodeWithText(note).assertExists()
+        rule.onNodeWithText("Nothing downloading. Press X on a game in the library to add it here.").assertExists()
     }
 
     @Test fun aMessageSaysHowAnAnswerWent() {

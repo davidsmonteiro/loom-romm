@@ -54,6 +54,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.db.RecentInstall
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.download.DownloadRepository
@@ -65,6 +66,10 @@ import ro.davidmontei.loom.data.saves.ConflictChoice
 import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.saves.ServerSaveInfo
 import ro.davidmontei.loom.data.saves.emulatorName
+import ro.davidmontei.loom.data.sent.SendToDeviceState
+import ro.davidmontei.loom.data.sent.SendToDeviceStore
+import ro.davidmontei.loom.data.sent.sendToDeviceState
+import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.WaitReason
 import ro.davidmontei.loom.storage.engine.formatBytes
@@ -106,6 +111,8 @@ data class QueueItem(
     val retryable: Boolean,
     /** Waiting for its platform's folder to be chosen: A asks, and it can't be paused (resuming would skip the question). */
     val needsFolder: Boolean = false,
+    /** Sent from RomM's web UI, rather than picked in the library. */
+    val fromRomm: Boolean = false,
 ) {
     val canPause get() = !needsFolder && (phase == JobPhase.QUEUED || phase == JobPhase.WAITING || phase == JobPhase.DOWNLOADING ||
         phase == JobPhase.VERIFYING || phase == JobPhase.EXTRACTING)
@@ -125,6 +132,8 @@ data class QueueUiState(
     val saveFolderQuestion: SaveFolderQuestion? = null,
     /** Where a waiting game's platform's games go, asked from its row ([QueueActions.askFolder]). */
     val folderQuestion: FolderQuestion? = null,
+    /** RomM refuses this device: games sent from it can't come until Loom pairs again. */
+    val rommNeedsPairing: Boolean = false,
 )
 
 /** A row of the queue: a section header, a save to settle or restore, or a job. */
@@ -166,6 +175,9 @@ class QueueViewModel @Inject constructor(
     private val saves: SaveRepository,
     private val queueGame: QueueGame,
     private val folders: FolderChooser,
+    settings: SettingsStore,
+    credentials: CredentialStore,
+    sendToDevice: SendToDeviceStore,
 ) : ViewModel(), QueueActions {
     /** What RomM said about each conflict's server save (Loom doesn't keep its size or origin), by save id. */
     private val serverSaves = MutableStateFlow<Map<Int, ServerSaveInfo>>(emptyMap())
@@ -180,7 +192,13 @@ class QueueViewModel @Inject constructor(
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages: Flow<String> = _messages.receiveAsFlow()
 
-    private val jobRows = combine(downloads.jobs, downloads.progress, downloads.recentInstalls, folderQuestion) { jobs, live, recent, question ->
+    private val rommNeedsPairing = combine(settings.settings, credentials.current, sendToDevice.settings) { s, c, sent ->
+        sendToDeviceState(s, c, sent) == SendToDeviceState.NeedsPairing
+    }
+
+    private val jobRows = combine(
+        downloads.jobs, downloads.progress, downloads.recentInstalls, folderQuestion, rommNeedsPairing,
+    ) { jobs, live, recent, question, needsPairing ->
         val items = jobs.filter { it.phase != JobPhase.CANCELLING.name }.map { job ->
             val status = job.status()
             val p = live[job.id]
@@ -205,10 +223,12 @@ class QueueViewModel @Inject constructor(
                 bytesPerSecond = if (status.phase == JobPhase.DOWNLOADING) p?.bytesPerSecond ?: 0 else 0,
                 retryable = status.failure?.retryable ?: true,
                 needsFolder = status.phase == JobPhase.WAITING && status.waitReason == WaitReason.FOLDER,
+                fromRomm = job.installRequestId != null,
             )
         }
         // Games waiting for their folder first, so the queue opens on what only the owner can settle.
-        QueueUiState(items.filterNot { it.failed }.sortedByDescending { it.needsFolder }, items.filter { it.failed }, recent, folderQuestion = question)
+        QueueUiState(items.filterNot { it.failed }.sortedByDescending { it.needsFolder }, items.filter { it.failed }, recent,
+            folderQuestion = question, rommNeedsPairing = needsPairing)
     }
 
     val state: StateFlow<QueueUiState> = combine(
@@ -403,6 +423,10 @@ fun QueueContent(
     }) {
         ScreenScaffold(title = "Downloads", hints = hints) {
             message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = LoomColors.Accent, modifier = Modifier.padding(horizontal = 8.dp)) }
+            if (state.rommNeedsPairing) {
+                Text("RomM can't send games here until Loom pairs again (Settings › Downloads)", style = MaterialTheme.typography.bodySmall,
+                    color = LoomColors.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
+            }
             if (startKey == null && readOnlyFirst == null) {
                 Text("Nothing downloading. Press X on a game in the library to add it here.", color = LoomColors.TextMuted)
                 return@ScreenScaffold
@@ -556,6 +580,7 @@ private fun JobRow(item: QueueItem, modifier: Modifier, onFocus: (QueueItem, Boo
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
             Text(item.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (item.fromRomm) Text("From RomM", style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted, maxLines = 1)
             when {
                 item.failed -> StatusBadge("Failed", color = LoomColors.Error, onColor = LoomColors.OnError)
                 item.phase == JobPhase.PAUSED -> StatusBadge("Paused", color = LoomColors.SurfaceHighest, onColor = LoomColors.Text)
