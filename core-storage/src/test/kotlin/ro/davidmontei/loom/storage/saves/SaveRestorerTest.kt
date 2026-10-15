@@ -369,5 +369,120 @@ class SaveRestorerTest {
         assertThat(melonDsFiles()).containsExactly("Mario Kart DS (USA).sav")
     }
 
+    // --- every folder starting with a disc ID: a PSP game's saves, in the SAVEDATA every game shares ---
+
+    private val saveData get() = path("PSP/SAVEDATA")
+
+    /** ULUS10064's save on the card, another game's, and ULUS10064's installed data, which isn't its save. */
+    private fun pspCard() {
+        folderOf(saveData.resolve("ULUS10064DATA00"), "DATA.BIN" to byteArrayOf(1, 1), "PARAM.SFO" to byteArrayOf(2))
+        folderOf(saveData.resolve("ULUS10064DATA01"), "DATA.BIN" to byteArrayOf(3), "sub/EXTRA.BIN" to byteArrayOf(4))
+        folderOf(saveData.resolve("ULUS10065DATA00"), "DATA.BIN" to byteArrayOf(5))
+        folderOf(saveData.resolve("ULUS10064INSTALL"), "PARAM.SFO" to byteArrayOf(6), "DATA.DAT" to byteArrayOf(7))
+    }
+
+    /** ULUS10064's unit made of [folders]: the card's, widened with the archive's as the caller does. */
+    private fun pspUnit(vararg folders: String, prefix: String = "ULUS10064") =
+        SaveUnit.Prefixed(saveData, prefix, folders.map { SaveRoot(it, saveData.resolve(it)) }, leftOut = setOf("ULUS10064INSTALL"))
+
+    /** An archive as Argosy writes one: each folder's directory entry, then its files. */
+    private fun pspArchive(): Path = zipOf(path("psp.zip"),
+        "ULUS10064DATA00/" to null, "ULUS10064DATA00/DATA.BIN" to byteArrayOf(9, 9), "ULUS10064DATA00/PARAM.SFO" to byteArrayOf(8),
+        "ULUS10064DATA02/" to null, "ULUS10064DATA02/DATA.BIN" to byteArrayOf(7, 7, 7),
+        "ULUS10065DATA00/" to null, "ULUS10065DATA00/DATA.BIN" to byteArrayOf(0))
+
+    /** Every file and folder in SAVEDATA with its bytes (a folder's are null), work folders aside. */
+    private fun saveDataTree(): Map<String, List<Byte>?> = Files.walk(saveData).use { walk ->
+        walk.iterator().asSequence().filter { it != saveData }.map { saveData.relativize(it).joinToString("/") }
+            .filterNot { it.startsWith(".loom-restore-") }
+            .associateWith { name -> saveData.resolve(name).let { if (Files.isDirectory(it)) null else Files.readAllBytes(it).toList() } }
+    }
+
+    @Test fun aFolderTheCardLacksComesFromTheArchive() {
+        pspCard()
+        val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")
+        val hash = SaveRestorer().restore(pspArchive(), unit, unit.hash())
+
+        assertThat(Files.readAllBytes(saveData.resolve("ULUS10064DATA02/DATA.BIN"))).isEqualTo(byteArrayOf(7, 7, 7))
+        assertThat(Files.readAllBytes(saveData.resolve("ULUS10064DATA00/DATA.BIN"))).isEqualTo(byteArrayOf(9, 9))
+        assertThat(hash).isEqualTo(SaveHasher.hashZip(pspArchive(), setOf("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")))
+        assertThat(unit.hash()).isEqualTo(hash)
+    }
+
+    /** As Argosy's restore deletes a game's folders before unzipping: one the archive lacks doesn't stay behind, empty. */
+    @Test fun aFolderTheArchiveLacksIsEmptiedThenRemoved() {
+        pspCard()
+        val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")
+        SaveRestorer().restore(pspArchive(), unit, unit.hash())
+
+        assertThat(Files.exists(saveData.resolve("ULUS10064DATA01"))).isFalse()
+        assertThat(saveDataTree().keys.filter { it.startsWith("ULUS10064DATA") }).containsExactly(
+            "ULUS10064DATA00", "ULUS10064DATA00/DATA.BIN", "ULUS10064DATA00/PARAM.SFO", "ULUS10064DATA02", "ULUS10064DATA02/DATA.BIN",
+        )
+        assertThat(Files.list(saveData).use { l -> l.iterator().asSequence().none { it.fileName.toString().startsWith(".") } }).isTrue()
+    }
+
+    /** A restore that fails takes out the folders it made, and leaves those it emptied as they were. */
+    @Test fun aRollbackRemovesTheFoldersItMade() {
+        for (failAt in 1..7) {
+            tmp.root.listFiles()!!.forEach { it.deleteRecursively() }
+            pspCard()
+            val before = saveDataTree()
+            val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")
+            var moves = 0
+            val failing = SaveRestorer { from, to ->
+                if (++moves == failAt) throw IOException("card removed")
+                SaveRestorer.FileMover.Rename.move(from, to)
+            }
+            assertThrows("failing move $failAt", IOException::class.java) { failing.restore(pspArchive(), unit, unit.hash()) }
+            assertThat(saveDataTree()).isEqualTo(before)
+            assertThat(Files.list(saveData).use { it.count() }).isEqualTo(4) // no work folder left
+        }
+    }
+
+    /** Another game's folders, and this game's installed data, are never part of its restore, whatever the archive holds. */
+    @Test fun otherGamesFoldersInTheParentAreNeverTouched() {
+        pspCard()
+        Files.write(saveData.resolve("notes.txt"), byteArrayOf(1))
+        val untouched = saveDataTree().filterKeys { !it.startsWith("ULUS10064DATA") }
+        val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")
+        SaveRestorer().restore(pspArchive(), unit, unit.hash())
+
+        assertThat(saveDataTree().filterKeys { !it.startsWith("ULUS10064DATA") }).isEqualTo(untouched)
+        assertThat(untouched.keys).containsAtLeast("ULUS10065DATA00/DATA.BIN", "ULUS10064INSTALL/DATA.DAT", "notes.txt")
+    }
+
+    /** Loom dies midway: the next look at this game, or at another's in SAVEDATA, puts the card back as it was. */
+    @Test fun recoverUndoesAPrefixedRestore() {
+        for (dieAt in 1..7) for (byOther in listOf(false, true)) {
+            tmp.root.listFiles()!!.forEach { it.deleteRecursively() }
+            pspCard()
+            val before = saveDataTree()
+            val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA01", "ULUS10064DATA02")
+            var moves = 0
+            val dying = SaveRestorer { from, to ->
+                if (++moves == dieAt) throw ProcessDeath()
+                SaveRestorer.FileMover.Rename.move(from, to)
+            }
+            assertThrows(ProcessDeath::class.java) { dying.restore(pspArchive(), unit, unit.hash()) }
+
+            val other = pspUnit("ULUS10065DATA00", prefix = "ULUS10065")
+            assertThat(SaveRestorer().recover(if (byOther) other else pspUnit("ULUS10064DATA00", "ULUS10064DATA01"))).isTrue()
+            assertThat(saveDataTree()).isEqualTo(before)
+            assertThat(Files.list(saveData).use { it.count() }).isEqualTo(4)
+        }
+    }
+
+    /** A game with no save on the card yet: its unit has no folder, and still restores. */
+    @Test fun aPrefixedUnitWithNoFolderYetRestores() {
+        Files.createDirectories(saveData)
+        val unit = pspUnit("ULUS10064DATA00", "ULUS10064DATA02")
+        assertThat(unit.hash()).isNull()
+        val hash = SaveRestorer().restore(pspArchive(), unit, expectedCurrent = null)
+        assertThat(unit.hash()).isEqualTo(hash)
+        assertThat(Files.list(saveData).use { l -> l.iterator().asSequence().map { it.fileName.toString() }.sorted().toList() })
+            .containsExactly("ULUS10064DATA00", "ULUS10064DATA02")
+    }
+
     private class ProcessDeath : Error("killed")
 }

@@ -64,6 +64,35 @@ sealed interface SaveUnit {
     }
 
     /**
+     * Every folder directly in [parent] whose name starts with [prefix], zipped under its own name:
+     * a PSP game's save folders in PPSSPP's `SAVEDATA`, named after its disc ID. [roots] are those
+     * folders: the ones on the card, and for a restore, the ones the archive brings too. [leftOut]
+     * names the folders starting with [prefix] that aren't part of the save (installed game data),
+     * which the unit never holds. The unit may have no folder yet.
+     */
+    data class Prefixed(val parent: Path, val prefix: String, val roots: List<SaveRoot>, val leftOut: Set<String> = emptySet()) : SaveUnit {
+        init {
+            require(prefix.isNotEmpty()) { "A prefix unit needs a prefix" }
+            require(roots.all { it.name == it.folder.fileName.toString() && it.folder.toAbsolutePath().parent == anchor }) {
+                "A prefix unit's folders sit directly in its parent, under their own names"
+            }
+            require(roots.all { it.name.startsWith(prefix, ignoreCase = true) }) { "A prefix unit's folders start with $prefix" }
+            require(roots.none { root -> leftOut.any { it.equals(root.name, ignoreCase = true) } }) { "A folder left out isn't part of the unit" }
+        }
+
+        /** The folders' place and their prefix, as no one folder of them may exist yet: `…/SAVEDATA/ULUS10064*`. */
+        override val path: String get() = "$parent/$prefix*"
+
+        override val anchor: Path get() = parent.toAbsolutePath()
+
+        override fun hash(): String? = SaveHasher.hashUnit(roots)
+
+        override fun snapshot(): UnitSnapshot = UnitSnapshot.of(roots)
+
+        override fun pack(target: Path): String = SaveZipper.zip(roots, target)
+    }
+
+    /**
      * One raw file, uploaded and restored as itself: a DS game's `.sav` in melonDS's save folder.
      * An empty file is no save: melonDS creates one when a game first runs.
      */

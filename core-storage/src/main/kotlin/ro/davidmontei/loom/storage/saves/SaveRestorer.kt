@@ -2,6 +2,7 @@ package ro.davidmontei.loom.storage.saves
 
 import java.io.IOException
 import java.nio.channels.FileChannel
+import java.nio.file.DirectoryNotEmptyException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -67,6 +68,7 @@ class SaveRestorer(
         if (unit.hash() != expectedCurrent) throw SaveChangedException("The save changed since it was backed up")
         val expected = when (unit) {
             is SaveUnit.Folders -> SaveHasher.hashZip(archive, unit.roots.map { it.name }.toSet())
+            is SaveUnit.Prefixed -> SaveHasher.hashZip(archive, unit.roots.map { it.name }.toSet())
             is SaveUnit.SingleFile -> SaveHasher.md5(archive)
         }
 
@@ -98,6 +100,8 @@ class SaveRestorer(
             }
             throw e
         }
+        // A folder the archive lacks was emptied as its old files moved aside: the emulator would list it.
+        if (unit is SaveUnit.Prefixed) runCatching { removeEmpty(unit.roots.map { it.folder }) }
         runCatching { deleteTree(work) } // a leftover finished work folder is removed by the next recover
         return expected
     }
@@ -135,6 +139,8 @@ class SaveRestorer(
      * Takes the new files that made it into place back out, and moves every old file back. Safe to
      * run again after it stopped midway: a live file whose new copy left `new/` is the new one only
      * while its old namesake is still aside in `old/`; once that is gone, it was already put back.
+     * Among prefixed folders, those that held no file before the restore are removed once empty
+     * again, as the restore made them.
      */
     private fun rollBack(work: Path, unit: SaveUnit) {
         val journal = readJournal(work)
@@ -148,6 +154,10 @@ class SaveRestorer(
         if (old.isDirectory(LinkOption.NOFOLLOW_LINKS)) {
             val aside = checkedIo { Files.walk(old).use { walk -> walk.iterator().asSequence().filter { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) }.toList() } }
             for (file in aside) moveInto(file, live(unit, old.relativize(file).joinToString("/") { it.name }))
+        }
+        if (unit is SaveUnit.Prefixed) {
+            val made = journal.incoming.mapNotNull(SaveZipper::rootOf).toSet() - journal.outgoing.mapNotNull(SaveZipper::rootOf).toSet()
+            runCatching { removeEmpty(made.map { unit.anchor.resolve(it) }) }
         }
         deleteTree(work)
     }
@@ -163,12 +173,8 @@ class SaveRestorer(
      */
     private fun stage(archive: Path, unit: SaveUnit, dest: Path, expected: String, maxUnitBytes: Long): List<String> {
         val staged = when (unit) {
-            is SaveUnit.Folders -> {
-                val roots = unit.roots.map { SaveRoot(it.name, dest.resolve(it.name)) }
-                unpack(archive, dest, roots.map { it.name }.toSet(), maxUnitBytes)
-                if (SaveHasher.hashUnit(roots) != expected) throw SaveArchiveException("The unpacked save doesn't match the archive")
-                SaveZipper.entries(roots)
-            }
+            is SaveUnit.Folders -> unpackChecked(archive, unit.roots, dest, expected, maxUnitBytes)
+            is SaveUnit.Prefixed -> unpackChecked(archive, unit.roots, dest, expected, maxUnitBytes)
             is SaveUnit.SingleFile -> {
                 val size = Files.size(archive)
                 if (size == 0L) throw SaveArchiveException("The save is empty: there's nothing to restore")
@@ -183,12 +189,20 @@ class SaveRestorer(
         return staged.map { it.name }
     }
 
+    private fun unpackChecked(archive: Path, unitRoots: List<SaveRoot>, dest: Path, expected: String, maxUnitBytes: Long): List<SaveEntry> {
+        val roots = unitRoots.map { SaveRoot(it.name, dest.resolve(it.name)) }
+        unpack(archive, dest, roots.map { it.name }.toSet(), maxUnitBytes)
+        if (SaveHasher.hashUnit(roots) != expected) throw SaveArchiveException("The unpacked save doesn't match the archive")
+        return SaveZipper.entries(roots)
+    }
+
     /**
      * The unit's files as they are now, by their names in the unit. A single file counts even
      * when it is empty, a placeholder the emulator made: it is moved aside like any old save.
      */
     private fun filesOf(unit: SaveUnit): List<SaveEntry> = when (unit) {
         is SaveUnit.Folders -> SaveZipper.entries(unit.roots)
+        is SaveUnit.Prefixed -> SaveZipper.entries(unit.roots)
         is SaveUnit.SingleFile -> listOfNotNull(SaveEntry(unit.name, unit.file).takeIf { Files.exists(unit.file, LinkOption.NOFOLLOW_LINKS) })
     }
 
@@ -196,8 +210,8 @@ class SaveRestorer(
      * Where the file named [name] ("data/00000001/main") lives: in its root's folder. A root that
      * isn't the unit's is another game's, whose restore Loom didn't finish in a folder several
      * games share (Eden's profile folder). When the unit's roots are named after their folders,
-     * as Azahar's `data` and Eden's title folders are, so is that one, beside them. A single file
-     * lives in the unit's folder, whichever game's it is.
+     * as Azahar's `data` and Eden's title folders are, so is that one, beside them. Prefixed
+     * folders and single files live in the unit's folder, whichever game's they are.
      */
     private fun live(unit: SaveUnit, name: String): Path = when (unit) {
         is SaveUnit.Folders -> {
@@ -209,7 +223,25 @@ class SaveRestorer(
                 else -> throw SaveArchiveException("No root for $name")
             }
         }
+        is SaveUnit.Prefixed -> unit.anchor.resolve(name)
         is SaveUnit.SingleFile -> unit.anchor.resolve(name)
+    }
+
+    /**
+     * Removes each of [folders] that holds no file, only folders if anything: the folders go,
+     * never a file, so one written meanwhile keeps its folder.
+     */
+    private fun removeEmpty(folders: Collection<Path>) {
+        for (folder in folders) {
+            if (!folder.isDirectory(LinkOption.NOFOLLOW_LINKS)) continue
+            val tree = checkedIo { Files.walk(folder).use { walk -> walk.iterator().asSequence().toList() } }
+            if (tree.any { !it.isDirectory(LinkOption.NOFOLLOW_LINKS) }) continue
+            try {
+                tree.sortedDescending().forEach { Files.delete(it) } // the deepest first
+            } catch (e: DirectoryNotEmptyException) {
+                // Something was written in it meanwhile: it stays.
+            }
+        }
     }
 
     /** The files a restore puts in place and the ones it moves aside, by their names in the unit. */
@@ -241,6 +273,7 @@ class SaveRestorer(
         is SaveUnit.Folders -> unit.anchor.also { parent ->
             require(unit.roots.all { it.folder.toAbsolutePath().parent == parent }) { "A unit's folders must share one parent to be restored" }
         }
+        is SaveUnit.Prefixed -> unit.anchor
         is SaveUnit.SingleFile -> unit.anchor
     }
 

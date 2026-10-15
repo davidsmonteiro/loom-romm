@@ -11,7 +11,7 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 
-/** A save unit of one raw file: a DS game's `.sav` in melonDS's save folder. */
+/** Save units of one raw file (a DS game's `.sav` in melonDS's folder) and of prefixed folders (a PSP game's in SAVEDATA). */
 class SaveUnitTest {
     @get:Rule val tmp = TemporaryFolder()
     private fun path(name: String): Path = tmp.root.toPath().resolve(name)
@@ -49,6 +49,27 @@ class SaveUnitTest {
         assertThat(rawSave().pack(target)).isEqualTo(RAW_SAVE_MD5)
         assertThat(Files.readAllBytes(target)).isEqualTo(RAW_SAVE)
         assertThat(SaveHasher.hashFile(target)).isEqualTo(RAW_SAVE_MD5)
+    }
+
+    /** No one of a PSP game's folders may exist yet, so its unit's place is the folder and the prefix. */
+    @Test fun aPrefixedUnitsPathNamesItsPrefix() {
+        val saveData = path("PSP/SAVEDATA")
+        val unit = SaveUnit.Prefixed(saveData, "ULUS10064", listOf(SaveRoot("ULUS10064DATA00", saveData.resolve("ULUS10064DATA00"))))
+        assertThat(unit.path).isEqualTo("$saveData/ULUS10064*")
+        assertThat(unit.anchor).isEqualTo(saveData.toAbsolutePath())
+        assertThat(SaveUnit.Prefixed(saveData, "ULUS10064", emptyList()).path).isEqualTo(unit.path)
+        assertThat(SaveUnit.Prefixed(saveData, "ULUS10064", emptyList()).hash()).isNull()
+    }
+
+    /** Only the game's own folders, directly in SAVEDATA and under their own names, can be its save. */
+    @Test fun aPrefixedUnitHoldsOnlyItsOwnFolders() {
+        val saveData = path("PSP/SAVEDATA")
+        fun unit(vararg roots: SaveRoot) = SaveUnit.Prefixed(saveData, "ULUS10064", roots.toList(), leftOut = setOf("ULUS10064INSTALL"))
+        assertThat(unit(SaveRoot("ulus10064data00", saveData.resolve("ulus10064data00"))).roots).hasSize(1) // case doesn't matter
+        assertThrows(IllegalArgumentException::class.java) { unit(SaveRoot("ULUS10065DATA00", saveData.resolve("ULUS10065DATA00"))) }
+        assertThrows(IllegalArgumentException::class.java) { unit(SaveRoot("ULUS10064DATA00", path("elsewhere/ULUS10064DATA00"))) }
+        assertThrows(IllegalArgumentException::class.java) { unit(SaveRoot("ULUS10064DATA00", saveData.resolve("ULUS10064DATA01"))) }
+        assertThrows(IllegalArgumentException::class.java) { unit(SaveRoot("ULUS10064Install", saveData.resolve("ULUS10064Install"))) }
     }
 
     /** A folder where the save should be: Loom can't tell what the save is, which is never "no save". */

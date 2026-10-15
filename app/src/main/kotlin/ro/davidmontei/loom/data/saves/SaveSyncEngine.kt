@@ -732,11 +732,8 @@ class SaveSyncEngine(
                 throw SaveArchiveException("The downloaded save doesn't match RomM's hash; nothing was replaced")
             }
             when (val unit = save.unit) {
-                is SaveUnit.Folders -> {
-                    if (!SaveHasher.isZip(file.toPath())) throw SaveArchiveException("RomM's save for this game isn't a save archive Loom can restore")
-                    val roots = SaveZipper.rootsIn(file.toPath())
-                    if (unit.roots.none { it.name in roots }) throw SaveArchiveException(otherSave(save, unit.roots, roots))
-                }
+                is SaveUnit.Folders -> checkFolders(save, unit.roots, file)
+                is SaveUnit.Prefixed -> checkFolders(save, unit.roots, file)
                 is SaveUnit.SingleFile -> if (SaveHasher.isZip(file.toPath())) {
                     throw SaveArchiveException("RomM's save for this game is an archive, and ${emulatorName(save.emulator)} keeps one file; nothing was replaced")
                 }
@@ -749,6 +746,13 @@ class SaveSyncEngine(
         } finally {
             file.delete()
         }
+    }
+
+    /** RomM's save for a unit of folders must be an archive holding at least one of [ours]. */
+    private fun checkFolders(save: ResolvedSave.Ready, ours: List<SaveRoot>, file: File) {
+        if (!SaveHasher.isZip(file.toPath())) throw SaveArchiveException("RomM's save for this game isn't a save archive Loom can restore")
+        val roots = SaveZipper.rootsIn(file.toPath())
+        if (ours.none { it.name in roots }) throw SaveArchiveException(otherSave(save, ours, roots))
     }
 
     /**
