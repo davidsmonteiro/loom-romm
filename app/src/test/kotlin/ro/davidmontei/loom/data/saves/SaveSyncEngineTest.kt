@@ -416,6 +416,56 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(romm.paths()).contains("GET /api/saves")
     }
 
+    // --- RomM 5.4.0's baselines ---
+
+    /** What Loom told RomM when confirming it holds [saveId]. */
+    private fun downloadedBody(saveId: Int) = romm.requests.single { it.url.encodedPath == "/api/saves/$saveId/downloaded" }
+        .let { RommJson.parseToJsonElement(it.body!!.utf8()).jsonObject }
+
+    /** A restore tells RomM the hash its download was checked against, which 5.4.0 keeps as the Thor's baseline. */
+    @Test fun aRestoreTellsRommTheHashItChecked() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        val newer = romm.addSave(7, archiveOf(bytes(2)))
+
+        assertThat(engine().sync(SaveSyncRequest.PULL).downloaded).containsExactly(7)
+
+        val body = downloadedBody(newer.id)
+        assertThat(body["device_id"]!!.jsonPrimitive.content).isEqualTo("dev-thor")
+        assertThat(body["content_hash"]!!.jsonPrimitive.content).isEqualTo(newer.hash)
+        assertThat(romm.syncHashes["dev-thor" to newer.id]).isEqualTo(newer.hash)
+    }
+
+    @Test fun anAdoptedSaveTellsRommTheSharedHash() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        val local = writeSave(pokemonX, bytes(1))
+        val there = romm.addSave(7, archiveOf(bytes(1)))
+
+        assertThat(engine().sync(SaveSyncRequest.PUSH).adopted).containsExactly(7)
+
+        assertThat(downloadedBody(there.id)["content_hash"]!!.jsonPrimitive.content).isEqualTo(local)
+        assertThat(romm.syncHashes["dev-thor" to there.id]).isEqualTo(local)
+    }
+
+    /** RomM 5.3.1 reads only the device from `/downloaded`: Loom sends the hash without asking the version, and syncs the same. */
+    @Test fun romm531IgnoresTheHashItIsSent() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        val newer = romm.addSave(7, archiveOf(bytes(2)))
+
+        assertThat(engine().sync(SaveSyncRequest.PULL).downloaded).containsExactly(7)
+
+        assertThat(downloadedBody(newer.id)["content_hash"]!!.jsonPrimitive.content).isEqualTo(newer.hash)
+        assertThat(romm.syncRows["dev-thor" to newer.id]).isEqualTo(newer.updatedAt)
+        assertThat(romm.syncHashes).isEmpty()
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).isEmpty()
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
     // --- without RomM ---
 
     private suspend fun rommOutOfReach() = settings.setServer(ServerConfig("http://127.0.0.1:1/".toHttpUrl()), "5.3.1")

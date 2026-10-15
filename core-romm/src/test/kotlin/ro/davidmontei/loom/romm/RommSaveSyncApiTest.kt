@@ -29,6 +29,7 @@ import ro.davidmontei.loom.romm.api.RommApi
 import ro.davidmontei.loom.romm.api.saveFilePart
 import ro.davidmontei.loom.romm.dto.ClientSaveStateDto
 import ro.davidmontei.loom.romm.dto.SaveDeviceRequest
+import ro.davidmontei.loom.romm.dto.SaveDownloadedRequest
 import ro.davidmontei.loom.romm.dto.SyncAction
 import ro.davidmontei.loom.romm.dto.SyncCompleteRequest
 import ro.davidmontei.loom.romm.dto.SyncNegotiateRequest
@@ -248,16 +249,30 @@ class RommSaveSyncApiTest {
         assertThat(received).isEqualTo(bytes)
     }
 
-    @Test fun downloadedTrackAndUntrackPostTheDevice() = runTest {
-        repeat(3) { server.enqueue(json(save(80, 8).toString())) }
-        rommCall { api.confirmSaveDownloaded(80, SaveDeviceRequest("dev-thor")) }
+    /** RomM 5.4.0 keeps the hash as the device's baseline when it is the save's own; older RomMs drop it unread. */
+    @Test fun confirmingADownloadSendsTheDeviceAndRommsHash() = runTest {
+        server.enqueue(json(save(80, 8).toString()))
+        rommCall { api.confirmSaveDownloaded(80, SaveDownloadedRequest("dev-thor", "c43ef632a43368c6ec5e23a4e9653a50")) }
+        val request = server.takeRequest()
+        assertThat(request.method).isEqualTo("POST")
+        assertThat(request.url.encodedPath).isEqualTo("/romm/api/saves/80/downloaded")
+        assertThat(request.body!!.utf8()).isEqualTo("""{"device_id":"dev-thor","content_hash":"c43ef632a43368c6ec5e23a4e9653a50"}""")
+    }
+
+    /** RomM had no hash of the save to check against: none is sent, rather than a null. */
+    @Test fun aDownloadConfirmedWithoutAHashSendsOnlyTheDevice() = runTest {
+        server.enqueue(json(save(80, 8, contentHash = null).toString()))
+        rommCall { api.confirmSaveDownloaded(80, SaveDownloadedRequest("dev-thor")) }
+        assertThat(server.takeRequest().body!!.utf8()).isEqualTo("""{"device_id":"dev-thor"}""")
+    }
+
+    @Test fun trackAndUntrackPostTheDevice() = runTest {
+        repeat(2) { server.enqueue(json(save(80, 8).toString())) }
         rommCall { api.untrackSave(80, SaveDeviceRequest("dev-thor")) }
         rommCall { api.trackSave(80, SaveDeviceRequest("dev-thor")) }
-        val requests = List(3) { server.takeRequest() }
-        assertThat(requests.map { it.method }).containsExactly("POST", "POST", "POST")
-        assertThat(requests.map { it.url.encodedPath }).containsExactly(
-            "/romm/api/saves/80/downloaded", "/romm/api/saves/80/untrack", "/romm/api/saves/80/track",
-        ).inOrder()
+        val requests = List(2) { server.takeRequest() }
+        assertThat(requests.map { it.method }).containsExactly("POST", "POST")
+        assertThat(requests.map { it.url.encodedPath }).containsExactly("/romm/api/saves/80/untrack", "/romm/api/saves/80/track").inOrder()
         assertThat(requests.map { it.body!!.utf8() }.distinct()).containsExactly("""{"device_id":"dev-thor"}""")
     }
 

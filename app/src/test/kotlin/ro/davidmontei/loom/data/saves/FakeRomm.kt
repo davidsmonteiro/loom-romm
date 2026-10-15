@@ -17,7 +17,9 @@ import mockwebserver3.MockResponse
 import mockwebserver3.RecordedRequest
 import okhttp3.MultipartReader
 import okio.Buffer
+import ro.davidmontei.loom.romm.ROMM_5_4
 import ro.davidmontei.loom.romm.RommJson
+import ro.davidmontei.loom.romm.RommVersion
 import ro.davidmontei.loom.storage.saves.SaveHasher
 import java.nio.file.Files
 import java.nio.file.Path
@@ -31,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * with 409 when the device never synced the slot head, deduplicated by hash, and writes a sync
  * row; `/content` with optimistic=false writes none; `/downloaded` does. Tests can also make
  * negotiate answer something else, or the upload fail. Devices are looked up in [devices].
+ * With [rommVersion] at 5.4.0 or later, it behaves as 5.4.0 does where Loom can tell.
  */
 class FakeRomm(private val scratch: Path) : Dispatcher() {
     class Save(
@@ -50,6 +53,8 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
     val saves = CopyOnWriteArrayList<Save>()
     /** (device, save id) → last_synced_at. */
     val syncRows = mutableMapOf<Pair<String, Int>, Instant>()
+    /** RomM 5.4.0: (device, save id) → the device's baseline hash on that sync row (`last_sync_hash`), null once cleared. */
+    val syncHashes = mutableMapOf<Pair<String, Int>, String?>()
     val devices = mutableListOf<JsonObject>()
     val requests = CopyOnWriteArrayList<RecordedRequest>()
     val completed = CopyOnWriteArrayList<Triple<Int, Int, Int>>()
@@ -64,6 +69,9 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
     @Volatile var onRequest: ((RecordedRequest) -> Unit)? = null
     /** How long negotiate takes, to catch two runs overlapping. */
     var negotiateDelayMs = 0L
+    /** The RomM release this server behaves as. */
+    var rommVersion = "5.3.1"
+    private val is54 get() = RommVersion.parse(rommVersion)!! >= ROMM_5_4
 
     private val openSessions = AtomicInteger()
     @Volatile var mostOpenSessions = 0
@@ -223,7 +231,10 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
 
     private fun downloaded(path: String, body: JsonObject): MockResponse {
         val save = saves.first { it.id == path.split('/')[3].toInt() }
-        syncRows[body.string("device_id")!! to save.id] = save.updatedAt
+        val device = body.string("device_id")!!
+        syncRows[device to save.id] = save.updatedAt
+        // 5.4.0 (`saves.py:596-628`): only the save's own hash proves what the device holds; any other, or none, clears it.
+        if (is54) syncHashes[device to save.id] = body.string("content_hash")?.takeIf { it == save.hash }
         return ok(json(save))
     }
 

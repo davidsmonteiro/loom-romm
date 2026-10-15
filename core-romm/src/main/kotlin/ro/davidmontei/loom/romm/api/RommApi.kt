@@ -24,6 +24,7 @@ import ro.davidmontei.loom.romm.dto.PlatformDto
 import ro.davidmontei.loom.romm.dto.RomDto
 import ro.davidmontei.loom.romm.dto.RomPageDto
 import ro.davidmontei.loom.romm.dto.SaveDeviceRequest
+import ro.davidmontei.loom.romm.dto.SaveDownloadedRequest
 import ro.davidmontei.loom.romm.dto.SaveDto
 import ro.davidmontei.loom.romm.dto.SyncCompleteRequest
 import ro.davidmontei.loom.romm.dto.SyncCompleteResponseDto
@@ -146,9 +147,12 @@ interface RommApi {
         @Query("session_id") sessionId: Int?,
     ): ResponseBody
 
-    /** Records that this device now holds [saveId]: its sync row, which uploads are checked against. */
+    /**
+     * Records that this device now holds [saveId]: its sync row, which uploads are checked against.
+     * With RomM's hash of the save in [body], RomM 5.4.0 also keeps it as the row's baseline.
+     */
     @POST("api/saves/{id}/downloaded")
-    suspend fun confirmSaveDownloaded(@Path("id") saveId: Int, @Body body: SaveDeviceRequest): SaveDto
+    suspend fun confirmSaveDownloaded(@Path("id") saveId: Int, @Body body: SaveDownloadedRequest): SaveDto
 
     /**
      * Marks this one save version untracked on the device: negotiate answers `no_op` for it, with

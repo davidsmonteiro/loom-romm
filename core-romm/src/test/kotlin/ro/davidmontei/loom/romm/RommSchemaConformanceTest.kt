@@ -36,6 +36,7 @@ import ro.davidmontei.loom.romm.dto.RomDto
 import ro.davidmontei.loom.romm.dto.RomFileDto
 import ro.davidmontei.loom.romm.dto.RomPageDto
 import ro.davidmontei.loom.romm.dto.SaveDeviceRequest
+import ro.davidmontei.loom.romm.dto.SaveDownloadedRequest
 import ro.davidmontei.loom.romm.dto.SaveDto
 import ro.davidmontei.loom.romm.dto.SyncCompleteRequest
 import ro.davidmontei.loom.romm.dto.SyncCompleteResponseDto
@@ -103,7 +104,7 @@ class RommSchemaConformanceTest {
         check(SyncNegotiateRequest.serializer(), "SyncNegotiatePayload", isRequest = true)
         check(ClientSaveStateDto.serializer(), "ClientSaveState", isRequest = true)
         check(SyncCompleteRequest.serializer(), "SyncCompletePayload", isRequest = true)
-        check(SaveDeviceRequest.serializer(), "Body_confirm_download_api_saves__id__downloaded_post", isRequest = true)
+        check(SaveDownloadedRequest.serializer(), "Body_confirm_download_api_saves__id__downloaded_post", isRequest = true)
         check(SaveDeviceRequest.serializer(), "Body_track_save_api_saves__id__track_post", isRequest = true)
         check(SaveDeviceRequest.serializer(), "Body_untrack_save_api_saves__id__untrack_post", isRequest = true)
     }

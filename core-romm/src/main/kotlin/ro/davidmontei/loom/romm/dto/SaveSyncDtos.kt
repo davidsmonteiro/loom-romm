@@ -3,9 +3,10 @@ package ro.davidmontei.loom.romm.dto
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-// Save sync: RomM 5.3.1's endpoints/sync.py, endpoints/saves.py and endpoints/device.py, declaring
-// only what Loom reads, like CatalogDtos. RomM 5.4.0 adds fields; the ones Loom names are optional
-// with a default (RommSchemaConformanceTest lists them), the rest are ignored by the Json config.
+// Save sync: RomM 5.4.0's endpoints/sync, endpoints/saves.py and endpoints/device, declaring only
+// what Loom reads, like CatalogDtos. A response field 5.0 to 5.3 don't send is optional with a
+// default (RommSchemaConformanceTest checks them against 5.3.1); a request field they don't know
+// is dropped unread, so Loom sends 5.4.0's without asking the server's version first.
 
 /** Most ROM ids one negotiate call may scope to (`utils/validation.py`). */
 const val MAX_NEGOTIATE_ROM_IDS = 500
@@ -148,10 +149,22 @@ data class DeviceSyncDto(
     @SerialName("is_current") val isCurrent: Boolean,
 )
 
-/** Body of `/api/saves/{id}/downloaded`, `/track` and `/untrack`. */
+/** Body of `/api/saves/{id}/track` and `/untrack`. */
 @Serializable
 data class SaveDeviceRequest(
     @SerialName("device_id") val deviceId: String,
+)
+
+/** Body of `/api/saves/{id}/downloaded`. */
+@Serializable
+data class SaveDownloadedRequest(
+    @SerialName("device_id") val deviceId: String,
+    /**
+     * RomM's own hash of the save, which Loom checked the bytes against; left out when RomM has
+     * none. RomM 5.4.0 keeps it as this device's baseline only when it equals the save's hash, and
+     * clears the baseline when it is missing or differs; older RomMs ignore it.
+     */
+    @SerialName("content_hash") val contentHash: String? = null,
 )
 
 /** `DeviceSchema`: named in the conflict view ("uploaded from Steam Deck"). */

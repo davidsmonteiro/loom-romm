@@ -24,7 +24,7 @@ import ro.davidmontei.loom.romm.api.RommApi
 import ro.davidmontei.loom.romm.api.saveFilePart
 import ro.davidmontei.loom.romm.dto.ClientSaveStateDto
 import ro.davidmontei.loom.romm.dto.MAX_NEGOTIATE_ROM_IDS
-import ro.davidmontei.loom.romm.dto.SaveDeviceRequest
+import ro.davidmontei.loom.romm.dto.SaveDownloadedRequest
 import ro.davidmontei.loom.romm.dto.SaveDto
 import ro.davidmontei.loom.romm.dto.SyncAction
 import ro.davidmontei.loom.romm.dto.SyncCompleteRequest
@@ -650,7 +650,7 @@ class SaveSyncEngine(
 
     /** Both sides hold the same bytes: tell RomM this device has that version, and record it. */
     private suspend fun adopt(api: RommApi, deviceId: String, save: ResolvedSave.Ready, localHash: String, head: ServerHead) {
-        rommCall { api.confirmSaveDownloaded(head.saveId, SaveDeviceRequest(deviceId)) }
+        rommCall { api.confirmSaveDownloaded(head.saveId, SaveDownloadedRequest(deviceId, head.contentHash)) }
         writeBaseline(save, localHash, head.saveId, head.contentHash, head.updatedAt)
         setState(save.romId, SaveSyncState.IN_SYNC, null)
     }
@@ -673,7 +673,7 @@ class SaveSyncEngine(
         var saved = send(overwrite)
         if (!overwrite && head != null && saved.id == head.saveId) {
             // The head itself holds these bytes; RomM just has no record that this device has it.
-            rommCall { api.confirmSaveDownloaded(saved.id, SaveDeviceRequest(deviceId)) }
+            rommCall { api.confirmSaveDownloaded(saved.id, SaveDownloadedRequest(deviceId, hash)) }
         } else if (!overwrite && head != null && !isNewHead(saved, head)) {
             saved = send(overwrite = true)
         }
@@ -721,7 +721,8 @@ class SaveSyncEngine(
             val roots = SaveZipper.rootsIn(file.toPath())
             if (save.roots.none { it.name in roots }) throw SaveArchiveException(otherSave(save, roots))
             val restored = restorer.restore(file.toPath(), save.roots, current, save.maxUnitBytes)
-            rommCall { api.confirmSaveDownloaded(head.saveId, SaveDeviceRequest(deviceId)) }
+            // The hash the download was checked against: RomM 5.4.0 keeps it as this device's baseline.
+            rommCall { api.confirmSaveDownloaded(head.saveId, SaveDownloadedRequest(deviceId, head.contentHash)) }
             writeBaseline(save, restored, head.saveId, head.contentHash, head.updatedAt)
             setState(romId, SaveSyncState.IN_SYNC, null)
         } finally {
