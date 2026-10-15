@@ -722,7 +722,8 @@ private fun SaveSyncSection(
     val keyboardMode = LocalInputModeManager.current.inputMode == InputMode.Keyboard
     BackHandler(enabled = browsing != null && (browserFocused || !keyboardMode)) { open = null }
     if (browsing != null) {
-        SaveFolderBrowser(folders.getValue(browsing), state, actions, onFocus = { browserFocused = it }, onClose = { open = null })
+        // In place of the switch, the browser takes the section's first control: A on Saves goes back into it.
+        SaveFolderBrowser(folders.getValue(browsing), state, actions, onFocus = { browserFocused = it }, onClose = { open = null }, modifier = first)
     } else {
         SectionTop {
             Box(first.focusRequester(switchFocus)) {
@@ -1009,16 +1010,18 @@ private fun EmulatorFolderDialog(
 /**
  * An emulator's folder browser, in place of the section's controls: it opens beside the folder in
  * use (or in the ROMs folder), and says whether the open folder holds the emulator's saves.
+ * [modifier] goes on the control focus lands on in it.
  */
 @Composable
 private fun SaveFolderBrowser(
     f: EmulatorFolder, state: SettingsUiState, actions: SettingsActions, onFocus: (Boolean) -> Unit, onClose: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     SectionHeader("${f.which.emulator}'s folder")
     val start = f.folder ?: state.storage.romsRoot?.let { java.io.File(it) }
     // One browser per emulator: what one remembers (the folder open in it) mustn't carry over to another.
     key(f.which) {
-        FolderPicker(actions.volumes(), start?.parentFile, f.which.highlighted, focusOn = start, note = f.which.note,
+        FolderPicker(actions.volumes(), start?.parentFile, f.which.highlighted, focusOn = start, note = f.which.note, first = modifier,
             onPick = { f.onPick(actions, it); onClose() },
             modifier = Modifier.heightIn(max = 300.dp).onFocusChanged { onFocus(it.hasFocus) }.testTag("save-folder-browser"))
     }

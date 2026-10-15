@@ -813,6 +813,21 @@ class SettingsScreenTest {
         rule.onNodeWithText("Azahar's folder holds sdmc and nand; they aren't here.").assertExists() // ROMs itself
     }
 
+    /** Left out of the open browser to the section list, A on Saves goes back into the browser, as it goes into any section. */
+    @Test fun aOnSavesGoesBackIntoItsOpenBrowser() {
+        thorCard()
+        show()
+        toTheSaveSwitch()
+        openDetails("azahar")
+        press(Key.DirectionCenter) // Change folder: the browser opens, on the folder in use
+        rule.onNodeWithText("n3ds").assertIsFocused()
+        press(Key.DirectionLeft) // the browser's left edge
+        press(Key.DirectionLeft)
+        rule.onNodeWithTag("section-SAVES").assertIsFocused()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("n3ds").assertIsFocused()
+    }
+
     /** Azahar's folder browser says whether the open folder holds Azahar's data; picking one puts focus back on the card. */
     @Test fun pickingAFolderGivesFocusBackToItsCard() {
         val (n3ds, _) = thorCard()

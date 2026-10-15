@@ -51,6 +51,9 @@ class FolderNote(val text: String, val looksRight: Boolean)
  * B, while the picker has focus, goes back up through the folders opened with A, then leaves it to
  * the screen. Going up puts focus on the folder just left, so A goes back into it rather than
  * picking its parent.
+ *
+ * [first] goes on the control focus lands on, wherever that is now: a screen sending focus into
+ * the picker puts it there.
  */
 @Composable
 fun FolderPicker(
@@ -62,6 +65,7 @@ fun FolderPicker(
     focusOnOpen: Boolean = true,
     focusOn: File? = null,
     note: ((folder: File, children: List<File>) -> FolderNote)? = null,
+    first: Modifier = Modifier,
 ) {
     var current by remember { mutableStateOf(initial?.takeIf { it.isDirectory }) }
     // The folder (or volume) just left by going up, or [focusOn] at first.
@@ -104,7 +108,7 @@ fun FolderPicker(
             Text(said.text, style = MaterialTheme.typography.bodyMedium, color = if (said.looksRight) LoomColors.Installed else LoomColors.TextMuted)
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
                 LoomButton("Use this folder", onClick = { onPick(current!!) }, primary = true,
-                    modifier = if (focusIndex == null) Modifier.focusRequester(firstFocus) else Modifier)
+                    modifier = if (focusIndex == null) first.focusRequester(firstFocus) else Modifier)
                 LoomButton("Up", onClick = { up() })
             }
         }
@@ -117,7 +121,7 @@ fun FolderPicker(
                         subtitle = v.root.path,
                         onClick = { open(v.root) },
                         leading = { Icon(if (v.removable) Icons.Outlined.SdCard else Icons.Outlined.PhoneAndroid, null, tint = LoomColors.TextMuted) },
-                        modifier = if (i == (focusIndex ?: 0)) Modifier.focusRequester(firstFocus) else Modifier,
+                        modifier = if (i == (focusIndex ?: 0)) first.focusRequester(firstFocus) else Modifier,
                     )
                 }
             } else {
@@ -126,7 +130,7 @@ fun FolderPicker(
                         title = dir.name,
                         onClick = { open(dir) },
                         leading = { Icon(Icons.Outlined.Folder, null, tint = if (looksLikeSystem(dir)) LoomColors.Installed else LoomColors.TextMuted) },
-                        modifier = if (i == focusIndex) Modifier.focusRequester(firstFocus) else Modifier,
+                        modifier = if (i == focusIndex) first.focusRequester(firstFocus) else Modifier,
                     )
                 }
             }
