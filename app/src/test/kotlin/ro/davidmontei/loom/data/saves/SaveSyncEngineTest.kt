@@ -495,6 +495,56 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
     }
 
+    // --- RomM 5.4.0's deletes ---
+
+    /** The save deleted in RomM's web UI: 5.4.0 says `delete`, and Loom asks, deleting nothing and uploading nothing. */
+    @Test fun aSaveDeletedOnRommAsksToUploadItAgain() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.deleteSave(romm.head(7)!!.id)
+
+        val report = engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(romm.lastAnswer(7)).isEqualTo("delete")
+        assertThat(report.conflicts).containsExactly(7)
+        val conflict = saves.conflict(7)!!
+        assertThat(conflict.reason).isEqualTo(SyncDecision.SERVER_DELETED.name)
+        assertThat(conflict.serverSaveId).isNull()
+        assertThat(saves.unit(7)!!.detail).isEqualTo("This save was deleted on RomM: upload the Thor's again, or leave RomM without it")
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(romm.uploads()).hasSize(1)
+
+        assertThat(engine().resolveConflict(7, ConflictChoice.SKIP)).isEqualTo(ResolveResult.Done)
+        assertThat(engine().sync(SaveSyncRequest.PULL).conflicts).isEmpty() // asked once; skipped stays skipped
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(romm.uploads()).hasSize(1)
+    }
+
+    /** The newest version deleted on RomM, so an older one is its head: 5.4.0 says `download`, and Loom asks in those words. */
+    @Test fun aRolledBackSaveSaysRommWentBack() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1), minutesAgo = 30)
+        engine().sync(SaveSyncRequest.PUSH)
+        val older = romm.head(7)!!
+        writeSave(pokemonX, bytes(2), minutesAgo = 20)
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.deleteSave(romm.head(7)!!.id)
+
+        val report = engine().sync(SaveSyncRequest.PULL)
+
+        assertThat(romm.lastAnswer(7)).isEqualTo("download")
+        assertThat(report.downloaded).isEmpty()
+        assertThat(report.conflicts).containsExactly(7)
+        val conflict = saves.conflict(7)!!
+        assertThat(conflict.reason).isEqualTo(SyncDecision.SERVER_ROLLED_BACK.name)
+        assertThat(conflict.serverSaveId).isEqualTo(older.id)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(2))
+        assertThat(contentRequests()).isEmpty()
+    }
+
     // --- without RomM ---
 
     private suspend fun rommOutOfReach() = settings.setServer(ServerConfig("http://127.0.0.1:1/".toHttpUrl()), "5.3.1")

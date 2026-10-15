@@ -90,6 +90,28 @@ class SaveConflictsTest : SaveSyncTestBase() {
         assertThat(saves.conflict(7)).isNull()
     }
 
+    /** A save deleted on RomM 5.4.0 asks; Upload again (Keep Thor) makes the Thor's the slot's save once more. */
+    @Test fun uploadAgainPutsADeletedSaveBackOnRomm() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        val local = writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.deleteSave(romm.head(7)!!.id)
+        assertThat(engine().sync(SaveSyncRequest.PUSH).conflicts).containsExactly(7)
+        assertThat(saves.conflict(7)!!.reason).isEqualTo(SyncDecision.SERVER_DELETED.name)
+
+        assertThat(engine().resolveConflict(7, ConflictChoice.KEEP_THOR)).isEqualTo(ResolveResult.Done)
+
+        val head = romm.head(7)!!
+        assertThat(head.hash).isEqualTo(local)
+        assertThat(saves.conflict(7)).isNull()
+        assertThat(saves.baseline(7, "autosave")!!.serverSaveId).isEqualTo(head.id)
+        assertThat(engine().sync(SaveSyncRequest.PUSH).conflicts).isEmpty()
+        assertThat(romm.lastAnswer(7)).isEqualTo("no_op")
+        assertThat(saves.unit(7)!!.state).isEqualTo(SaveSyncState.IN_SYNC)
+        assertThat(romm.uploads()).hasSize(2)
+    }
+
     /** The user chose on what the conflict showed; if either side moved on, nothing happens. */
     @Test fun aChoiceOnSidesThatChangedSinceIsRefused() = runBlocking<Unit> {
         firstSyncConflict()

@@ -57,7 +57,11 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
     val syncHashes = mutableMapOf<Pair<String, Int>, String?>()
     val devices = mutableListOf<JsonObject>()
     val requests = CopyOnWriteArrayList<RecordedRequest>()
+    /** Every operation negotiate answered, in order. */
+    val answered = CopyOnWriteArrayList<JsonObject>()
     val completed = CopyOnWriteArrayList<Triple<Int, Int, Int>>()
+    /** RomM 5.4.0's `deleted_assets`: per (ROM, slot), the hashes its deleted versions held and when they went. */
+    private val removed = mutableMapOf<Pair<Int, String>, MutableList<Pair<String, Instant>>>()
 
     /** Replaces negotiate's operations for a ROM with this action (the server and slot stay as they are). */
     val negotiateSays = mutableMapOf<Int, String>()
@@ -89,6 +93,17 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
     }
 
     fun head(romId: Int): Save? = saves.filter { it.romId == romId && it.slot == "autosave" }.maxByOrNull { it.updatedAt }
+
+    /** Deletes a version, as in RomM's web UI; 5.4.0 records the loss. */
+    fun deleteSave(id: Int) {
+        val save = saves.single { it.id == id }
+        saves.remove(save)
+        clock = clock.plusSeconds(1)
+        if (is54 && save.slot != null && save.hash != null) removed.getOrPut(save.romId to save.slot) { mutableListOf() } += save.hash to clock
+    }
+
+    /** Negotiate's last action for [romId]. */
+    fun lastAnswer(romId: Int): String? = answered.lastOrNull { it.int("rom_id") == romId }?.string("action")
 
     fun paths(): List<String> = requests.map { "${it.method} ${it.url.encodedPath}" }
 
@@ -128,12 +143,16 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
         val matched = mutableSetOf<Int>()
         for (cs in clientSaves) {
             val head = heads[cs.int("rom_id") to cs.string("slot")!!]
+            // 5.4.0 (`comparison.py`): a client still holding a version deleted here, since before it was.
+            val removedHere = removedBefore(cs.int("rom_id"), cs.string("slot")!!, cs.string("content_hash"), Instant.parse(cs.string("updated_at")))
             if (head == null) {
-                ops += op("upload", cs.int("rom_id"), null, cs.string("file_name")!!, cs.string("emulator"), "Save exists on client but not on server")
+                ops += if (removedHere) op("delete", cs.int("rom_id"), null, cs.string("file_name")!!, cs.string("emulator"), "Save was deleted on the server")
+                else op("upload", cs.int("rom_id"), null, cs.string("file_name")!!, cs.string("emulator"), "Save exists on client but not on server")
                 continue
             }
             matched += head.id
-            val action = compare(cs.string("content_hash"), Instant.parse(cs.string("updated_at")), head, syncRows[device to head.id])
+            val action = if (removedHere && cs.string("content_hash") != head.hash) "download"
+                else compare(cs.string("content_hash"), Instant.parse(cs.string("updated_at")), head, syncRows[device to head.id])
             ops += op(negotiateSays[head.romId] ?: action, head.romId, head, reason = "compared")
         }
         for (head in heads.values) {
@@ -142,12 +161,18 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
             if (synced != null && !head.updatedAt.isAfter(synced)) continue // "the client deleted it"
             ops += op(negotiateSays[head.romId] ?: "download", head.romId, head, reason = "Save exists on server but not on client")
         }
+        answered += ops
         val session = nextSession++
         return ok(buildJsonObject {
             put("session_id", session); put("operations", JsonArray(ops))
-            for (a in listOf("upload", "download", "conflict", "no_op")) put("total_$a", ops.count { it.string("action") == a })
+            for (a in listOf("upload", "download", "conflict", "no_op") + listOfNotNull("delete".takeIf { is54 })) {
+                put("total_$a", ops.count { it.string("action") == a })
+            }
         })
     }
+
+    private fun removedBefore(romId: Int, slot: String, hash: String?, clientAt: Instant) =
+        hash != null && removed[romId to slot].orEmpty().any { (lost, at) -> lost == hash && !clientAt.isAfter(at) }
 
     /** `handler/sync/comparison.py`. */
     private fun compare(clientHash: String?, clientAt: Instant, head: Save, synced: Instant?): String {

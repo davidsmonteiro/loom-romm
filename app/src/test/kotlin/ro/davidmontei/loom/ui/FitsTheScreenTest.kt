@@ -31,6 +31,7 @@ import ro.davidmontei.loom.data.saves.SaveSyncEngine
 import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.storage.saves.SyncDecision
+import ro.davidmontei.loom.storage.saves.SyncOutcome
 import ro.davidmontei.loom.data.saves.EdenSaves
 import ro.davidmontei.loom.data.saves.SaveLook
 import ro.davidmontei.loom.ui.library.FolderQuestion
@@ -316,10 +317,14 @@ class FitsTheScreenTest {
         assertThat(ellipsized("synced so far")).isFalse()
     }
 
+    /** The longest reason a save conflict can give. */
+    private val longestConflictReason = SyncDecision.entries.filter { it.outcome == SyncOutcome.CONFLICT }
+        .map { conflictReason(it.name) }.maxBy { it.length }
+
     /** A save conflict's choice at its tallest: a long title, the longest reason, and RomM's side in full. */
     @Test fun theSaveConflictChoiceFits() {
         val title = "Pokémon Omega Ruby (USA) (En,Ja,Fr,De,Es,It,Ko) (Rev 2)"
-        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = conflictReason(SyncDecision.SERVER_WENT_BACK.name),
+        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = longestConflictReason,
             serverDevice = "AYN Odin 2 Portal (Argosy)")
         rule.setContent { LoomTestTheme { QueueContent(QueueScreenTest.sample.copy(conflicts = listOf(conflict)), NoopQueueActions) } }
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
@@ -331,7 +336,7 @@ class FitsTheScreenTest {
     /** The same, for a Switch game whose save folder the user picked: Change save folder fits beside the answers. */
     @Test fun theSaveConflictChoiceWithChangeSaveFolderFits() {
         val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"
-        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = conflictReason(SyncDecision.SERVER_WENT_BACK.name),
+        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = longestConflictReason,
             serverEmulator = "eden", emulator = "eden", serverDevice = "AYN Odin 2 Portal (Argosy)", folderChosen = true)
         rule.setContent { LoomTestTheme { QueueContent(QueueScreenTest.sample.copy(conflicts = listOf(conflict)), NoopQueueActions) } }
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()

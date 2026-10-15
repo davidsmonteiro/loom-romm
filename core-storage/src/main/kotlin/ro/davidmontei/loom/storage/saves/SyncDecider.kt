@@ -38,7 +38,10 @@ enum class NegotiatedAction {
     CONFLICT,
     NO_OP,
 
-    /** `delete` (RomM 5.4.0) or anything newer: Loom never acts on it alone. */
+    /** RomM 5.4.0: the slot the device still holds a save of was emptied on the server. Loom never deletes for it. */
+    DELETE,
+
+    /** Anything a newer RomM answers: Loom never acts on it alone. */
     OTHER,
 }
 
@@ -105,6 +108,12 @@ enum class SyncDecision(val outcome: SyncOutcome) {
     /** (e) The slot is empty on the server although it held the baseline's version. */
     SERVER_SLOT_GONE(SyncOutcome.CONFLICT),
 
+    /** (e) RomM 5.4.0 says the save the device holds was deleted there, and the slot is empty. */
+    SERVER_DELETED(SyncOutcome.CONFLICT),
+
+    /** (e) RomM 5.4.0 confirms [SERVER_WENT_BACK]: the device holds a version it deleted, so its head is an older one. */
+    SERVER_ROLLED_BACK(SyncOutcome.CONFLICT),
+
     /** (f) The server's newer save was made by another emulator: it is never applied automatically. */
     FOREIGN_EMULATOR(SyncOutcome.CONFLICT),
 }
@@ -135,6 +144,10 @@ object SyncDecider {
         val own = ownRule(localHash, localEmulator, baseline, server)
         return when {
             negotiated == null -> own
+            // RomM 5.4.0 knows what was deleted there, which Loom's own rule can't tell: it asks in those words.
+            // Even a save Loom would upload as new on the device: it was on RomM once.
+            negotiated == NegotiatedAction.DELETE && server == null && localHash != null -> SyncDecision.SERVER_DELETED
+            negotiated == NegotiatedAction.DOWNLOAD && own == SyncDecision.SERVER_WENT_BACK -> SyncDecision.SERVER_ROLLED_BACK
             // Loom's conflicts stand, and identical bytes can't be in conflict.
             own.outcome == SyncOutcome.CONFLICT || own.outcome == SyncOutcome.ADOPT -> own
             negotiated == NegotiatedAction.CONFLICT -> SyncDecision.SERVER_SAYS_CONFLICT

@@ -161,6 +161,8 @@ fun conflictReason(decision: String): String = when (decision) {
     SyncDecision.FIRST_SYNC_DIFFERS.name -> "The Thor and RomM each have a different save, and they were never synced"
     SyncDecision.SERVER_WENT_BACK.name -> "RomM's newest save is older than the one last synced: it may have been deleted"
     SyncDecision.SERVER_SLOT_GONE.name -> "RomM no longer has this game's save"
+    SyncDecision.SERVER_DELETED.name -> "This save was deleted on RomM: upload the Thor's again, or leave RomM without it"
+    SyncDecision.SERVER_ROLLED_BACK.name -> "RomM's newest save was deleted, so its save is an older one now"
     SyncDecision.FOREIGN_EMULATOR.name -> "RomM's newer save was made by another emulator"
     else -> decision
 }
@@ -841,7 +843,8 @@ class SaveSyncEngine(
         SyncAction.DOWNLOAD -> NegotiatedAction.DOWNLOAD
         SyncAction.CONFLICT -> NegotiatedAction.CONFLICT
         SyncAction.NO_OP -> NegotiatedAction.NO_OP
-        SyncAction.DELETE, SyncAction.UNKNOWN -> NegotiatedAction.OTHER
+        SyncAction.DELETE -> NegotiatedAction.DELETE
+        SyncAction.UNKNOWN -> NegotiatedAction.OTHER
     }
 
     private fun SaveDto.updatedAtInstant(): Instant =

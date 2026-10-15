@@ -69,6 +69,8 @@ class SaveWordingTest {
             SyncDecision.FIRST_SYNC_DIFFERS, "The Thor and RomM each have a different save, and they were never synced",
             SyncDecision.SERVER_WENT_BACK, "RomM's newest save is older than the one last synced: it may have been deleted",
             SyncDecision.SERVER_SLOT_GONE, "RomM no longer has this game's save",
+            SyncDecision.SERVER_DELETED, "This save was deleted on RomM: upload the Thor's again, or leave RomM without it",
+            SyncDecision.SERVER_ROLLED_BACK, "RomM's newest save was deleted, so its save is an older one now",
             SyncDecision.FOREIGN_EMULATOR, "RomM's newer save was made by another emulator",
         )
         assertThat(conflictReason("SOMETHING_NEW")).isEqualTo("SOMETHING_NEW") // a reason recorded by a newer Loom

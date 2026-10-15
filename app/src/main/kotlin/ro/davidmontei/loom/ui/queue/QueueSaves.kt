@@ -199,10 +199,11 @@ internal fun RecentSaveRow(item: RecentSave, modifier: Modifier) {
 
 /**
  * Which save to keep: both sides as Loom found them, and the four answers. Skip has focus, and B
- * skips too: nothing changes on either side until the user picks one. For a game whose save
- * folder the user picked, Left reaches [onChangeFolder], away from the answers: a wrong pick shows
- * up as a conflict, and neither side is the one to keep then. The dialog takes the screen's width
- * for that fifth button.
+ * skips too: nothing changes on either side until the user picks one. With no save on RomM (it was
+ * deleted there), Keep Thor reads Upload again and Skip leaves RomM without it: Loom never deletes
+ * the Thor's. For a game whose save folder the user picked, Left reaches [onChangeFolder], away
+ * from the answers: a wrong pick shows up as a conflict, and neither side is the one to keep then.
+ * The dialog takes the screen's width for that fifth button.
  */
 @Composable
 internal fun ConflictDialog(item: ConflictItem, onAnswer: (ConflictChoice) -> Unit, onChangeFolder: (() -> Unit)? = null) {
@@ -217,7 +218,8 @@ internal fun ConflictDialog(item: ConflictItem, onAnswer: (ConflictChoice) -> Un
                 SaveSide("On RomM", serverSide(item), Modifier.weight(1f).testTag("server-side"))
             }
             Text(
-                "Keep both uploads the Thor's save to RomM as a separate copy, then takes RomM's. Skip leaves both as they are." +
+                (if (item.serverHasSave) "Keep both uploads the Thor's save to RomM as a separate copy, then takes RomM's. Skip leaves both as they are."
+                    else "Upload again puts the Thor's save back on RomM. Skip leaves RomM without it, and the Thor's save as it is.") +
                     if (onChangeFolder != null) " You picked this game's ${emulatorName(item.emulator)} save folder: if the Thor's save " +
                         "isn't its, Change save folder picks again." else "",
                 style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted,
@@ -229,7 +231,7 @@ internal fun ConflictDialog(item: ConflictItem, onAnswer: (ConflictChoice) -> Un
                 Spacer(Modifier.weight(1f))
             }
             LoomButton("Skip", { onAnswer(ConflictChoice.SKIP) }, Modifier.focusRequester(first))
-            LoomButton("Keep Thor", { onAnswer(ConflictChoice.KEEP_THOR) }, enabled = item.thorHasSave)
+            LoomButton(if (item.serverHasSave) "Keep Thor" else "Upload again", { onAnswer(ConflictChoice.KEEP_THOR) }, enabled = item.thorHasSave)
             LoomButton("Keep server", { onAnswer(ConflictChoice.KEEP_SERVER) }, enabled = item.serverHasSave)
             LoomButton("Keep both", { onAnswer(ConflictChoice.KEEP_BOTH) }, enabled = item.thorHasSave && item.serverHasSave)
         },

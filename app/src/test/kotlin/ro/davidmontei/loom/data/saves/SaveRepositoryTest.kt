@@ -417,6 +417,18 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_SERVER)).isEqualTo("The Thor now has RomM's save of Pokemon X")
     }
 
+    /** A save deleted on RomM has no old version left there to mention. */
+    @Test fun uploadingADeletedSaveAgainSaysRommHasIt() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.deleteSave(romm.head(7)!!.id)
+        engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_THOR)).isEqualTo("RomM now has the Thor's save of Pokemon X")
+    }
+
     @Test fun anUnreachableServerIsSaidPlainly() = runBlocking<Unit> {
         settings.setServer(ServerConfig("http://127.0.0.1:1/".toHttpUrl()), "5.3.1")
         install(pokemonX)

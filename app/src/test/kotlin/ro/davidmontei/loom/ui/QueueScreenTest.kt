@@ -27,8 +27,10 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import ro.davidmontei.loom.data.db.RecentInstall
 import ro.davidmontei.loom.data.saves.ConflictChoice
+import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.formatBytes
+import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.ui.components.dateTime
 import ro.davidmontei.loom.ui.queue.ConflictItem
 import ro.davidmontei.loom.ui.queue.RecentSave
@@ -374,14 +376,28 @@ class QueueScreenTest {
         rule.onNodeWithText("Keep server").assertIsFocused()
     }
 
-    /** RomM's save gone from the slot: there is nothing on RomM to keep, alone or beside the Thor's. */
-    @Test fun aServerSideWithoutASaveCantBeKept() {
-        show(sample.copy(conflicts = listOf(pokemonX.copy(serverUpdatedMs = null, serverEmulator = null, serverBytes = null, serverDevice = null))))
+    /**
+     * RomM's save deleted there: nothing on RomM to keep, alone or beside the Thor's. The Thor's can go
+     * up again, or Skip leaves RomM without it; nothing offers to delete the Thor's.
+     */
+    @Test fun aDeletedSavesChoiceOffersUploadAgainAndSkip() {
+        val deleted = pokemonX.copy(reason = conflictReason(SyncDecision.SERVER_DELETED.name),
+            serverUpdatedMs = null, serverEmulator = null, serverBytes = null, serverDevice = null)
+        show(sample.copy(conflicts = listOf(deleted)))
         press(Key.DirectionCenter)
+        rule.onNodeWithText("Upload again puts the Thor's save back on RomM. Skip leaves RomM without it, and the Thor's save as it is.")
+            .assertExists()
+        rule.onNodeWithText("Skip").assertIsFocused()
+        rule.onNodeWithText("Keep Thor").assertDoesNotExist()
         rule.onNodeWithText("Keep server").assertIsNotEnabled()
         rule.onNodeWithText("Keep both").assertIsNotEnabled()
         press(Key.DirectionRight)
-        rule.onNodeWithText("Keep Thor").assertIsFocused()
+        rule.onNodeWithText("Upload again").assertIsFocused()
+        press(Key.DirectionRight) // nothing to its right can be pressed
+        rule.onNodeWithText("Upload again").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("resolve:7:KEEP_THOR")
+        rule.onNodeWithTag("conflict-7").assertIsFocused()
     }
 
     /** Settled meanwhile (in the background, or from the library): the choice closes, and a later conflict doesn't reopen it. */

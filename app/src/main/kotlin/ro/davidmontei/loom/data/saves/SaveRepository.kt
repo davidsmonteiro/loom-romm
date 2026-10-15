@@ -182,10 +182,13 @@ class SaveRepository(
 
     /** The user's answer to [romId]'s save conflict. Keep server and Keep both need the emulator closed. */
     suspend fun resolve(romId: Int, title: String, choice: ConflictChoice): String = request {
-        val replacesASave = saves.conflict(romId)?.localHash != null
+        val conflict = saves.conflict(romId)
+        val replacesASave = conflict?.localHash != null
         when (val result = engine.resolveConflict(romId, choice)) {
             ResolveResult.Done -> when (choice) {
-                ConflictChoice.KEEP_THOR -> "RomM now has the Thor's save of $title; its old one stays in RomM's history"
+                // With none on RomM (deleted there), there is no old one to keep.
+                ConflictChoice.KEEP_THOR -> "RomM now has the Thor's save of $title" +
+                    if (conflict?.serverSaveId != null) "; its old one stays in RomM's history" else ""
                 ConflictChoice.KEEP_SERVER -> "The Thor now has RomM's save of $title" + backedUp(replacesASave)
                 ConflictChoice.KEEP_BOTH -> "RomM keeps the Thor's save of $title as a separate copy, and the Thor now has RomM's"
                 ConflictChoice.SKIP -> "Left both saves of $title as they are. Loom asks again if either one changes."
