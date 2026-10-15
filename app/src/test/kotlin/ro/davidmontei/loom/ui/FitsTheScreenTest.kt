@@ -364,6 +364,24 @@ class FitsTheScreenTest {
         rule.saveScreenshot("queue-conflict-choice-change-folder")
     }
 
+    /**
+     * RomM's save Loom can't restore, for a Switch game whose folder the user picked: the longest
+     * reason Loom gives, which names both title IDs, with Change save folder beside the answers.
+     */
+    @Test fun anUnreadableSaveConflictChoiceFits() {
+        val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"
+        val why = "RomM's save is for title 0100A0B00C0D0000 and 0100F2C0115B6000, not 01002B300C1D2000, the save folder this game uses. " +
+            "If that folder is the wrong one, change it in the game's details; nothing was replaced"
+        val conflict = QueueScreenTest.pokemonX.copy(title = title, reason = why, serverUnreadable = true,
+            serverEmulator = "eden", emulator = "eden", serverDevice = "AYN Odin 2 Portal (Argosy)", folderChosen = true)
+        rule.setContent { LoomTestTheme { QueueContent(QueueScreenTest.sample.copy(conflicts = listOf(conflict)), NoopQueueActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("conflict-7").performClick()
+        assertThat(overflow("$title: which save to keep?")).isEqualTo(0f)
+        assertThat(cutShort("Change save folder picks again.")).isFalse()
+        rule.saveScreenshot("queue-conflict-choice-unreadable")
+    }
+
     /** The editor with arcade's other folders under the field, and what the card holds of each. */
     @Test fun thePlatformFolderEditorFitsWithThePlatformsOwnFolders() {
         val state = SettingsScreenTest.sample.copy(mapping = listOf(SettingsScreenTest.chosenRow(1, "Arcade", "arcade", "arcade", "arcade")))

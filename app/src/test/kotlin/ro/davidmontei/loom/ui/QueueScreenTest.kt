@@ -400,6 +400,34 @@ class QueueScreenTest {
         rule.onNodeWithTag("conflict-7").assertIsFocused()
     }
 
+    /**
+     * RomM's save Loom can't restore (here a bare file for Azahar): the choice says why, and only the
+     * Thor's side can be kept. B skips as ever.
+     */
+    @Test fun keepServerIsntOfferedForASaveLoomCantRestore() {
+        val unreadable = pokemonX.copy(reason = "RomM's save for this game isn't a save archive Loom can restore", serverUnreadable = true)
+        show(sample.copy(conflicts = listOf(unreadable)))
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Pokemon X: which save to keep?").assertExists()
+        rule.onNodeWithText("Keep Thor makes the Thor's save RomM's newest. Skip leaves both as they are; Loom asks again if either one changes.")
+            .assertExists()
+        rule.onNodeWithText("Skip").assertIsFocused()
+        rule.onNodeWithText("Keep server").assertIsNotEnabled()
+        rule.onNodeWithText("Keep both").assertIsNotEnabled()
+        press(Key.DirectionRight)
+        rule.onNodeWithText("Keep Thor").assertIsFocused()
+        press(Key.DirectionRight) // nothing to its right can be pressed
+        rule.onNodeWithText("Keep Thor").assertIsFocused()
+        back()
+        assertThat(calls).containsExactly("resolve:7:SKIP")
+
+        update { it.copy(conflicts = listOf(unreadable.copy(thorModifiedMs = null, thorBytes = null))) }
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Skip leaves RomM's save as it is; Loom asks again if either side changes.").assertExists()
+        rule.onNodeWithText("Keep Thor").assertIsNotEnabled()
+        rule.onNodeWithText("Keep server").assertIsNotEnabled()
+    }
+
     /** Settled meanwhile (in the background, or from the library): the choice closes, and a later conflict doesn't reopen it. */
     @Test fun aConflictSettledWhileChoosingClosesTheChoice() {
         show(withSaves)

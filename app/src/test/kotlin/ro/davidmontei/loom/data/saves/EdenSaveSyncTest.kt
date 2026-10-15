@@ -334,8 +334,8 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
 
     /**
      * A wrong pick: RomM holds the game's save, the Thor's picked folder another game's. Keeping
-     * RomM's says the archive is for another title instead of failing obscurely, and picking the
-     * right folder clears the conflict.
+     * RomM's says the archive is for another title instead of failing obscurely, and the conflict
+     * says so from then on; picking the right folder clears it.
      */
     @Test fun aConflictFromAWrongPickIsExplainedAndUndoneByPickingAgain() = runBlocking<Unit> {
         installSwitch(wonder)
@@ -347,11 +347,14 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
 
         val kept = engine().resolveConflict(wonder.romId, ConflictChoice.KEEP_SERVER)
 
-        assertThat(kept).isEqualTo(ResolveResult.Failed(
-            "RomM's save is for title 0100A0B00C0D0000, not 01002B300C1D2000, the save folder this game uses. " +
-                "If that folder is the wrong one, change it in the game's details; nothing was replaced",
-        ))
+        val why = "RomM's save is for title 0100A0B00C0D0000, not 01002B300C1D2000, the save folder this game uses. " +
+            "If that folder is the wrong one, change it in the game's details; nothing was replaced"
+        assertThat(kept).isEqualTo(ResolveResult.Failed(why, stale = true))
         assertThat(File(edenFolder(arceus), "game_data.sav").readBytes()).isEqualTo(bytes(2))
+        assertThat(saves.conflict(wonder.romId)!!.reason).isEqualTo(SyncDecision.SERVER_UNREADABLE.name)
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(saves.conflict(wonder.romId)!!.detail).isEqualTo(why)
+        assertThat(detail(wonder)).isEqualTo(why)
 
         val repository = SaveRepository(engine(), saves, eden(), scope)
         repository.chooseSaveFolder(wonder.romId, wonder.title, SwitchTitleId.parse(wonder.titleId)!!)

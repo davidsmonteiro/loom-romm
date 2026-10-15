@@ -108,7 +108,7 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
 /**
  * Version 7 (DS and PSP saves): what names each game's save in its emulator's save folder is kept
  * per emulator and game, in one table: Eden's title IDs move there, read or chosen as they were,
- * and PPSSPP's disc IDs join them.
+ * and PPSSPP's disc IDs join them. A save conflict can say why RomM's save can't be restored.
  */
 val MIGRATION_6_7 = object : Migration(6, 7) {
     override fun migrate(db: SupportSQLiteDatabase) {
@@ -122,5 +122,7 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
                 "SELECT 'eden', `rom_id`, `title_id`, `source`, `image_fingerprint`, `recorded_at` FROM `switch_titles`",
         )
         db.execSQL("DROP TABLE `switch_titles`")
+        db.execSQL("ALTER TABLE `save_conflicts` ADD COLUMN `detail` TEXT")
+        db.execSQL("ALTER TABLE `save_conflicts` ADD COLUMN `unit_path` TEXT")
     }
 }

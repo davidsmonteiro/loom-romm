@@ -52,6 +52,16 @@ data class SaveConflictEntity(
     @ColumnInfo(name = "detected_at") val detectedAtMs: Long,
     /** The user chose Skip: it stays listed, but isn't raised again until either side changes. */
     val skipped: Boolean = false,
+    /**
+     * What the reason alone doesn't say, in words for the UI: for SERVER_UNREADABLE, why RomM's
+     * save can't go in place of the Thor's. Null otherwise.
+     */
+    val detail: String? = null,
+    /**
+     * The save unit's folder when Loom found it. RomM's save that can't go in place of one unit
+     * (a Switch save for another title) may for another, once the owner picks the right folder.
+     */
+    @ColumnInfo(name = "unit_path") val unitPath: String? = null,
 )
 
 /**

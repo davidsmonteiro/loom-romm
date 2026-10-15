@@ -356,16 +356,82 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(romm.paths()).doesNotContain("POST /api/saves/${newer.id}/downloaded")
     }
 
-    @Test fun aServerSaveThatIsntAnArchiveIsNotRestored() = runBlocking<Unit> {
+    /**
+     * A bare save file on RomM, as another client might upload: no Azahar folder can come from it,
+     * now or ever, so it is one conflict saying why, not a failure every sync. While it is RomM's
+     * save, no sync downloads it again.
+     */
+    @Test fun aServerSaveThatIsntAnArchiveBecomesOneConflict() = runBlocking<Unit> {
         install(pokemonX)
         writeSave(pokemonX, bytes(1))
         engine().sync(SaveSyncRequest.PUSH)
-        romm.addSave(7, bytes(2)) // a bare save file, as another client might upload
+        val bare = romm.addSave(7, bytes(2))
 
         val report = engine().sync(SaveSyncRequest.PULL)
 
-        assertThat(report.failed.getValue(7)).contains("isn't a save archive")
+        assertThat(report.failed).isEmpty()
+        assertThat(report.conflicts).containsExactly(7)
+        val conflict = saves.conflict(7)!!
+        assertThat(conflict.reason).isEqualTo(SyncDecision.SERVER_UNREADABLE.name)
+        assertThat(conflict.serverSaveId).isEqualTo(bare.id)
+        assertThat(conflict.detail).isEqualTo("RomM's save for this game isn't a save archive Loom can restore")
+        assertThat(saves.unit(7)!!.detail).isEqualTo(conflict.detail)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.CONFLICT)
         assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+
+        for (request in listOf(SaveSyncRequest.PULL, SaveSyncRequest.PUSH, SaveSyncRequest.CHECK)) {
+            val again = engine().sync(request)
+            assertThat(again.failed).isEmpty()
+            assertThat(again.conflicts).containsExactly(7)
+        }
+        assertThat(contentRequests()).hasSize(1)
+        assertThat(saves.conflict(7)).isEqualTo(conflict)
+        assertThat(saves.unit(7)!!.detail).isEqualTo(conflict.detail)
+    }
+
+    /** Skipped, it stays quiet while RomM's save is the same; a save Loom can restore replaces it as usual. */
+    @Test fun itStaysAConflictUntilRommsSaveChanges() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.addSave(7, bytes(2))
+        engine().sync(SaveSyncRequest.PULL)
+        assertThat(engine().resolveConflict(7, ConflictChoice.SKIP)).isEqualTo(ResolveResult.Done)
+
+        val skipped = engine().sync(SaveSyncRequest.PULL)
+        assertThat(skipped.conflicts).isEmpty()
+        assertThat(skipped.failed).isEmpty()
+        assertThat(saves.conflict(7)!!.skipped).isTrue()
+        assertThat(contentRequests()).hasSize(1)
+
+        val good = romm.addSave(7, archiveOf(bytes(3)))
+        val report = engine().sync(SaveSyncRequest.PULL)
+
+        assertThat(report.downloaded).containsExactly(7)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(3))
+        assertThat(saves.conflict(7)).isNull()
+        assertThat(saves.baseline(7, "autosave")!!.serverSaveId).isEqualTo(good.id)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
+    /** Restoring it, when only a look found RomM's save newer, finds the same: the conflict, and a look again from the answer. */
+    @Test fun restoringASaveLoomCantRestoreMakesItTheConflict() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        val bare = romm.addSave(7, bytes(2))
+        assertThat(engine().sync(SaveSyncRequest.CHECK).serverNewer).containsExactly(7)
+
+        val result = engine().restoreFromServer(7)
+
+        assertThat(result).isEqualTo(ResolveResult.Failed("RomM's save for this game isn't a save archive Loom can restore", stale = true))
+        assertThat(saves.conflict(7)!!.reason).isEqualTo(SyncDecision.SERVER_UNREADABLE.name)
+        assertThat(saves.conflict(7)!!.serverSaveId).isEqualTo(bare.id)
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.CONFLICT)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(engine().sync(SaveSyncRequest.CHECK).conflicts).containsExactly(7)
+        assertThat(engine().restoreFromServer(7)).isInstanceOf(ResolveResult.Failed::class.java)
+        assertThat(romm.paths()).doesNotContain("POST /api/saves/${bare.id}/downloaded")
     }
 
     @Test fun aDownloadLargerThanASaveCanBeIsRefused() = runBlocking<Unit> {

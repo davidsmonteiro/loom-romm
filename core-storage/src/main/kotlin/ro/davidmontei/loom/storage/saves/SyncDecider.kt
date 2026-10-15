@@ -116,6 +116,12 @@ enum class SyncDecision(val outcome: SyncOutcome) {
 
     /** (f) The server's newer save was made by another emulator: it is never applied automatically. */
     FOREIGN_EMULATOR(SyncOutcome.CONFLICT),
+
+    /**
+     * (g) The server's save can't go in place of the device's: it isn't laid out as the emulator
+     * keeps its saves. Never returned by [SyncDecider.decide]; a download that finds it records it.
+     */
+    SERVER_UNREADABLE(SyncOutcome.CONFLICT),
 }
 
 /**

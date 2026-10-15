@@ -197,6 +197,30 @@ class MigrationTest {
         }
     }
 
+    /** Version 6's save conflicts stay, skipped or not, saying no more than their reason. A conflict can say more from now on. */
+    @Test fun version6ConflictsStayAndCanSayWhyRommsSaveCantBeRestored() = runBlocking<Unit> {
+        val file = context.getDatabasePath(DB).apply { parentFile!!.mkdirs(); delete() }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            createFromSchema(db, version = 6)
+            db.execSQL("INSERT INTO save_conflicts VALUES (7, 'autosave', 'BOTH_CHANGED', 'l', 1, 2, 12, 's', 't', 'azahar', 3, 1)")
+        }
+
+        val room = DataModule.database(context)
+        try {
+            val saves = room.saveDao()
+            val conflict = saves.conflict(7)!!
+            assertThat(conflict.reason).isEqualTo("BOTH_CHANGED")
+            assertThat(conflict.skipped).isTrue()
+            assertThat(conflict.detail).isNull()
+            assertThat(conflict.unitPath).isNull()
+            saves.upsertConflict(conflict.copy(reason = "SERVER_UNREADABLE", detail = "RomM's save isn't an archive", unitPath = "/x/data"))
+            assertThat(saves.conflict(7)!!.detail).isEqualTo("RomM's save isn't an archive")
+            assertThat(saves.conflict(7)!!.unitPath).isEqualTo("/x/data")
+        } finally {
+            room.close()
+        }
+    }
+
     /** Creates the tables, indices and Room's identity row of an exported schema version. */
     private fun createFromSchema(db: SQLiteDatabase, version: Int) {
         val name = "ro.davidmontei.loom.data.db.LoomDatabase/$version.json"

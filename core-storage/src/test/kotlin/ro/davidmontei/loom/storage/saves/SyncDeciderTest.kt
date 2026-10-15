@@ -131,10 +131,10 @@ class SyncDeciderTest {
         }
     }
 
-    /** Every reason the decider can give is covered above (the 409 one is recorded by the upload). */
+    /** Every reason the decider can give is covered above (the 409 one is recorded by the upload, the unreadable one by the download). */
     @Test fun theTableCoversEveryDecision() {
         val covered = cases.map { it.expected }.toSet()
-        assertThat(SyncDecision.entries.toSet() - covered).containsExactly(SyncDecision.UPLOAD_REJECTED)
+        assertThat(SyncDecision.entries.toSet() - covered).containsExactly(SyncDecision.UPLOAD_REJECTED, SyncDecision.SERVER_UNREADABLE)
     }
 
     /**
@@ -147,7 +147,7 @@ class SyncDeciderTest {
         for (local in locals) for (base in baselines) for (head in heads) for (answer in answers) {
             val decision = SyncDecider.decide(local, "azahar", base, head, answer)
             val what = "local=$local base=$base head=$head negotiated=$answer -> $decision"
-            assertWithMessage(what).that(decision).isNotEqualTo(SyncDecision.UPLOAD_REJECTED)
+            assertWithMessage(what).that(decision).isNoneOf(SyncDecision.UPLOAD_REJECTED, SyncDecision.SERVER_UNREADABLE)
             when (decision.outcome) {
                 SyncOutcome.DOWNLOAD -> {
                     assertWithMessage(what).that(local == null || local == base?.localHash).isTrue()

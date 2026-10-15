@@ -49,6 +49,7 @@ import ro.davidmontei.loom.storage.saves.SyncDecider
 import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.storage.saves.SyncOutcome
 import ro.davidmontei.loom.storage.saves.UnitSnapshot
+import ro.davidmontei.loom.storage.saves.UnrestorableSaveException
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -165,6 +166,7 @@ fun conflictReason(decision: String): String = when (decision) {
     SyncDecision.SERVER_DELETED.name -> "This save was deleted on RomM: upload the Thor's again, or leave RomM without it"
     SyncDecision.SERVER_ROLLED_BACK.name -> "RomM's newest save was deleted, so its save is an older one now"
     SyncDecision.FOREIGN_EMULATOR.name -> "RomM's newer save was made by another emulator"
+    SyncDecision.SERVER_UNREADABLE.name -> "Loom can't put RomM's save in place of the Thor's"
     else -> decision
 }
 
@@ -431,7 +433,16 @@ class SaveSyncEngine(
             val existing = saves.conflict(game.romId)
             val refusedBefore = decided.outcome == SyncOutcome.UPLOAD && existing?.reason == SyncDecision.UPLOAD_REJECTED.name &&
                 existing.localHash == game.localHash && existing.serverSaveId == head?.saveId && existing.serverHash == head?.contentHash
-            val decision = if (refusedBefore) SyncDecision.UPLOAD_REJECTED else decided
+            // Likewise RomM's save Loom found it can't restore: while RomM's head is that save, and the
+            // save unit the same, a download (or any answer taking it) would only fail the same way.
+            val unreadableBefore = (decided.outcome == SyncOutcome.DOWNLOAD || decided.outcome == SyncOutcome.CONFLICT) &&
+                existing?.reason == SyncDecision.SERVER_UNREADABLE.name && existing.unitPath == game.save.unitPath && head != null &&
+                existing.serverSaveId == head.saveId && existing.serverHash == head.contentHash
+            val decision = when {
+                refusedBefore -> SyncDecision.UPLOAD_REJECTED
+                unreadableBefore -> SyncDecision.SERVER_UNREADABLE
+                else -> decided
+            }
             if (decision.outcome != SyncOutcome.CONFLICT) saves.deleteConflict(game.romId)
             return when (decision.outcome) {
                 SyncOutcome.NO_OP -> {
@@ -454,7 +465,12 @@ class SaveSyncEngine(
                     Acted.NOTHING
                 }
                 SyncOutcome.DOWNLOAD -> if (request.downloads && request.downloadsUntil.let { it == null || !now().isAfter(it) }) {
-                    download(api, deviceId, sessionId, game.romId, game.save, head!!, game.localHash)
+                    try {
+                        download(api, deviceId, sessionId, game.romId, game.save, head!!, game.localHash)
+                    } catch (e: UnrestorableSaveException) {
+                        conflict(game, head, SyncDecision.SERVER_UNREADABLE, e.message)
+                        return Acted.NOTHING
+                    }
                     downloaded += game.romId
                     Acted.DONE
                 } else {
@@ -463,7 +479,7 @@ class SaveSyncEngine(
                     Acted.NOTHING
                 }
                 SyncOutcome.CONFLICT -> {
-                    conflict(game, head, decision)
+                    conflict(game, head, decision, existing?.detail?.takeIf { unreadableBefore })
                     Acted.NOTHING
                 }
             }
@@ -487,22 +503,8 @@ class SaveSyncEngine(
             return Acted.DONE
         }
 
-        private suspend fun conflict(game: Prepared, head: ServerHead?, decision: SyncDecision) {
-            val existing = saves.conflict(game.romId)
-            val same = existing != null && existing.reason == decision.name && existing.localHash == game.localHash &&
-                existing.serverSaveId == head?.saveId && existing.serverHash == head?.contentHash
-            val record = SaveConflictEntity(
-                romId = game.romId, slot = SAVE_SLOT, reason = decision.name,
-                localHash = game.localHash, localModifiedMs = game.snapshot.newestModified?.toEpochMilli(),
-                localBytes = game.snapshot.totalBytes.takeIf { game.localHash != null },
-                serverSaveId = head?.saveId, serverHash = head?.contentHash, serverUpdatedAt = head?.updatedAt?.toString(),
-                serverEmulator = head?.emulator,
-                detectedAtMs = if (same) existing!!.detectedAtMs else now().toEpochMilli(),
-                skipped = same && existing!!.skipped,
-            )
-            saves.upsertConflict(record)
-            if (!record.skipped) conflicts += game.romId
-            setState(game.romId, SaveSyncState.CONFLICT, conflictReason(decision.name))
+        private suspend fun conflict(game: Prepared, head: ServerHead?, decision: SyncDecision, detail: String? = null) {
+            if (!recordConflict(game.save, decision, game.localHash, game.snapshot, head, detail).skipped) conflicts += game.romId
         }
 
         private suspend fun fail(romId: Int, message: String) {
@@ -546,6 +548,46 @@ class SaveSyncEngine(
     }
 
     // --- conflicts ---
+
+    /**
+     * Records [save]'s conflict for [decision], with both sides as they are: the Thor's save
+     * hashing as [localHash] with [snapshot], and RomM's [head]. One the user skipped stays skipped
+     * while it is the same conflict. [detail] says what the reason alone doesn't.
+     */
+    private suspend fun recordConflict(
+        save: ResolvedSave.Ready, decision: SyncDecision, localHash: String?, snapshot: UnitSnapshot, head: ServerHead?, detail: String? = null,
+    ): SaveConflictEntity {
+        val romId = save.romId
+        val existing = saves.conflict(romId)
+        val same = existing != null && existing.reason == decision.name && existing.localHash == localHash &&
+            existing.serverSaveId == head?.saveId && existing.serverHash == head?.contentHash
+        val record = SaveConflictEntity(
+            romId = romId, slot = SAVE_SLOT, reason = decision.name,
+            localHash = localHash, localModifiedMs = snapshot.newestModified?.toEpochMilli(),
+            localBytes = snapshot.totalBytes.takeIf { localHash != null },
+            serverSaveId = head?.saveId, serverHash = head?.contentHash, serverUpdatedAt = head?.updatedAt?.toString(),
+            serverEmulator = head?.emulator,
+            detectedAtMs = if (same) existing!!.detectedAtMs else now().toEpochMilli(),
+            skipped = same && existing!!.skipped,
+            detail = detail,
+            unitPath = save.unitPath,
+        )
+        saves.upsertConflict(record)
+        setState(romId, SaveSyncState.CONFLICT, detail ?: conflictReason(decision.name))
+        return record
+    }
+
+    /**
+     * RomM's [head] for [save] can't go in place of the Thor's save, which hashes as [local]: it
+     * becomes the game's conflict, as a sync would find it, and the answer that tried to take it
+     * fails as stale, so the game is looked at again. While the head and the unit stay the same,
+     * no sync tries it again.
+     */
+    private suspend fun unreadable(save: ResolvedSave.Ready, local: String?, head: ServerHead, e: UnrestorableSaveException): ResolveResult {
+        val reason = e.message ?: conflictReason(SyncDecision.SERVER_UNREADABLE.name)
+        recordConflict(save, SyncDecision.SERVER_UNREADABLE, local, save.unit.snapshot(), head, reason)
+        return ResolveResult.Failed(reason, stale = true)
+    }
 
     /** The server, this device and a game's save, for something the user asked for; or why not. */
     private sealed interface Opened {
@@ -598,7 +640,11 @@ class SaveSyncEngine(
             if (head.emulator != save.emulator) {
                 return ResolveResult.Failed("RomM's save was made by ${head.emulator ?: "another app"}", stale = true)
             }
-            download(api, deviceId, null, romId, save, head, local)
+            try {
+                download(api, deviceId, null, romId, save, head, local)
+            } catch (e: UnrestorableSaveException) {
+                return unreadable(save, local, head, e)
+            }
             saves.deleteConflict(romId)
             ResolveResult.Done
         } catch (e: CancellationException) {
@@ -644,7 +690,11 @@ class SaveSyncEngine(
                         whenSettled(save, local) { file -> uploadArchival(api, deviceId, save, file, local) }
                             ?: return ResolveResult.Failed(stillWriting(save))
                     }
-                    download(api, deviceId, null, romId, save, head, local)
+                    try {
+                        download(api, deviceId, null, romId, save, head, local)
+                    } catch (e: UnrestorableSaveException) {
+                        return unreadable(save, local, head, e)
+                    }
                 }
                 ConflictChoice.SKIP -> Unit
             }
@@ -714,7 +764,8 @@ class SaveSyncEngine(
      * Replaces the Thor's save with the server's [head]: the save must still hash as [expectedLocal]
      * (what the decision was made on), is backed up, and the download must match RomM's hash
      * before [SaveRestorer] swaps it in. RomM hears about it (`/downloaded`) only once the save is
-     * in place, and only then is the baseline written.
+     * in place, and only then is the baseline written. [UnrestorableSaveException] when the save
+     * isn't laid out as the unit is, so it never could be restored here.
      */
     private suspend fun download(
         api: RommApi, deviceId: String, sessionId: Int?, romId: Int, save: ResolvedSave.Ready, head: ServerHead, expectedLocal: String?,
@@ -735,7 +786,7 @@ class SaveSyncEngine(
                 is SaveUnit.Folders -> checkFolders(save, unit.roots, file)
                 is SaveUnit.Prefixed -> checkFolders(save, unit.roots, file)
                 is SaveUnit.SingleFile -> if (SaveHasher.isZip(file.toPath())) {
-                    throw SaveArchiveException("RomM's save for this game is an archive, and ${emulatorName(save.emulator)} keeps one file; nothing was replaced")
+                    throw UnrestorableSaveException("RomM's save for this game is an archive, and ${emulatorName(save.emulator)} keeps one file; nothing was replaced")
                 }
             }
             val restored = restorer.restore(file.toPath(), save.unit, current, save.maxUnitBytes)
@@ -748,11 +799,14 @@ class SaveSyncEngine(
         }
     }
 
-    /** RomM's save for a unit of folders must be an archive holding at least one of [ours]. */
+    /**
+     * RomM's save for a unit of folders must be an archive holding at least one of [ours]. One that
+     * isn't can never be restored, whatever the Thor holds: [UnrestorableSaveException].
+     */
     private fun checkFolders(save: ResolvedSave.Ready, ours: List<SaveRoot>, file: File) {
-        if (!SaveHasher.isZip(file.toPath())) throw SaveArchiveException("RomM's save for this game isn't a save archive Loom can restore")
+        if (!SaveHasher.isZip(file.toPath())) throw UnrestorableSaveException("RomM's save for this game isn't a save archive Loom can restore")
         val roots = SaveZipper.rootsIn(file.toPath())
-        if (ours.none { it.name in roots }) throw SaveArchiveException(otherSave(save, ours, roots))
+        if (ours.none { it.name in roots }) throw UnrestorableSaveException(otherSave(save, ours, roots))
     }
 
     /**
