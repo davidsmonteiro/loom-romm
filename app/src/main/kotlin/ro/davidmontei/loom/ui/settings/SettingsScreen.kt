@@ -188,7 +188,9 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
     // Saveable: "Pair again" opens pairing on top, and Settings comes back from saved state.
     var section by rememberSaveable { mutableStateOf(SettingsSection.SERVER) }
     var backFromPairing by rememberSaveable { mutableStateOf(false) }
-    // A narrow screen shows the list, then the section it opens on its own: whether one is open.
+    // A narrow screen shows the list, then the section it opens on its own: whether one is open. On a
+    // wide one, whether focus is in the section rather than the list, so a move to a narrow screen
+    // (Loom moved to the Thor's bottom screen, which keeps the activity) shows the pane focus is in.
     val compact = rememberLoomLayout().compact
     var open by rememberSaveable { mutableStateOf(false) }
     val sectionActions = remember(actions) {
@@ -218,12 +220,14 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
         }
     }
     // A section open on its own when Settings is shown (back from somewhere else) starts on its first control.
-    if (compact && open) InitialFocus(contentFirst, unless = { backFromPairing })
+    // Not when a move to a narrow screen leaves it on its own: focus is already where the user was.
+    InitialFocus(contentFirst, unless = { backFromPairing || !(compact && open) })
 
     val sectionList: @Composable (Modifier) -> Unit = { modifier ->
         LazyColumn(
             // Coming back from a section (Left) lands on that section, not whichever is level with the control left behind.
             modifier.focusProperties { onEnter = { runCatching { sectionFocus.getValue(section).requestFocus() } } }
+                .onFocusChanged { if (it.hasFocus && !compact) open = false }
                 .testTag("settings-sections"),
             contentPadding = PaddingValues(8.dp),
             // Eight sections fit the Thor's screen only this close together.
@@ -242,7 +246,7 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
         Column(
             // Only a move (Right) is redirected: focus given back to a control after a dialog closes stays on it.
             modifier
-                .onFocusChanged { contentHasFocus = it.hasFocus }
+                .onFocusChanged { contentHasFocus = it.hasFocus; if (it.hasFocus && !compact) open = true }
                 .focusProperties { onEnter = { if (requestedFocusDirection != FocusDirection.Enter) runCatching { contentFirst.requestFocus() } } }
                 .verticalScroll(rememberScrollState()).padding(8.dp).testTag("settings-content"),
             verticalArrangement = Arrangement.spacedBy(Space.m),
@@ -270,13 +274,11 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
     }
 
     ScreenScaffold(title = if (compact && open) "Settings · ${section.title}" else "Settings", hints = settingsHints) {
-        when {
-            !compact -> Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
-                sectionList(Modifier.width(230.dp).fillMaxHeight())
-                sectionContent(Modifier.weight(1f).fillMaxHeight())
-            }
-            open -> sectionContent(Modifier.fillMaxSize())
-            else -> sectionList(Modifier.fillMaxSize())
+        // Each pane drawn from one place in either layout: one that stays shown across a change of layout
+        // keeps its controls, and focus on them.
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
+            if (!compact || !open) sectionList(if (compact) Modifier.fillMaxSize() else Modifier.width(230.dp).fillMaxHeight())
+            if (!compact || open) sectionContent(if (compact) Modifier.fillMaxSize() else Modifier.weight(1f).fillMaxHeight())
         }
     }
 }

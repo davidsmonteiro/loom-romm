@@ -1,6 +1,16 @@
 package ro.davidmontei.loom.ui
 
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.WindowInfo
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -643,6 +653,98 @@ class SettingsScreenTest {
         back()
         rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
         rule.onNodeWithTag("section-SERVER").assertIsFocused()
+    }
+
+    // --- moving to the other screen: the activity stays, and Settings is laid out again in place ---
+
+    private val topScreen = DpSize(832.dp, 468.dp)
+    private val bottomScreen = DpSize(538.dp, 468.dp)
+
+    /** The size of Loom's window as Settings reads it, which a move to the other screen changes. */
+    private var window by mutableStateOf(topScreen)
+
+    private fun showMovable() {
+        rule.setContent {
+            val density = LocalDensity.current
+            val size = window
+            val info = remember(size) {
+                object : WindowInfo {
+                    override val isWindowFocused = true
+                    override val containerSize get() = with(density) { IntSize(size.width.roundToPx(), size.height.roundToPx()) }
+                    override val containerDpSize get() = size
+                }
+            }
+            CompositionLocalProvider(LocalWindowInfo provides info) {
+                Box(Modifier.size(size)) { LoomTestTheme { SettingsContent(state, actions) } }
+            }
+        }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+    }
+
+    private fun moveTo(size: DpSize) {
+        window = size
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+    }
+
+    /** Found by review: moved to the bottom screen, Settings lost focus, and the first A did nothing. */
+    @Test fun movedToTheBottomScreenTheListKeepsItsSection() {
+        showMovable()
+        goTo(SettingsSection.CONTROLS)
+        moveTo(bottomScreen)
+        rule.onNodeWithTag("section-CONTROLS").assertIsFocused()
+        press(Key.DirectionCenter) // opens it…
+        rule.onNodeWithText("Settings · Controls & screens").assertExists()
+        press(Key.DirectionCenter) // …and the next acts on it
+        assertThat(calls).contains("swap:true")
+    }
+
+    /** Found by review: a section opened on the top screen, then left for the list, opened on its own on the bottom one. */
+    @Test fun movedToTheBottomScreenFromTheListItShowsTheList() {
+        showMovable()
+        goTo(SettingsSection.STORAGE)
+        press(Key.DirectionCenter) // Change folder
+        press(Key.DirectionLeft) // back to Storage in the list
+        press(Key.DirectionDown) // Platform folders
+        moveTo(bottomScreen)
+        rule.onNodeWithText("Settings").assertExists()
+        rule.onNodeWithTag("section-MAPPING").assertIsFocused()
+    }
+
+    @Test fun movedToTheBottomScreenASectionKeepsItsControl() {
+        showMovable()
+        goTo(SettingsSection.CONTROLS)
+        press(Key.DirectionCenter); press(Key.DirectionDown) // Use the second screen
+        moveTo(bottomScreen)
+        rule.onNodeWithText("Settings · Controls & screens").assertExists()
+        rule.onNode(hasText("Use the second screen") and hasClickAction()).assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("secondScreen:false")
+    }
+
+    /** Found by review: moved to the top screen from a section, nothing had focus, and A did nothing. */
+    @Test fun movedToTheTopScreenASectionKeepsItsControl() {
+        window = bottomScreen
+        showMovable()
+        goTo(SettingsSection.STORAGE)
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Change folder").assertIsFocused()
+        moveTo(topScreen)
+        rule.onNodeWithTag("settings-sections").assertExists()
+        rule.onNodeWithText("Change folder").assertIsFocused()
+        back() // B goes back to the section in the list, as anywhere on the top screen
+        rule.onNodeWithTag("section-STORAGE").assertIsFocused()
+        assertThat(rule.activity.isFinishing).isFalse()
+    }
+
+    @Test fun movedToTheTopScreenTheListKeepsItsSection() {
+        window = bottomScreen
+        showMovable()
+        goTo(SettingsSection.CONTROLS)
+        moveTo(topScreen)
+        rule.onNodeWithTag("section-CONTROLS").assertIsFocused()
+        press(Key.DirectionCenter)
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("swap:true")
     }
 
     /** Found by audit: Pair again threw the working token away at once, without asking. */
