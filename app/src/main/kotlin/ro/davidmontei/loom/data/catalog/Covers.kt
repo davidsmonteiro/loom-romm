@@ -69,6 +69,11 @@ fun coverCacheKey(path: String): String = path.substringBefore('?') + "#" + path
  *   time, while the plain one is shown, which is deleted once the sharp one is stored. About 0.5 MB
  *   to fetch and 20 KB to keep.
  *
+ * And a hero cover, from RomM's large art at [HERO_WIDTH]×[HERO_HEIGHT] (the size the panel showing
+ * the focused game draws it), only for the game the focus has rested on: the panel asks for it, and
+ * shows the thumbnail until it's there. The same download makes the game's sharp thumbnail when it has
+ * none, so looking at a game costs one fetch. Only the newest [HEROES_KEPT] are kept (a few MB).
+ *
  * They live in the cache dir: Android may trim them when storage runs low, and the next sync fetches
  * them again.
  *
@@ -96,15 +101,55 @@ class CoverStore(
         if (base == null) return null
         return withContext(Dispatchers.IO) {
             // A cover without large art, or whose large art can't be read, makes do with the small one.
-            val made = store(file, large?.let { fetch(base, it) } ?: fetch(base, path) ?: return@withContext null)
+            val bitmap = large?.let { fetch(base, it)?.let { b -> shrink(b) } } ?: fetch(base, path)?.let { shrink(it) } ?: return@withContext null
+            val made = store(file, bitmap)
             plain(path)?.delete()
             made
         }
     }
 
+    /** Where [path]'s hero cover is kept. */
+    fun heroFile(path: String): File = File(dir, heroName(path))
+
+    /**
+     * [path]'s hero cover, made first if needed from RomM's [large] art; null without large art, or
+     * while it can't be fetched (offline, or held back by [canFetch]). The same download makes [path]'s
+     * sharp thumbnail when it has none ([onSharpened] once it's stored). One drawn again counts as new,
+     * for the [HEROES_KEPT] kept.
+     */
+    suspend fun hero(base: HttpUrl?, path: String, large: String?, onSharpened: () -> Unit = {}): File? {
+        val hero = heroFile(path)
+        if (hero.exists()) {
+            hero.setLastModified(System.currentTimeMillis())
+            return hero
+        }
+        if (base == null || large == null) return null
+        return withContext(Dispatchers.IO) {
+            val bytes = fetch(base, large) ?: return@withContext null
+            val made = store(hero, shrink(bytes, HERO_WIDTH, HERO_HEIGHT) ?: return@withContext null)
+            val thumbnail = file(path)
+            if (!thumbnail.exists()) {
+                shrink(bytes)?.let {
+                    store(thumbnail, it)
+                    plain(path)?.delete()
+                    onSharpened()
+                }
+            }
+            keepNewestHeroes()
+            made
+        }
+    }
+
+    /** Drops all but the [HEROES_KEPT] hero covers made or drawn last. */
+    private fun keepNewestHeroes() {
+        val heroes = dir.listFiles { f -> f.name.endsWith(HERO_SUFFIX) }.orEmpty()
+        if (heroes.size <= HEROES_KEPT) return
+        heroes.sortedByDescending { it.lastModified() }.drop(HEROES_KEPT).forEach { it.delete() }
+    }
+
     /** Makes [path]'s plain thumbnail from RomM's small cover; null if it can't be had. */
     private suspend fun makePlain(base: HttpUrl, path: String): File? =
-        withContext(Dispatchers.IO) { store(File(dir, plainName(path)), fetch(base, path) ?: return@withContext null) }
+        withContext(Dispatchers.IO) { store(File(dir, plainName(path)), fetch(base, path)?.let { shrink(it) } ?: return@withContext null) }
 
     /** Stores [bitmap] as [file], without ever leaving a part-written one there. */
     private fun store(file: File, bitmap: Bitmap): File {
@@ -173,11 +218,12 @@ class CoverStore(
                 batch.map { path -> async { runCatching { makePlain(base, path) } } }.awaitAll()
             }
         }
-        // Thumbnails of games gone from RomM, plain ones whose sharp one has been made, and temp files a
-        // crash left behind; not ones being written now.
+        // Thumbnails and hero covers of games gone from RomM, plain ones whose sharp one has been made, and
+        // temp files a crash left behind; not ones being written now.
         val keep = HashSet<String>()
         for (path in paths) {
             keep += name(path)
+            keep += heroName(path)
             if (!file(path).exists()) plain(path)?.let { keep += it.name }
         }
         val stale = System.currentTimeMillis() - 60 * 60 * 1000L
@@ -186,15 +232,16 @@ class CoverStore(
         }
     }
 
-    /** RomM's cover at [path], shrunk; null if RomM can't serve it or covers can't be fetched now. */
-    private suspend fun fetch(base: HttpUrl, path: String): Bitmap? {
+    /**
+     * RomM's cover at [path], as RomM serves it; null if RomM can't serve it or covers can't be fetched
+     * now. Every cover Loom fetches comes through here, so [canFetch] holds them all back.
+     */
+    private suspend fun fetch(base: HttpUrl, path: String): ByteArray? {
         if (!canFetch()) return null
         val url = RommUrls.coverUrl(base, path) ?: return null
-        val bytes = http.newCall(Request.Builder().url(url).build()).execute().use { response ->
-            if (!response.isSuccessful) return null
-            response.body.bytes()
+        return http.newCall(Request.Builder().url(url).build()).execute().use { response ->
+            if (!response.isSuccessful) null else response.body.bytes()
         }
-        return shrink(bytes)
     }
 
     companion object {
@@ -206,6 +253,18 @@ class CoverStore(
          */
         const val WIDTH = 297
         const val HEIGHT = 396
+
+        /**
+         * The size the panel showing the focused game draws its cover on the Thor's bottom screen, as
+         * a second screen beside Loom (538×444 dp at 369 dpi): beside the words, 0.42 of the panel's
+         * width. CoverSizeTest measures it. Hero covers are named by their size, and the prefetch's
+         * clean-up drops those of another, so changing it needs nothing else.
+         */
+        const val HERO_WIDTH = 474
+        const val HERO_HEIGHT = 632
+
+        /** How many hero covers are kept: those made or drawn last. */
+        const val HEROES_KEPT = 48
         private const val QUALITY = 75
 
         /** How thumbnails that aren't sharp are named after their hash: "" is a plain one (and what earlier Loom kept). */
@@ -223,40 +282,49 @@ class CoverStore(
 
         private fun plainName(path: String) = "${hash(path)}.webp"
 
+        /** How hero covers are named after their hash: by their size, so ones made at another size are told apart. */
+        private const val HERO_SUFFIX = "-hero-${HERO_WIDTH}x$HERO_HEIGHT.webp"
+
+        private fun heroName(path: String) = "${hash(path)}$HERO_SUFFIX"
+
         /**
-         * Decodes [bytes] shrunk to fill a [WIDTH]×[HEIGHT] card and cropped to it, centred as the
-         * library crops it; never enlarged.
+         * Decodes [bytes] shrunk to fill a [width]×[height] card ([WIDTH]×[HEIGHT], a focused card, unless
+         * said) and cropped to it, centred as the library crops it; never enlarged.
          */
-        internal fun shrink(bytes: ByteArray): Bitmap? {
+        internal fun shrink(bytes: ByteArray, width: Int = WIDTH, height: Int = HEIGHT): Bitmap? {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
             var sample = 1
-            while (bounds.outWidth / (sample * 2) >= WIDTH && bounds.outHeight / (sample * 2) >= HEIGHT) sample *= 2
+            while (bounds.outWidth / (sample * 2) >= width && bounds.outHeight / (sample * 2) >= height) sample *= 2
             val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
                 ?: return null
-            val scale = max(WIDTH / decoded.width.toFloat(), HEIGHT / decoded.height.toFloat())
+            val scale = max(width / decoded.width.toFloat(), height / decoded.height.toFloat())
             val scaled = if (scale >= 1f) decoded else decoded.scale((decoded.width * scale).roundToInt(), (decoded.height * scale).roundToInt())
             if (scaled !== decoded) decoded.recycle()
-            val width = min(WIDTH, scaled.width)
-            val height = min(HEIGHT, scaled.height)
-            if (width == scaled.width && height == scaled.height) return scaled
-            val cropped = Bitmap.createBitmap(scaled, (scaled.width - width) / 2, (scaled.height - height) / 2, width, height)
+            val croppedWidth = min(width, scaled.width)
+            val croppedHeight = min(height, scaled.height)
+            if (croppedWidth == scaled.width && croppedHeight == scaled.height) return scaled
+            val cropped = Bitmap.createBitmap(scaled, (scaled.width - croppedWidth) / 2, (scaled.height - croppedHeight) / 2, croppedWidth, croppedHeight)
             if (cropped !== scaled) scaled.recycle()
             return cropped
         }
     }
 }
 
-/** What the library asks Coil for: a game's cover by its RomM path, its large art, and where to fetch them if needed. */
-data class CoverRef(val path: String, val base: HttpUrl?, val large: String? = null)
+/**
+ * What the library asks Coil for: a game's cover by its RomM path, its large art, and where to fetch
+ * them if needed. [hero]: the panel's large cover of the focused game rather than its thumbnail.
+ */
+data class CoverRef(val path: String, val base: HttpUrl?, val large: String? = null, val hero: Boolean = false)
 
 /** Serves [CoverRef]s from the [CoverStore], fetching on first sight. */
 class CoverFetcher(private val ref: CoverRef, private val store: CoverStore, private val imageLoader: ImageLoader) : Fetcher {
     override suspend fun fetch(): FetchResult {
         // A plain thumbnail is drawn now; once the sharp one is made, the next time the cover is drawn shows it.
-        val file = store.forDrawing(ref) { imageLoader.memoryCache?.remove(MemoryCache.Key(coverCacheKey(ref.path))) }
-            ?: throw IOException("No cover for ${ref.path}")
+        val sharpened = { imageLoader.memoryCache?.remove(MemoryCache.Key(coverCacheKey(ref.path))); Unit }
+        val file = (if (ref.hero) store.hero(ref.base, ref.path, ref.large, sharpened) else store.forDrawing(ref, sharpened))
+            ?: throw IOException("No ${if (ref.hero) "hero cover" else "cover"} for ${ref.path}")
         return SourceFetchResult(ImageSource(file.toOkioPath(), FileSystem.SYSTEM), "image/webp", DataSource.DISK)
     }
 
@@ -265,9 +333,9 @@ class CoverFetcher(private val ref: CoverRef, private val store: CoverStore, pri
     }
 }
 
-/** One memory-cache entry per cover, whichever address it came from. */
+/** One memory-cache entry per cover, whichever address it came from, and one for its hero cover. */
 object CoverKeyer : Keyer<CoverRef> {
-    override fun key(data: CoverRef, options: Options): String = coverCacheKey(data.path)
+    override fun key(data: CoverRef, options: Options): String = coverCacheKey(data.path) + if (data.hero) "#hero" else ""
 }
 
 /** Fills the [CoverStore] after a sync, in the background and at its own pace. */

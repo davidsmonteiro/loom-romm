@@ -3,7 +3,9 @@ package ro.davidmontei.loom.data.catalog
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import coil3.request.Options
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -289,5 +291,111 @@ class CoverStoreTest {
         assertThat(requested).containsExactly("/assets/romm/resources/roms/18/1/cover/small.png")
         assertThat(heldStore.plain(smallOf(1))).isNotNull()
         assertThat((2..4).none { heldStore.plain(smallOf(it)) != null }).isTrue()
+    }
+
+    // --- hero covers: the panel's large cover of the focused game ---
+
+    private fun heroes() = dir.listFiles { f -> f.name.contains("-hero-") }.orEmpty().toList()
+
+    /** The panel's cover is made from RomM's large art, at the size the panel draws it, in one fetch. */
+    @Test fun aHeroCoverIsMadeFromLargeArt() = runBlocking<Unit> {
+        cover(large, 1050, 1400)
+        val hero = store.hero(server.url("/"), small, large)!!
+        assertThat(size(hero)).isEqualTo(CoverStore.HERO_WIDTH to CoverStore.HERO_HEIGHT)
+        assertThat(hero).isEqualTo(store.heroFile(small))
+        assertThat(hero.name).endsWith("-hero-${CoverStore.HERO_WIDTH}x${CoverStore.HERO_HEIGHT}.webp")
+        assertThat(requested).containsExactly("/assets/romm/resources/roms/18/8562/cover/big.png")
+        // Kept: drawn again, offline or from another address, it needs no fetch.
+        assertThat(store.hero(base = null, small, large)).isEqualTo(hero)
+        assertThat(store.hero(server.url("/other/"), small, large)).isEqualTo(hero)
+        assertThat(requested).hasSize(1)
+    }
+
+    /** The same download makes the game's sharp thumbnail where it had only a plain one: the plain one goes. */
+    @Test fun theSameFetchSharpensTheThumbnail() = runBlocking<Unit> {
+        cover(large, 600, 900)
+        val plain = plainThumbnail(small)
+        var sharpened = 0
+        assertThat(store.hero(server.url("/"), small, large) { sharpened++ }).isNotNull()
+        assertThat(size(store.file(small))).isEqualTo(CoverStore.WIDTH to CoverStore.HEIGHT)
+        assertThat(plain.exists()).isFalse()
+        assertThat(sharpened).isEqualTo(1)
+        assertThat(requested).hasSize(1)
+
+        // A sharp thumbnail already kept is left as it is.
+        val other = smallOf(2)
+        cover(largeOf(2), 600, 900)
+        val kept = store.get(server.url("/"), other, largeOf(2))!!.apply { setLastModified(1_000) }
+        assertThat(store.hero(server.url("/"), other, largeOf(2)) { sharpened++ }).isNotNull()
+        assertThat(kept.lastModified()).isEqualTo(1_000)
+        assertThat(sharpened).isEqualTo(1)
+    }
+
+    /** Without large art there is no hero cover, and nothing is fetched for one: the thumbnail is as good. */
+    @Test fun noHeroWithoutLargeArt() = runBlocking<Unit> {
+        cover(small, 240, 360)
+        assertThat(store.hero(server.url("/"), small, large = null)).isNull()
+        assertThat(requested).isEmpty()
+        // Large art RomM can't serve gives none either, and never the small cover enlarged.
+        assertThat(store.hero(server.url("/"), small, large)).isNull()
+        assertThat(requested).containsExactly("/assets/romm/resources/roms/18/8562/cover/big.png")
+        assertThat(heroes()).isEmpty()
+    }
+
+    /** "Only on Wi-Fi" on a metered network holds hero covers back too; one already kept still shows. */
+    @Test fun heroCoversFollowTheWifiRule() = runBlocking<Unit> {
+        cover(large, 600, 900)
+        cover(largeOf(2), 600, 900)
+        val kept = heldStore.hero(server.url("/"), small, large)!!
+        held = true
+        assertThat(heldStore.hero(server.url("/"), smallOf(2), largeOf(2))).isNull()
+        assertThat(heldStore.hero(server.url("/"), small, large)).isEqualTo(kept)
+        assertThat(requested).containsExactly("/assets/romm/resources/roms/18/8562/cover/big.png")
+        held = false
+        assertThat(heldStore.hero(server.url("/"), smallOf(2), largeOf(2))).isNotNull()
+    }
+
+    /** Only the newest few dozen are kept, about 3 MB: a hero drawn again counts as new. */
+    @Test fun onlyTheNewestHeroCoversAreKept() = runBlocking<Unit> {
+        dir.mkdirs()
+        val old = (1..CoverStore.HEROES_KEPT).map { id ->
+            store.heroFile(smallOf(id)).apply { writeBytes(png(10, 10)); setLastModified(1_000_000L + id * 1_000) }
+        }
+        assertThat(store.hero(server.url("/"), smallOf(1), largeOf(1))).isEqualTo(old[0]) // the oldest, drawn again
+        cover(largeOf(100), 600, 900)
+        assertThat(store.hero(server.url("/"), smallOf(100), largeOf(100))).isNotNull()
+
+        assertThat(heroes()).hasSize(CoverStore.HEROES_KEPT)
+        assertThat(old[0].exists()).isTrue()
+        assertThat(old[1].exists()).isFalse() // the oldest not drawn since
+        assertThat(old.drop(2).all { it.exists() }).isTrue()
+    }
+
+    /** Offline there's no hero cover to make: the panel goes on drawing the thumbnail it has. */
+    @Test fun offlineTheThumbnailIsDrawn() = runBlocking<Unit> {
+        val plain = plainThumbnail(small)
+        assertThat(store.hero(base = null, small, large)).isNull()
+        assertThat(store.forDrawing(CoverRef(small, base = null, large))).isEqualTo(plain)
+        assertThat(requested).isEmpty()
+    }
+
+    /** The prefetch's clean-up keeps the hero covers of games still in the library, and drops the others'. */
+    @Test fun thePrefetchKeepsHeroCoversOfGamesStillThere() = runBlocking<Unit> {
+        cover(large, 600, 900)
+        cover(largeOf(2), 600, 900)
+        val kept = store.hero(server.url("/"), small, large)!!
+        val gone = store.hero(server.url("/"), smallOf(2), largeOf(2))!!
+        store.prefetch(server.url("/"), listOf(small))
+        assertThat(kept.exists()).isTrue()
+        assertThat(gone.exists()).isFalse()
+    }
+
+    /** The hero cover is cached apart from the thumbnail, which the grid keeps drawing small. */
+    @Test fun aHeroCoverHasItsOwnCacheEntry() {
+        val options = Options(ApplicationProvider.getApplicationContext())
+        assertThat(CoverKeyer.key(CoverRef(small, null, large, hero = true), options))
+            .isNotEqualTo(CoverKeyer.key(CoverRef(small, null, large), options))
+        assertThat(CoverKeyer.key(CoverRef(small, server.url("/"), large, hero = true), options))
+            .isEqualTo(CoverKeyer.key(CoverRef(small, null, large, hero = true), options))
     }
 }

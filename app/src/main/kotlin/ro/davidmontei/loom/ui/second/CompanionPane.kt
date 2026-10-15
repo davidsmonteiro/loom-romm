@@ -2,6 +2,7 @@ package ro.davidmontei.loom.ui.second
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -17,16 +18,29 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.crossfade
+import kotlinx.coroutines.delay
 import okhttp3.HttpUrl
+import ro.davidmontei.loom.data.catalog.CoverRef
+import ro.davidmontei.loom.data.catalog.CoverStore
 import ro.davidmontei.loom.ui.components.LoomProgressBar
 import ro.davidmontei.loom.ui.components.QR_MARGINS
 import ro.davidmontei.loom.ui.components.QrCode
@@ -50,6 +64,7 @@ import ro.davidmontei.loom.ui.queue.thorSide
 import ro.davidmontei.loom.ui.queue.transferLine
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * The focused game, as a wide window shows it beside the games and a second screen on its own: its
@@ -136,9 +151,40 @@ private fun AboutTheGame(details: RomDetails, modifier: Modifier = Modifier, sum
     }
 }
 
+/**
+ * How long the focus rests on a game before the panel asks for its hero cover: running through the
+ * grid doesn't fetch one per card.
+ */
+val HERO_AFTER = 500.milliseconds
+
+/**
+ * The game's cover, large: its thumbnail at once, then, once the focus has rested on the game for
+ * [HERO_AFTER], its hero cover made from RomM's large art, faded in over it. Where there is none to
+ * be had (no large art, offline, or held back by "Only on Wi-Fi"), the thumbnail stays.
+ */
 @Composable
 private fun PanelCover(game: GameItem, coverBase: HttpUrl?, modifier: Modifier) {
-    Cover(game, coverBase, modifier.clip(RoundedCornerShape(12.dp)).background(LoomColors.SurfaceRaised).testTag("panel-cover"))
+    Box(modifier.clip(RoundedCornerShape(12.dp)).background(LoomColors.SurfaceRaised).testTag("panel-cover")) {
+        Cover(game, coverBase, Modifier.matchParentSize())
+        val path = game.coverPath
+        val large = game.coverLarge
+        if (path != null && large != null) {
+            var rested by remember(game.id) { mutableStateOf(false) }
+            LaunchedEffect(game.id) {
+                delay(HERO_AFTER)
+                rested = true
+            }
+            if (rested) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current).data(CoverRef(path, coverBase, large, hero = true))
+                        .size(CoverStore.HERO_WIDTH, CoverStore.HERO_HEIGHT).crossfade(true).build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.matchParentSize(),
+                )
+            }
+        }
+    }
 }
 
 @Composable
