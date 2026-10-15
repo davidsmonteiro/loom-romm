@@ -53,6 +53,16 @@ class RommUrlsTest {
         assertThat(url.host).isEqualTo("home.example.org")
     }
 
+    /** Resolved like the API's paths, as RomM's Android client does; RomM takes Engine.IO 4 only. */
+    @Test fun theDeviceSocketKeepsTheSubPathAndAsksForEngineIo4() {
+        val url = RommUrls.deviceSocketUrl("https://home.example.org/romm/".toHttpUrl())
+        assertThat(url.encodedPath).isEqualTo("/romm/ws/socket.io/")
+        assertThat(url.queryParameter("EIO")).isEqualTo("4")
+        assertThat(url.queryParameter("transport")).isEqualTo("websocket")
+        assertThat(RommUrls.deviceSocketUrl("http://100.64.0.7:8080/".toHttpUrl()).toString())
+            .isEqualTo("http://100.64.0.7:8080/ws/socket.io/?EIO=4&transport=websocket")
+    }
+
     @Test fun missingCoverIsNull() {
         val base = "https://romm.example.org/".toHttpUrl()
         assertThat(RommUrls.coverUrl(base, "")).isNull()

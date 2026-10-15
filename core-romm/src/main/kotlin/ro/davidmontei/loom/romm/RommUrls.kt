@@ -77,6 +77,17 @@ object RommUrls {
         return builder.build()
     }
 
+    /**
+     * RomM's Socket.IO endpoint for devices, over a WebSocket with Engine.IO v4, the only version RomM
+     * takes. It is resolved against the base URL like the API, as RomM's own Android client does, so a
+     * RomM behind a sub-path keeps it; for a RomM at the root it is `/ws/socket.io/`. The token is never
+     * put in it.
+     */
+    fun deviceSocketUrl(base: HttpUrl): HttpUrl = resolve(base, "ws/socket.io/").newBuilder()
+        .addQueryParameter("EIO", "4")
+        .addQueryParameter("transport", "websocket")
+        .build()
+
     /** Absolute URL of a device-auth verification path, for the QR code and the on-screen link. */
     fun verificationUrl(base: HttpUrl, path: String): HttpUrl =
         base.resolve(path.removePrefix("/")) ?: base
