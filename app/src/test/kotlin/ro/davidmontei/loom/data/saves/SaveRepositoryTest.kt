@@ -429,6 +429,25 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_THOR)).isEqualTo("RomM now has the Thor's save of Pokemon X")
     }
 
+    /** Skip leaves the saves there are: with one side holding none, it doesn't speak of two. */
+    @Test fun skippingAConflictWithOneSaveSaysSo() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.deleteSave(romm.head(7)!!.id)
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.SKIP))
+            .isEqualTo("Left the Thor's save of Pokemon X as it is, and RomM without it. Loom asks again if either side changes.")
+
+        install(omegaRuby)
+        romm.addSave(8, archiveOf(bytes(2)), emulator = "citra") // another emulator's, so a conflict with none on the Thor
+        engine().sync(SaveSyncRequest.PUSH)
+        assertThat(db.saveDao().conflict(8)!!.localHash).isNull()
+        assertThat(repository.resolve(8, "Pokemon Omega Ruby", ConflictChoice.SKIP))
+            .isEqualTo("Left RomM's save of Pokemon Omega Ruby as it is, and the Thor without it. Loom asks again if either side changes.")
+    }
+
     /** Sync switched off for the Thor on RomM: Upload save and a restore say so, and where to switch it back on. */
     @Test fun withSyncSwitchedOffOnRommEachRequestSaysSo() = runBlocking<Unit> {
         install(pokemonX)

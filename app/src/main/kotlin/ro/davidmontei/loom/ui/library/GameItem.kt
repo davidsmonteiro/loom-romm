@@ -96,7 +96,8 @@ fun saveLine(save: GameSave): String = "Save: " + when (save.state) {
         "${emulatorName(save.emulator)} has left it alone for a minute"
     SaveSyncState.SERVER_NEWER -> "newer on RomM"
     SaveSyncState.LOCAL_MISSING -> "missing on the Thor; RomM has a copy"
-    SaveSyncState.CONFLICT -> "changed on the Thor and on RomM. Choose which to keep."
+    // Why, as the queue says it: a save deleted on RomM, or one Loom can't restore, didn't change on the Thor.
+    SaveSyncState.CONFLICT -> save.detail?.let { "in conflict. $it" } ?: "changed on the Thor and on RomM. Choose which to keep."
     SaveSyncState.NEEDS_FOLDER -> "choose its ${emulatorName(save.emulator)} ${saveFolderWords(save.emulator)}. " + save.detail.orEmpty()
     SaveSyncState.MOVED -> "in two ${emulatorName(save.emulator)} folders, each holding a different save. Choose which one Loom syncs."
     SaveSyncState.UNSUPPORTED -> "not synced. " + save.detail.orEmpty()

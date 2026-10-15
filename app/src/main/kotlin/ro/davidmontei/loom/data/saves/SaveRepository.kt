@@ -211,7 +211,11 @@ class SaveRepository(
                     if (conflict?.serverSaveId != null) "; its old one stays in RomM's history" else ""
                 ConflictChoice.KEEP_SERVER -> "The Thor now has RomM's save of $title" + backedUp(replacesASave)
                 ConflictChoice.KEEP_BOTH -> "RomM keeps the Thor's save of $title as a separate copy, and the Thor now has RomM's"
-                ConflictChoice.SKIP -> "Left both saves of $title as they are. Loom asks again if either one changes."
+                ConflictChoice.SKIP -> when {
+                    conflict?.serverSaveId == null -> "Left the Thor's save of $title as it is, and RomM without it. Loom asks again if either side changes."
+                    conflict.localHash == null -> "Left RomM's save of $title as it is, and the Thor without it. Loom asks again if either side changes."
+                    else -> "Left both saves of $title as they are. Loom asks again if either one changes."
+                }
             }
             is ResolveResult.Failed -> "Nothing changed for $title: ${result.reason}" + lookAgain(romId, result)
         }

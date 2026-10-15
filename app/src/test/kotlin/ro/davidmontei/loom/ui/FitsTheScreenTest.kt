@@ -386,6 +386,31 @@ class FitsTheScreenTest {
         rule.saveScreenshot("library-details-psp-reason")
     }
 
+    /**
+     * A conflict's details give its own reason, with both save buttons below: each of the queue's
+     * reasons fits, and one Loom can't restore at its longest fits the dialog, cut short if need be.
+     */
+    @Test fun aConflictsReasonFitsItsDetails() {
+        val title = "Monster Hunter Freedom Unite (USA) (En,Fr,De,Es,It) (Rev 1) (Greatest Hits) (v1.01)"
+        val conflict = GameSave(true, SaveSyncState.CONFLICT, null, "ppsspp", folderChosen = true)
+        val game = GameItem(40, title, 1_600_000_000, null, listOf("USA"), InstallState.INSTALLED, null, null, null, adopted = true,
+            removedOnServer = false, installPath = "psp/$title.chd", save = conflict)
+        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game)))
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("game-40").performClick()
+        for (reason in SyncDecision.entries.filter { it.outcome == SyncOutcome.CONFLICT }.map { conflictReason(it.name) }) {
+            state = state.copy(games = listOf(game.copy(save = conflict.copy(detail = reason))))
+            assertWithMessage(reason).that(overflow(title)).isEqualTo(0f)
+            // A one-line text can measure as overflowing its width: an ellipsis is what tells it is cut.
+            assertWithMessage(reason).that(ellipsized(reason.takeLast(20))).isFalse()
+        }
+        val unrestorable = "RomM's save is over 256 MB, more than Loom downloads: it likely holds data the game installed; nothing was replaced"
+        state = state.copy(games = listOf(game.copy(save = conflict.copy(detail = unrestorable))))
+        assertThat(overflow(title)).isEqualTo(0f)
+        rule.saveScreenshot("library-details-conflict-reason")
+    }
+
     /** Which Eden save folder is a game's: the explanation in full, and the folders in a list of their own. */
     @Test fun theSaveFolderQuestionFits() {
         val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"

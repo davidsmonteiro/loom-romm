@@ -36,6 +36,11 @@ class SaveWordingTest {
         assertThat(line(SaveSyncState.SERVER_NEWER)).isEqualTo("Save: newer on RomM")
         assertThat(line(SaveSyncState.LOCAL_MISSING)).isEqualTo("Save: missing on the Thor; RomM has a copy")
         assertThat(line(SaveSyncState.CONFLICT)).isEqualTo("Save: changed on the Thor and on RomM. Choose which to keep.")
+        // A conflict's own reason, as the queue gives it: only some say both sides changed.
+        assertThat(line(SaveSyncState.CONFLICT, conflictReason(SyncDecision.SERVER_DELETED.name)))
+            .isEqualTo("Save: in conflict. This save was deleted on RomM: upload the Thor's again, or leave RomM without it")
+        assertThat(line(SaveSyncState.CONFLICT, "RomM's save holds ULUS10065DATA00, not folders starting with ULUS10064; nothing was replaced"))
+            .isEqualTo("Save: in conflict. RomM's save holds ULUS10065DATA00, not folders starting with ULUS10064; nothing was replaced")
         assertThat(saveLine(GameSave(supported = true, SaveSyncState.MOVED, "Eden now keeps this game's save in its profile folder", "eden")))
             .isEqualTo("Save: in two Eden folders, each holding a different save. Choose which one Loom syncs.")
         assertThat(line(SaveSyncState.UNSUPPORTED, "Loom can't read this game's title ID"))
