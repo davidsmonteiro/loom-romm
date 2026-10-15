@@ -80,6 +80,7 @@ import ro.davidmontei.loom.storage.mapping.PlatformMatch
 import ro.davidmontei.loom.storage.mapping.ROM_FILE_CATEGORIES
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.storage.saves.EdenProfile
+import ro.davidmontei.loom.storage.saves.PpssppSaveLocator
 import ro.davidmontei.loom.ui.components.ButtonHint
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.components.FolderNote
@@ -131,6 +132,8 @@ interface SettingsActions {
     fun setEdenProfile(profile: String)
     /** melonDS's save folder; null goes back to the ROMs folder's saves/melonDS. */
     fun setMelonDsFolder(dir: java.io.File?)
+    /** PPSSPP's memory stick; null goes back to the ROMs folder's saves/PPSSPP. */
+    fun setPpssppFolder(dir: java.io.File?)
     fun setSwap(swap: Boolean)
     fun openBatterySettings()
     fun licenseText(): String
@@ -168,6 +171,7 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
             override fun setEdenFolder(dir: java.io.File?) { vm.setEdenFolder(dir) }
             override fun setEdenProfile(profile: String) { vm.setEdenProfile(profile) }
             override fun setMelonDsFolder(dir: java.io.File?) { vm.setMelonDsFolder(dir) }
+            override fun setPpssppFolder(dir: java.io.File?) { vm.setPpssppFolder(dir) }
             override fun setSwap(swap: Boolean) { vm.setSwap(swap) }
             override fun openBatterySettings() {
                 runCatching {
@@ -809,6 +813,7 @@ private enum class SaveFolderFor(
     AZAHAR("Azahar", "3DS", "azahar", AZAHAR_FOLDERS, { _, children -> azaharNote(children) }),
     EDEN("Eden", "Switch", "eden", setOf("user"), { _, children -> edenNote(children) }),
     MELONDS("melonDS", "DS", "melonds", emptySet(), { folder, _ -> melonDsNote(folder) }),
+    PPSSPP("PPSSPP", "PSP", "ppsspp", setOf("PSP"), { folder, _ -> ppssppNote(folder) }),
 }
 
 /** One emulator's save folder as Saves shows it: on its card in a few words, and in full in its details. */
@@ -907,6 +912,31 @@ private fun emulatorFolder(which: SaveFolderFor, state: SettingsUiState): Emulat
                 useDefault = "Use saves/melonDS".takeIf { chosen != null },
                 onUseDefault = { it.setMelonDsFolder(null) },
                 onPick = { actions, dir -> actions.setMelonDsFolder(dir) },
+            )
+        }
+        SaveFolderFor.PPSSPP -> {
+            val chosen = settings?.ppssppMemoryStick
+            val folder = (chosen ?: storage.ppssppFound)?.let { java.io.File(it) }
+            val unused = chosen != null && !PpssppSaveLocator.holdsPpssppData(java.io.File(chosen).toPath())
+            EmulatorFolder(
+                which, folder,
+                card = when {
+                    unused -> "Chosen, but it has no ppsspp.ini"
+                    chosen != null -> "Your chosen folder"
+                    folder != null -> "Found in ROMs/saves/PPSSPP"
+                    else -> "Not found yet"
+                },
+                status = when {
+                    unused -> "You chose this folder, but PPSSPP hasn't used it as its memory stick yet."
+                    chosen != null -> "You chose this folder."
+                    folder != null -> "Found in ROMs/saves/PPSSPP."
+                    else -> "Not found in ROMs/saves/PPSSPP."
+                },
+                steps = "In PPSSPP's System settings, set the Memory Stick folder to ROMs/saves/PPSSPP (Create or Choose a PSP " +
+                    "folder), where Loom looks by itself, or choose the folder you set. PPSSPP keeps saves in its PSP/SAVEDATA.",
+                useDefault = "Use saves/PPSSPP".takeIf { chosen != null },
+                onUseDefault = { it.setPpssppFolder(null) },
+                onPick = { actions, dir -> actions.setPpssppFolder(dir) },
             )
         }
     }
@@ -1041,6 +1071,11 @@ private fun azaharNote(children: List<java.io.File>): FolderNote =
 private fun edenNote(children: List<java.io.File>): FolderNote =
     if (children.any { it.name == "user" && java.io.File(it, "save").isDirectory }) FolderNote("Eden's saves are here (user/save).", true)
     else FolderNote("Eden's save folder holds user/save; it isn't here.", false)
+
+/** PPSSPP's memory stick holds its settings, PSP/SYSTEM/ppsspp.ini, once PPSSPP has used it. */
+private fun ppssppNote(folder: java.io.File): FolderNote =
+    if (PpssppSaveLocator.holdsPpssppData(folder.toPath())) FolderNote("PPSSPP's memory stick is here (PSP/SYSTEM/ppsspp.ini).", true)
+    else FolderNote("PPSSPP's memory stick holds PSP/SYSTEM/ppsspp.ini; it isn't here.", false)
 
 /** melonDS's folder holds a .sav per game it has run, and nothing else Loom could tell it by. */
 private fun melonDsNote(folder: java.io.File): FolderNote {

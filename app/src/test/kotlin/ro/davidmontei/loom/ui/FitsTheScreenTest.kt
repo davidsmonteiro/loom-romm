@@ -156,6 +156,7 @@ class FitsTheScreenTest {
             azaharUserDir = "/storage/6365-3230/Emulation/Azahar/user",
             edenSaveDir = "/storage/6365-3230/Emulation/Eden/nand",
             melonDsSaveDir = "/storage/6365-3230/Emulation/melonDS",
+            ppssppMemoryStick = "/storage/6365-3230/Emulation/PPSSPP",
             lastSaveSync = lastSaveSync,
         )
         val storage = SettingsScreenTest.sample.storage.copy(
@@ -177,9 +178,10 @@ class FitsTheScreenTest {
         rule.onNodeWithTag("azahar-card").assertExists()
         rule.onNodeWithTag("eden-card").assertExists()
         rule.onNodeWithTag("melonds-card").assertExists()
+        rule.onNodeWithTag("ppsspp-card").assertExists()
         // Each card's line in full. (Labels with letter spacing report a width overflow they don't
         // have, so the ellipsis and the line count are what's checked.)
-        for (line in listOf("Your chosen folder", "Chosen, but it has no user/save", "Chosen, but it isn't there")) {
+        for (line in listOf("Your chosen folder", "Chosen, but it has no user/save", "Chosen, but it isn't there", "Chosen, but it has no ppsspp.ini")) {
             assertWithMessage(line).that(ellipsized(line)).isFalse()
             assertWithMessage(line).that(lineCount(line)).isEqualTo(1)
         }
@@ -206,11 +208,11 @@ class FitsTheScreenTest {
         val tallest = tallestSaves(SaveSyncOutcome(System.currentTimeMillis(), "no changes", failed = false))
         val long = "/storage/6365-3230/Emulation/Some Emulator Front-end/Collections/Nintendo/Handhelds and Consoles"
         val state = tallest.copy(settings = tallest.settings!!.copy(
-            azaharUserDir = "$long/Azahar/user", edenSaveDir = "$long/Eden/nand", melonDsSaveDir = "$long/melonDS",
+            azaharUserDir = "$long/Azahar/user", edenSaveDir = "$long/Eden/nand", melonDsSaveDir = "$long/melonDS", ppssppMemoryStick = "$long/PPSSPP",
         ))
         rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
-        for ((tag, name) in listOf("azahar" to "Azahar", "eden" to "Eden", "melonds" to "melonDS")) {
+        for ((tag, name) in listOf("azahar" to "Azahar", "eden" to "Eden", "melonds" to "melonDS", "ppsspp" to "PPSSPP")) {
             rule.onNodeWithTag("$tag-card").performClick()
             assertWithMessage(name).that(overflow("$name's saves")).isEqualTo(0f)
             rule.saveScreenshot("settings-saves-$tag-details")
@@ -245,13 +247,13 @@ class FitsTheScreenTest {
         val storage = SettingsScreenTest.sample.storage.copy(
             romsRoot = "/storage/6365-3230/ROMs", azaharFound = "/storage/6365-3230/ROMs/n3ds", edenFound = "/storage/6365-3230/ROMs/saves/Eden",
             edenProfiles = listOf(EdenProfile("4E431822D6DEFD527268BA35B5C09533", 2, null)), prodKeys = "/storage/6365-3230/ROMs/prod.keys",
-            melonDsFound = "/storage/6365-3230/ROMs/saves/melonDS",
+            melonDsFound = "/storage/6365-3230/ROMs/saves/melonDS", ppssppFound = "/storage/6365-3230/ROMs/saves/PPSSPP",
         )
         rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample.copy(storage = storage), SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
         rule.saveScreenshot("settings-saves-thor")
-        for (line in listOf("Found in the 3DS folder", "Found in ROMs/saves/Eden", "Found in ROMs/saves/melonDS")) {
+        for (line in listOf("Found in the 3DS folder", "Found in ROMs/saves/Eden", "Found in ROMs/saves/melonDS", "Found in ROMs/saves/PPSSPP")) {
             assertWithMessage(line).that(ellipsized(line)).isFalse()
         }
         rule.onNodeWithTag("eden-card").performClick()

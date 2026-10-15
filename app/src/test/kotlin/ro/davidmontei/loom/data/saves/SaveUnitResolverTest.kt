@@ -70,8 +70,7 @@ class SaveUnitResolverTest : SaveSyncTestBase() {
         assertThat(SaveUnitResolver.unsupportedReason("psx")).isEqualTo("DuckStation keeps its memory cards in Android/data, where Loom can't reach them")
         assertThat(SaveUnitResolver.unsupportedReason("ngc")).startsWith("Dolphin")
         assertThat(SaveUnitResolver.unsupportedReason("wiiu")).startsWith("Cemu")
-        assertThat(SaveUnitResolver.unsupportedReason("psp")).isEqualTo("Loom doesn't sync PPSSPP saves yet")
-        assertThat(SaveUnitResolver.unsupportedReason("snes")).isEqualTo("Loom syncs 3DS, Switch and DS saves only, for now")
+        assertThat(SaveUnitResolver.unsupportedReason("snes")).isEqualTo("Loom syncs 3DS, Switch, DS and PSP saves only, for now")
     }
 
     /** Eden's save folder moved to the card makes Switch games syncable, under Eden's emulator id (Argosy's too). */
@@ -103,6 +102,21 @@ class SaveUnitResolverTest : SaveSyncTestBase() {
             assertThat(ready.fileName).isEqualTo(save) // raw, under the save's own name, as Argosy uploads it
             assertThat(ready.unitPath).isEqualTo(File(melonDs, save).path)
         }
+    }
+
+    /** PPSSPP's memory stick in ROMs/saves makes PSP games and minis syncable, under PPSSPP's id. */
+    @Test fun pspGamesAreSyncedThroughPpsspp() = runBlocking<Unit> {
+        assertThat(SaveUnitResolver.emulatorForPlatform("psp")).isEqualTo("ppsspp")
+        assertThat(SaveUnitResolver.emulatorForPlatform("psp-minis")).isEqualTo("ppsspp")
+        installPsp(patapon, fixture = "game.pbp", platform = "psp-minis")
+        val dao = db.catalogDao()
+        val ready = resolver.resolve(dao.rom(patapon.romId)!!, dao.install(patapon.romId)!!) as ResolvedSave.Ready
+        assertThat(ready.emulator).isEqualTo("ppsspp")
+        val unit = ready.unit as SaveUnit.Prefixed
+        assertThat(unit.parent.toFile()).isEqualTo(saveData)
+        assertThat(unit.prefix).isEqualTo("NPUZ00001") // its PBP's PARAM.SFO
+        assertThat(ready.fileName).isEqualTo("Patapon.zip")
+        assertThat(ready.unitPath).isEqualTo("${saveData.path}/NPUZ00001*")
     }
 
     @Test fun azaharsFolderIsTheOneHoldingItsSdCard() {

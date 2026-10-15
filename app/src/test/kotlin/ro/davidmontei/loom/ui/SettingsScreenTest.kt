@@ -124,6 +124,7 @@ class SettingsScreenTest {
         override fun setEdenFolder(dir: File?) { calls += "eden:$dir" }
         override fun setEdenProfile(profile: String) { calls += "edenProfile:$profile" }
         override fun setMelonDsFolder(dir: File?) { calls += "melonds:$dir" }
+        override fun setPpssppFolder(dir: File?) { calls += "ppsspp:$dir" }
         override fun setSwap(swap: Boolean) { calls += "swap:$swap" }
         override fun openBatterySettings() { calls += "battery" }
         override fun licenseText() = (1..120).joinToString("\n\n") { "GNU GENERAL PUBLIC LICENSE, paragraph $it" }
@@ -725,16 +726,19 @@ class SettingsScreenTest {
 
     // --- each emulator's card, its details and its folder browser ---
 
-    /** The Thor's card with Azahar's data in ROMs/n3ds, and Eden's and melonDS's saves in ROMs/saves. */
+    /** The Thor's card with Azahar's data in ROMs/n3ds, and Eden's, melonDS's and PPSSPP's saves in ROMs/saves. */
     private fun thorCard(): Pair<File, File> {
         val card = tmp.newFolder("6365-3230")
         val n3ds = File(card, "ROMs/n3ds").apply { File(this, "sdmc/Nintendo 3DS").mkdirs(); File(this, "nand").mkdirs() }
         val eden = File(card, "ROMs/saves/Eden").apply { File(this, "user/save/0000000000000000").mkdirs() }
         val melonDs = File(card, "ROMs/saves/melonDS").apply { mkdirs(); File(this, "Mario.sav").writeBytes(ByteArray(512)) }
+        val ppsspp = File(card, "ROMs/saves/PPSSPP").apply {
+            File(this, "PSP/SAVEDATA").mkdirs(); File(this, "PSP/SYSTEM").mkdirs(); File(this, "PSP/SYSTEM/ppsspp.ini").writeText("")
+        }
         File(card, "ROMs/snes").mkdirs()
         File(card, "ROMs/saves/Other").mkdirs()
         state = sample.copy(storage = sample.storage.copy(
-            romsRoot = File(card, "ROMs").path, azaharFound = n3ds.path, edenFound = eden.path, melonDsFound = melonDs.path,
+            romsRoot = File(card, "ROMs").path, azaharFound = n3ds.path, edenFound = eden.path, melonDsFound = melonDs.path, ppssppFound = ppsspp.path,
         ))
         return n3ds to eden
     }
@@ -743,7 +747,8 @@ class SettingsScreenTest {
     private fun openDetails(tag: String) {
         press(Key.DirectionDown)
         if (tag == "eden") press(Key.DirectionRight)
-        if (tag == "melonds") press(Key.DirectionDown)
+        if (tag == "melonds" || tag == "ppsspp") press(Key.DirectionDown)
+        if (tag == "ppsspp") press(Key.DirectionRight)
         rule.onNodeWithTag("$tag-card").assertIsFocused()
         press(Key.DirectionCenter)
     }
@@ -781,7 +786,11 @@ class SettingsScreenTest {
         rule.onNodeWithTag("azahar-card").assertIsFocused()
         press(Key.DirectionDown)
         rule.onNodeWithTag("melonds-card").assertIsFocused()
+        press(Key.DirectionRight)
+        rule.onNodeWithTag("ppsspp-card").assertIsFocused()
         press(Key.DirectionUp)
+        rule.onNodeWithTag("eden-card").assertIsFocused()
+        press(Key.DirectionLeft)
         rule.onNodeWithTag("azahar-card").assertIsFocused()
         press(Key.DirectionUp)
         rule.onNodeWithText("Upload saves automatically").assertIsFocused()
@@ -1021,6 +1030,50 @@ class SettingsScreenTest {
         press(Key.DirectionCenter)
         assertThat(calls).contains("melonds:${melonDs.path}")
         rule.onNodeWithTag("melonds-card").assertIsFocused()
+    }
+
+    /** PPSSPP's card is beside melonDS's; its browser says whether the open folder is PPSSPP's memory stick. */
+    @Test fun ppssppsMemoryStickIsChosenWithTheFolderBrowser() {
+        val (_, eden) = thorCard()
+        val stick = File(eden.parentFile, "PPSSPP")
+        show()
+        toTheSaveSwitch()
+        rule.onNodeWithTag("ppsspp-card").assertTextEquals("PPSSPP · PSP", "Found in ROMs/saves/PPSSPP")
+        openDetails("ppsspp")
+        rule.onNodeWithText("PPSSPP's saves").assertExists()
+        rule.onNodeWithTag("ppsspp-folder-path", useUnmergedTree = true).assertTextEquals(stick.path)
+        rule.onNodeWithTag("ppsspp-folder-status", useUnmergedTree = true).assertTextEquals("Found in ROMs/saves/PPSSPP.")
+        rule.onNodeWithText("set the Memory Stick folder to ROMs/saves/PPSSPP", substring = true).assertExists()
+        press(Key.DirectionCenter) // Change folder: the browser opens in saves, on PPSSPP
+        rule.onNodeWithText("PPSSPP").assertIsFocused()
+        rule.onNodeWithText("PPSSPP's memory stick holds PSP/SYSTEM/ppsspp.ini; it isn't here.").assertExists()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("PPSSPP's memory stick is here (PSP/SYSTEM/ppsspp.ini).").assertExists()
+        rule.onNodeWithText("Use this folder").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("ppsspp:${stick.path}")
+        rule.onNodeWithTag("ppsspp-card").assertIsFocused()
+    }
+
+    /** A chosen memory stick PPSSPP hasn't used says so; going back to saves/PPSSPP closes the details, back on its card. */
+    @Test fun aChosenMemoryStickCanGoBackToSavesPpsspp() {
+        state = sample.copy(settings = sample.settings!!.copy(ppssppMemoryStick = "/storage/6365-3230/Emulation/PPSSPP"))
+        show(object : SettingsActions by actions {
+            override fun setPpssppFolder(dir: File?) {
+                actions.setPpssppFolder(dir)
+                state = state.copy(settings = state.settings!!.copy(ppssppMemoryStick = dir?.path))
+            }
+        })
+        toTheSaveSwitch()
+        rule.onNodeWithTag("ppsspp-card").assertTextEquals("PPSSPP · PSP", "Chosen, but it has no ppsspp.ini")
+        openDetails("ppsspp")
+        rule.onNodeWithTag("ppsspp-folder-status", useUnmergedTree = true).assertTextEquals("You chose this folder, but PPSSPP hasn't used it as its memory stick yet.")
+        press(Key.DirectionLeft)
+        rule.onNodeWithText("Use saves/PPSSPP").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("ppsspp:null")
+        rule.onNodeWithTag("ppsspp-card").assertIsFocused()
+        rule.onNodeWithTag("ppsspp-card").assertTextEquals("PPSSPP · PSP", "Not found yet")
     }
 
     /** A chosen melonDS folder that isn't there says so; going back to saves/melonDS closes the details, back on its card. */

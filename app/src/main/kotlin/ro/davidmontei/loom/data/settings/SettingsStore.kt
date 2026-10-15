@@ -71,6 +71,11 @@ data class Settings(
      * `<ROMs root>/saves/melonDS`, when there is such a folder.
      */
     val melonDsSaveDir: String? = null,
+    /**
+     * PPSSPP's memory stick (its Memory Stick folder, or the PSP or SAVEDATA folder in it) when the
+     * user set one; null means `<ROMs root>/saves/PPSSPP`, when PPSSPP keeps its settings there.
+     */
+    val ppssppMemoryStick: String? = null,
     /** Null until a background save sync has run. */
     val lastSaveSync: SaveSyncOutcome? = null,
     val catalogRefresh: CatalogRefresh = CatalogRefresh.DEFAULT,
@@ -104,6 +109,7 @@ class SettingsStore(
             edenSaveDir = p[EDEN_SAVE_DIR],
             edenProfile = p[EDEN_PROFILE],
             melonDsSaveDir = p[MELONDS_SAVE_DIR],
+            ppssppMemoryStick = p[PPSSPP_MEMORY_STICK],
             lastSaveSync = p[SAVE_SYNC_AT]?.let { at ->
                 SaveSyncOutcome(at, p[SAVE_SYNC_SUMMARY].orEmpty(), p[SAVE_SYNC_FAILED] ?: false, p[SAVE_SYNC_NEEDS_PAIRING] ?: false)
             },
@@ -146,6 +152,11 @@ class SettingsStore(
     /** [path] null goes back to looking for melonDS's saves in `<ROMs root>/saves/melonDS`. */
     suspend fun setMelonDsSaveDir(path: String?) = dataStore.edit {
         if (path.isNullOrBlank()) it.remove(MELONDS_SAVE_DIR) else it[MELONDS_SAVE_DIR] = path
+    }
+
+    /** [path] null goes back to looking for PPSSPP's memory stick in `<ROMs root>/saves/PPSSPP`. */
+    suspend fun setPpssppMemoryStick(path: String?) = dataStore.edit {
+        if (path.isNullOrBlank()) it.remove(PPSSPP_MEMORY_STICK) else it[PPSSPP_MEMORY_STICK] = path
     }
 
     suspend fun setLastSaveSync(outcome: SaveSyncOutcome) = dataStore.edit {
@@ -209,6 +220,7 @@ class SettingsStore(
         val EDEN_SAVE_DIR = stringPreferencesKey("eden_save_dir")
         val EDEN_PROFILE = stringPreferencesKey("eden_profile")
         val MELONDS_SAVE_DIR = stringPreferencesKey("melonds_save_dir")
+        val PPSSPP_MEMORY_STICK = stringPreferencesKey("ppsspp_memory_stick")
         val SAVE_SYNC_AT = longPreferencesKey("save_sync_last_ms")
         val SAVE_SYNC_SUMMARY = stringPreferencesKey("save_sync_last_summary")
         val SAVE_SYNC_FAILED = booleanPreferencesKey("save_sync_last_failed")

@@ -11,6 +11,7 @@ import ro.davidmontei.loom.storage.saves.AzaharSaveLocator
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import ro.davidmontei.loom.storage.saves.MelonDsSaveLocator
 import ro.davidmontei.loom.storage.saves.NcsdReader
+import ro.davidmontei.loom.storage.saves.PpssppSaveLocator
 import ro.davidmontei.loom.storage.saves.SaveUnit
 import ro.davidmontei.loom.storage.saves.SaveZipper
 import ro.davidmontei.loom.storage.saves.ThreeDsTitleId
@@ -63,16 +64,17 @@ sealed interface ResolvedSave {
 
 /**
  * Maps an installed game to its save unit: 3DS games played in Azahar, Switch games played in
- * Eden ([EdenSaves]) and DS games played in melonDS ([MelonDsSaves]). Other emulators keep their
- * saves where Loom can't reach them, or aren't set up yet (the owner's choice). A 3DS game's
- * title ID comes from RomM when it read one, else from the cartridge image's header; when both
- * are known and differ, Loom doesn't guess.
+ * Eden ([EdenSaves]), DS games played in melonDS ([MelonDsSaves]) and PSP games played in PPSSPP
+ * ([PpssppSaves]). Other emulators keep their saves where Loom can't reach them, or aren't set up
+ * yet (the owner's choice). A 3DS game's title ID comes from RomM when it read one, else from the
+ * cartridge image's header; when both are known and differ, Loom doesn't guess.
  */
 class SaveUnitResolver(
     private val settings: SettingsStore,
     private val volumes: Volumes,
     private val eden: EdenSaves,
     private val melonDs: MelonDsSaves,
+    private val ppsspp: PpssppSaves,
 ) {
 
     /** Whether Loom syncs saves for games of this ROM's platform at all. */
@@ -89,6 +91,7 @@ class SaveUnitResolver(
         when (emulator) {
             EdenSaveLocator.EMULATOR_ID -> eden.resolve(rom, install)
             MelonDsSaveLocator.EMULATOR_ID -> melonDs.resolve(rom, install)
+            PpssppSaveLocator.EMULATOR_ID -> ppsspp.resolve(rom, install)
             else -> resolveAzahar(rom, install)
         }
     }
@@ -168,6 +171,9 @@ class SaveUnitResolver(
         /** RomM's slugs for the platforms whose saves Loom syncs through melonDS: DS games, and DSi ones on cartridge. */
         val MELONDS_PLATFORMS = setOf("nds", "nintendo-dsi")
 
+        /** RomM's slugs for the platforms whose saves Loom syncs through PPSSPP: UMD and PSN games, and minis. */
+        val PPSSPP_PLATFORMS = setOf("psp", "psp-minis")
+
         private val CARTRIDGE_EXTENSIONS = setOf("3ds", "cci")
 
         /** Android/data, where these emulators keep their saves: other apps can't read it on Android 11+. */
@@ -178,6 +184,7 @@ class SaveUnitResolver(
             in AZAHAR_PLATFORMS -> AzaharSaveLocator.EMULATOR_ID
             in EDEN_PLATFORMS -> EdenSaveLocator.EMULATOR_ID
             in MELONDS_PLATFORMS -> MelonDsSaveLocator.EMULATOR_ID
+            in PPSSPP_PLATFORMS -> PpssppSaveLocator.EMULATOR_ID
             else -> null
         }
 
@@ -192,8 +199,7 @@ class SaveUnitResolver(
             "psx" -> "DuckStation keeps its memory cards $ANDROID_DATA"
             "ngc", "wii" -> "Dolphin keeps its saves $ANDROID_DATA"
             "wiiu" -> "Cemu keeps its saves $ANDROID_DATA"
-            "psp" -> "Loom doesn't sync PPSSPP saves yet"
-            else -> "Loom syncs 3DS, Switch and DS saves only, for now"
+            else -> "Loom syncs 3DS, Switch, DS and PSP saves only, for now"
         }
 
         /** Whether [folder] is Azahar's user directory: it holds Azahar's `sdmc/Nintendo 3DS`. */

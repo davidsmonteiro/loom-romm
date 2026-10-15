@@ -183,6 +183,23 @@ class SyncDeciderTest {
         }
     }
 
+    /**
+     * PPSSPP Gold, as Argosy uploads it, keeps PPSSPP's saves on PPSSPP's memory stick: its newer
+     * save is taken as PPSSPP's own. Other emulators of the same system stay foreign: DeSmuME's
+     * save is never melonDS's.
+     */
+    @Test fun ppssppGoldsSaveIsPpssppsOwn() {
+        assertThat(SyncDecider.decide("h0", "ppsspp", synced, newerHead.copy(emulator = "ppsspp_gold"))).isEqualTo(SERVER_CHANGED)
+        assertThat(SyncDecider.decide(null, "ppsspp", null, headAtSync.copy(emulator = "ppsspp_gold"))).isEqualTo(NEW_ON_SERVER)
+        assertThat(SyncDecider.decide("h0", "ppsspp", synced, newerHead.copy(emulator = "ppsspp"))).isEqualTo(SERVER_CHANGED)
+        assertThat(SyncDecider.decide("h0", "melonds", synced, newerHead.copy(emulator = "melonds"))).isEqualTo(SERVER_CHANGED)
+        assertThat(SyncDecider.decide("h0", "melonds", synced, newerHead.copy(emulator = "desmume"))).isEqualTo(FOREIGN_EMULATOR)
+        assertThat(SyncDecider.decide("h0", "ppsspp", synced, newerHead.copy(emulator = "retroarch"))).isEqualTo(FOREIGN_EMULATOR)
+        assertThat(EmulatorIds.same("ppsspp_gold", "ppsspp")).isTrue()
+        assertThat(EmulatorIds.same(null, "ppsspp")).isFalse()
+        assertThat(EmulatorIds.same("azahar", "eden")).isFalse()
+    }
+
     @Test fun reportedTimeKeepsAnUnchangedSaveAtItsSyncTime() {
         assertThat(SyncDecider.reportedUpdatedAt("h0", newestModified = t1, baseline = synced)).isEqualTo(t0)
     }

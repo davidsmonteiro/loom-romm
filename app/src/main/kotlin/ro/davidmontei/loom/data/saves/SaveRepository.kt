@@ -19,7 +19,9 @@ import ro.davidmontei.loom.data.db.TitledSaveUnit
 import ro.davidmontei.loom.romm.RommException
 import ro.davidmontei.loom.storage.saves.AzaharSaveLocator
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
+import ro.davidmontei.loom.storage.saves.EmulatorIds
 import ro.davidmontei.loom.storage.saves.MelonDsSaveLocator
+import ro.davidmontei.loom.storage.saves.PpssppSaveLocator
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import java.nio.file.Path
 
@@ -107,7 +109,9 @@ class SaveRepository(
     fun observeChosenFolders(): Flow<Set<Int>> = saves.observeOwnerChosenSaveKeys().map { it.toSet() }
 
     /** The Eden save folders the owner can pick [romId]'s from. */
-    suspend fun saveFolderChoice(romId: Int): EdenFolderChoice = eden.folderChoice(romId)
+    suspend fun saveFolderChoice(romId: Int): EdenFolderChoice =
+        if (saves.unit(romId)?.emulator == PpssppSaveLocator.EMULATOR_ID) EdenFolderChoice.Unavailable("Loom can't list PPSSPP's save folders yet")
+        else eden.folderChoice(romId)
 
     /**
      * The owner's answer to "which Eden save folder is this game's?": remembered, then Loom looks
@@ -251,6 +255,8 @@ fun emulatorName(id: String?): String = when (id) {
     AzaharSaveLocator.EMULATOR_ID -> "Azahar"
     EdenSaveLocator.EMULATOR_ID -> "Eden"
     MelonDsSaveLocator.EMULATOR_ID -> "melonDS"
+    PpssppSaveLocator.EMULATOR_ID -> "PPSSPP"
+    EmulatorIds.PPSSPP_GOLD -> "PPSSPP Gold"
     null -> "the emulator"
     else -> id
 }

@@ -34,7 +34,9 @@ import ro.davidmontei.loom.romm.rommCall
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.saves.ArgosyTrailer
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
+import ro.davidmontei.loom.storage.saves.EmulatorIds
 import ro.davidmontei.loom.storage.saves.NegotiatedAction
+import ro.davidmontei.loom.storage.saves.PpssppSaveLocator
 import ro.davidmontei.loom.storage.saves.SAVE_SLOT
 import ro.davidmontei.loom.storage.saves.SaveArchiveException
 import ro.davidmontei.loom.storage.saves.SaveBackups
@@ -649,7 +651,7 @@ class SaveSyncEngine(
                 return ResolveResult.Failed("The save on the Thor changed since the last sync", stale = true)
             }
             val head = heads(api, listOf(romId))[romId] ?: return ResolveResult.Failed("RomM has no save for this game")
-            if (head.emulator != save.emulator) {
+            if (!EmulatorIds.same(head.emulator, save.emulator)) {
                 return ResolveResult.Failed("RomM's save was made by ${head.emulator ?: "another app"}", stale = true)
             }
             try {
@@ -797,12 +799,13 @@ class SaveSyncEngine(
             if (expected != null && SaveHasher.hashFile(file.toPath()) != expected && SaveHasher.md5(file.toPath()) != expected) {
                 throw SaveArchiveException("The downloaded save doesn't match RomM's hash; nothing was replaced")
             }
-            when (val unit = save.unit) {
-                is SaveUnit.Folders -> checkFolders(save, unit.roots, file)
-                is SaveUnit.Prefixed -> checkFolders(save, unit.roots, file)
-                is SaveUnit.SingleFile -> checkRaw(save, file)
+            val target = when (val unit = save.unit) {
+                is SaveUnit.Folders -> unit.also { checkFolders(save, it.roots, file) }
+                // The game's folders the archive brings join the unit, as Argosy's restore replaces them all.
+                is SaveUnit.Prefixed -> PpssppSaveLocator.forRestore(unit, file.toPath(), save.maxUnitBytes)
+                is SaveUnit.SingleFile -> unit.also { checkRaw(save, file) }
             }
-            val restored = restorer.restore(file.toPath(), save.unit, current, save.maxUnitBytes)
+            val restored = restorer.restore(file.toPath(), target, current, save.maxUnitBytes)
             // The hash the download was checked against: RomM 5.4.0 keeps it as this device's baseline.
             rommCall { api.confirmSaveDownloaded(head.saveId, SaveDownloadedRequest(deviceId, head.contentHash)) }
             writeBaseline(save, restored, head.saveId, head.contentHash, head.updatedAt)
@@ -1003,9 +1006,16 @@ class SaveSyncEngine(
         if (bytes > save.maxUnitBytes) throw SaveArchiveException(tooLarge(save, bytes))
     }
 
-    /** Why [save], holding [bytes], isn't synced: more than Loom restores for its emulator. */
-    private fun tooLarge(save: ResolvedSave.Ready, bytes: Long): String =
-        "${emulatorName(save.emulator)} keeps ${formatBytes(bytes)} in this game's save, more than Loom syncs (${formatBytes(save.maxUnitBytes)})"
+    /**
+     * Why [save], holding [bytes], isn't synced: more than Loom restores for its emulator. A PSP
+     * save that large is most likely data the game installed, which Loom can't tell from a save
+     * when its PARAM.SFO doesn't say.
+     */
+    private fun tooLarge(save: ResolvedSave.Ready, bytes: Long): String = when (save.emulator) {
+        PpssppSaveLocator.EMULATOR_ID -> "PPSSPP keeps ${formatBytes(bytes)} in this game's save folders, more than Loom syncs " +
+            "(${formatBytes(save.maxUnitBytes)}): the game likely installs data there"
+        else -> "${emulatorName(save.emulator)} keeps ${formatBytes(bytes)} in this game's save, more than Loom syncs (${formatBytes(save.maxUnitBytes)})"
+    }
 
     /** The extension of what Loom uploads for the save, from the name it goes up under: `sav` for a DS save, `zip` for an archive. */
     private fun ResolvedSave.Ready.extension() = fileName.substringAfterLast('.', "zip")

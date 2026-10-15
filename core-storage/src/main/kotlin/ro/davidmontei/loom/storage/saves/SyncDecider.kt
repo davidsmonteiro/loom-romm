@@ -114,7 +114,7 @@ enum class SyncDecision(val outcome: SyncOutcome) {
     /** (e) RomM 5.4.0 confirms [SERVER_WENT_BACK]: the device holds a version it deleted, so its head is an older one. */
     SERVER_ROLLED_BACK(SyncOutcome.CONFLICT),
 
-    /** (f) The server's newer save was made by another emulator: it is never applied automatically. */
+    /** (f) The server's newer save was made by another emulator ([EmulatorIds]): it is never applied automatically. */
     FOREIGN_EMULATOR(SyncOutcome.CONFLICT),
 
     /**
@@ -180,7 +180,7 @@ object SyncDecider {
             return when {
                 server == null -> SyncDecision.NEW_ON_DEVICE
                 local != null -> SyncDecision.FIRST_SYNC_DIFFERS
-                server.emulator != emulator -> SyncDecision.FOREIGN_EMULATOR
+                !EmulatorIds.same(server.emulator, emulator) -> SyncDecision.FOREIGN_EMULATOR
                 else -> SyncDecision.NEW_ON_SERVER
             }
         }
@@ -194,7 +194,7 @@ object SyncDecider {
             !serverChanged -> if (local == null) SyncDecision.LOCAL_MISSING else SyncDecision.LOCAL_CHANGED
             !server.updatedAt.isAfter(base.serverUpdatedAt) -> SyncDecision.SERVER_WENT_BACK
             localChanged && local != null -> SyncDecision.BOTH_CHANGED
-            server.emulator != emulator -> SyncDecision.FOREIGN_EMULATOR
+            !EmulatorIds.same(server.emulator, emulator) -> SyncDecision.FOREIGN_EMULATOR
             else -> SyncDecision.SERVER_CHANGED
         }
     }
