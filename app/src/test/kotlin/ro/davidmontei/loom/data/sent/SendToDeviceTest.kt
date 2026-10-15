@@ -6,7 +6,9 @@ import android.content.Context
 import android.os.Environment
 import android.os.Process
 import android.os.storage.StorageManager
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -87,10 +89,12 @@ import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.JobStatus
 import ro.davidmontei.loom.storage.engine.WaitReason
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -110,6 +114,9 @@ class SendToDeviceTest {
     /** What RomM's device socket says while Loom is in front; a refusal ends the connection, as RomM's do. */
     private val socket = Channel<DeviceEvent>(Channel.UNLIMITED)
     private val connections = AtomicInteger()
+
+    /** The send-to-device file's next write fails, as on a full disk. */
+    private val failNextWrite = AtomicBoolean(false)
     private val app = object : LifecycleOwner {
         override val lifecycle = LifecycleRegistry.createUnsafe(this)
     }
@@ -145,7 +152,14 @@ class SendToDeviceTest {
             }, scope)
         credentials.save(PairedCredentials(romm.url("/"), "rmm_x", "dev-thor", "david", null))
         credentials.current.filterNotNull().first()
-        store = SendToDeviceStore(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "d.preferences_pb") })
+        val sentFile = PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "d.preferences_pb") }
+        store = SendToDeviceStore(object : DataStore<Preferences> {
+            override val data = sentFile.data
+            override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences {
+                if (failNextWrite.getAndSet(false)) throw IOException("No space left on device")
+                return sentFile.updateData(transform)
+            }
+        })
         val server = ActiveServer(settings, credentials, OkHttpClient.Builder().connectTimeout(2, TimeUnit.SECONDS).build(), scope)
         val mapping = MappingRepository(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "m.preferences_pb") })
         val downloads = DownloadRepository(db.downloadDao(), db.catalogDao(), server, mapping, settings, StorageVolumes(context), QueueKicker(workManager))
@@ -153,6 +167,7 @@ class SendToDeviceTest {
         sendToDevice = SendToDevice(
             settings, credentials, store, server, ServerInfo(settings, store), reachability, queue, downloads,
             DownloadNotifications(context), ClaimScheduler(workManager), LiveNudges({ _, _ -> connection() }), scope,
+            restartAfterMs = 50,
         )
         db.catalogDao().upsertPlatforms(listOf(PlatformEntity(1, "snes", "snes", "SNES", "Super Nintendo", 1, "t")))
         db.catalogDao().upsertRoms(listOf(rom(10), rom(11)))
@@ -625,6 +640,35 @@ class SendToDeviceTest {
         socket.send(DeviceEvent.InstallCancelled("req-1", 10))
 
         until { jobFor(10)!!.phase == JobPhase.CANCELLING.name }
+    }
+
+    /**
+     * A write that fails (a full disk, say) as the socket's refusal is recorded doesn't stop the rest for
+     * as long as Loom runs: the socket opens again, and Loom still claims when nudged.
+     */
+    @Test fun aWriteThatFailsDoesntStopTheSocketOrTheClaims() = runBlocking<Unit> {
+        inFront()
+        until { fake.claims.get() == 1 }
+        failNextWrite.set(true)
+
+        socket.send(DeviceEvent.Refused(DeviceSocket.UNAUTHORIZED))
+
+        until { connections.get() == 2 }
+        sendToDevice.nudge()
+        until { fake.claims.get() == 2 }
+    }
+
+    /** Paired again while recording that failed: the refusal is let go all the same, once the write works. */
+    @Test fun pairingAgainWhileAWriteFailsStillLetsTheRefusalGo() = runBlocking<Unit> {
+        store.setNeedsPairing(true)
+        running()
+        until { sendToDevice.state.value == SendToDeviceState.NeedsPairing }
+        failNextWrite.set(true)
+
+        credentials.save(PairedCredentials(romm.url("/"), "rmm_y", "dev-thor", "david", null))
+
+        until { !store.snapshot().needsPairing }
+        until { sendToDevice.state.value == SendToDeviceState.Ready("dev-thor") }
     }
 
     // --- in the background ---

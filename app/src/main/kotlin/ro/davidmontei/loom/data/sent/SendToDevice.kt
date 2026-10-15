@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -117,6 +116,7 @@ class SendToDevice(
     private val claims: ClaimScheduler,
     private val live: LiveNudges,
     scope: CoroutineScope,
+    private val restartAfterMs: Long = RESTART_AFTER_MS,
 ) {
     /** What decides the state, read together. */
     private data class Inputs(val settings: Settings, val credentials: Credentials?, val store: SendToDeviceSettings)
@@ -147,23 +147,30 @@ class SendToDevice(
     /**
      * Keeps everything in step while Loom runs: the periodic claim exists exactly while games can come,
      * RomM hears of the switch, the socket is open while Loom is in front, and Loom claims when asked
-     * to ([nudge]), after pairing again and when RomM can be reached again.
+     * to ([nudge]), after pairing again and when RomM can be reached again. A part that fails starts
+     * again on its own ([keepRunning]), so the rest never stops with it.
      */
     suspend fun run(): Unit = coroutineScope {
-        launch { live.run(inputs.map { it.liveTarget() }, socketListener) }
-        launch { inputs.map { it.state() is SendToDeviceState.Ready }.distinctUntilChanged().collect(claims::schedule) }
+        launch { keepRunning { live.run(inputs.map { it.liveTarget() }, socketListener) } }
+        launch { keepRunning { inputs.map { it.state() is SendToDeviceState.Ready }.distinctUntilChanged().collect(claims::schedule) } }
         launch {
-            inputs.map { it.declaration() }.distinctUntilChanged().collect { d ->
-                if (d != null) lock.withLock { if (d != declared) declare(d) }
+            keepRunning {
+                inputs.map { it.declaration() }.distinctUntilChanged().collect { d ->
+                    if (d != null) lock.withLock { if (d != declared) declare(d) }
+                }
             }
         }
         launch {
             // Paired again, maybe after RomM refused the old token or device: that refusal no longer holds.
+            // Not for the token Loom started with: a refusal RomM gave it then still does.
             credentials.awaitLoaded()
-            credentials.current.map { it?.token }.distinctUntilChanged().drop(1).collect { token ->
-                if (token != null) {
-                    store.setNeedsPairing(false)
-                    nudge()
+            var token = credentials.current.value?.token
+            keepRunning {
+                credentials.current.map { it?.token }.distinctUntilChanged().collect { now ->
+                    if (now == token) return@collect
+                    if (now != null) store.setNeedsPairing(false)
+                    token = now // only once that's written: a failed write is tried again
+                    if (now != null) nudge()
                 }
             }
         }
@@ -185,6 +192,22 @@ class SendToDevice(
                 throw e
             } catch (e: Exception) {
                 // What went wrong is left for the next claim, which returns every request not reported.
+            }
+        }
+    }
+
+    /**
+     * Runs [block] for as long as Loom does: one that fails (a write to a full disk, say) starts again a
+     * little later, rather than leaving that part of [run] stopped until Loom restarts.
+     */
+    private suspend fun keepRunning(block: suspend () -> Unit) {
+        while (true) {
+            try {
+                return block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                delay(restartAfterMs)
             }
         }
     }
@@ -363,5 +386,8 @@ class SendToDevice(
     companion object {
         /** How long nudges are gathered before claiming once for all of them. */
         const val NUDGE_GATHER_MS = 500L
+
+        /** How long a part of [run] that failed waits before it starts again. */
+        const val RESTART_AFTER_MS = 10_000L
     }
 }
