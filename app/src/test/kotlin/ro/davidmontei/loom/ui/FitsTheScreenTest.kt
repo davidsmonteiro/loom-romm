@@ -181,6 +181,23 @@ class FitsTheScreenTest {
         rule.saveScreenshot("settings-saves-tallest")
     }
 
+    /** The same with sync switched off on RomM, days ago: the longest last-sync line, across the section's width. */
+    @Test fun theSavesSectionFitsWithSyncSwitchedOffOnRomm() {
+        val settings = SettingsScreenTest.sample.settings!!.copy(
+            azaharUserDir = "/storage/6365-3230/Emulation/Azahar/user",
+            edenSaveDir = "/storage/6365-3230/Emulation/Eden/nand",
+            lastSaveSync = SaveSyncOutcome(System.currentTimeMillis() - 10 * 86_400_000L, SaveSyncEngine.SYNC_OFF, failed = true),
+        )
+        val storage = SettingsScreenTest.sample.storage.copy(
+            edenProfiles = listOf(EdenProfile("0123456789ABCDEF0123456789ABCDEF", 12, null), EdenProfile("4E431822D6DEFD527268BA35B5C09533", 3, null)),
+        )
+        rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample.copy(settings = settings, storage = storage), SettingsScreenTest.noop) } }
+        rule.onNodeWithTag("section-SAVES").performClick()
+        assertThat(settingsOverflow()).isEqualTo(0f)
+        assertThat(lineCount("pairing again won't help.")).isEqualTo(2)
+        rule.saveScreenshot("settings-saves-sync-off")
+    }
+
     /** Eight Eden profiles: one chip in Saves, and a list of them all that fits beside its explanation. */
     @Test fun manyEdenProfilesFit() {
         val profiles = (1..8).map { i -> EdenProfile("4E431822D6DEFD527268BA35B5C095%02X".format(i), 40 + i, java.time.Instant.parse("2026-10-14T12:00:00Z").minusSeconds(86_400L * i)) }

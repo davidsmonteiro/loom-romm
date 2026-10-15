@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
@@ -32,7 +33,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * slot) and compares through this device's sync rows (`compare_save_state`); an upload is refused
  * with 409 when the device never synced the slot head, deduplicated by hash, and writes a sync
  * row; `/content` with optimistic=false writes none; `/downloaded` does. Tests can also make
- * negotiate answer something else, or the upload fail. Devices are looked up in [devices].
+ * negotiate answer something else, or the upload fail. Devices are looked up in [devices]:
+ * negotiate answers 404 for one that isn't there, 400 for one with sync switched off.
  * With [rommVersion] at 5.4.0 or later, it behaves as 5.4.0 does where Loom can tell.
  */
 class FakeRomm(private val scratch: Path) : Dispatcher() {
@@ -55,7 +57,7 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
     val syncRows = mutableMapOf<Pair<String, Int>, Instant>()
     /** RomM 5.4.0: (device, save id) → the device's baseline hash on that sync row (`last_sync_hash`), null once cleared. */
     val syncHashes = mutableMapOf<Pair<String, Int>, String?>()
-    val devices = mutableListOf<JsonObject>()
+    val devices = CopyOnWriteArrayList<JsonObject>()
     val requests = CopyOnWriteArrayList<RecordedRequest>()
     /** Every operation negotiate answered, in order. */
     val answered = CopyOnWriteArrayList<JsonObject>()
@@ -131,10 +133,13 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
     // --- negotiate (endpoints/sync.py) ---
 
     private fun negotiate(body: JsonObject): MockResponse {
+        val device = body["device_id"]!!.jsonPrimitive.content
+        // `sync/__init__.py:204-215`
+        val known = devices.firstOrNull { it.string("id") == device } ?: return error(404, "Device with ID $device not found")
+        if (!known.getValue("sync_enabled").jsonPrimitive.boolean) return error(400, "Sync is disabled for this device")
         val open = openSessions.incrementAndGet()
         mostOpenSessions = maxOf(mostOpenSessions, open)
         if (negotiateDelayMs > 0) Thread.sleep(negotiateDelayMs)
-        val device = body["device_id"]!!.jsonPrimitive.content
         val clientSaves = body["saves"]!!.jsonArray.map { it.jsonObject }
         val scope = body["rom_ids"]!!.jsonArray.map { it.jsonPrimitive.int }.toSet() + clientSaves.map { it.int("rom_id") }
         val heads = saves.filter { it.slot != null && it.romId in scope }.groupBy { it.romId to it.slot!! }
@@ -296,9 +301,20 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
         put("server_updated_at", (head?.updatedAt?.toString()).json()); put("server_content_hash", head?.hash.json())
     }
 
-    fun device(id: String, identifier: String, name: String = "AYN Thor (Loom)") = buildJsonObject {
+    fun device(id: String, identifier: String, name: String = "AYN Thor (Loom)", syncEnabled: Boolean = true) = buildJsonObject {
         put("id", id); put("name", name); put("platform", "android"); put("client", "loom"); put("client_version", "0.2.0")
-        put("client_device_identifier", identifier); put("sync_enabled", true); put("last_seen", "2026-10-14T10:00:00+00:00")
+        put("client_device_identifier", identifier); put("sync_enabled", syncEnabled); put("last_seen", "2026-10-14T10:00:00+00:00")
+    }
+
+    /** Deletes a device, as RomM 5.4.0's Devices page does. */
+    fun deleteDevice(id: String) {
+        devices.removeAll { it.string("id") == id }
+    }
+
+    /** Switches save sync for a device on or off, as RomM 5.4.0's Devices page does. */
+    fun switchSync(id: String, on: Boolean) {
+        val i = devices.indexOfFirst { it.string("id") == id }
+        devices[i] = JsonObject(devices[i] + ("sync_enabled" to JsonPrimitive(on)))
     }
 
     private fun savePart(request: RecordedRequest): Pair<String, ByteArray> {
@@ -328,6 +344,8 @@ class FakeRomm(private val scratch: Path) : Dispatcher() {
 
     private fun json(request: RecordedRequest): JsonObject = RommJson.parseToJsonElement(request.body!!.utf8()).jsonObject
     private fun ok(body: JsonElement) = MockResponse.Builder().code(200).setHeader("Content-Type", "application/json").body(body.toString()).build()
+    private fun error(code: Int, detail: String) =
+        MockResponse.Builder().code(code).setHeader("Content-Type", "application/json").body(buildJsonObject { put("detail", detail) }.toString()).build()
     private fun JsonObject.int(key: String) = getValue(key).jsonPrimitive.int
     private fun JsonObject.string(key: String) = (get(key) as? JsonPrimitive)?.takeUnless { it is JsonNull }?.content
     private fun String?.json(): JsonElement = this?.let(::JsonPrimitive) ?: JsonNull

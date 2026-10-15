@@ -429,6 +429,19 @@ class SaveRepositoryTest : SaveSyncTestBase() {
         assertThat(repository.resolve(7, "Pokemon X", ConflictChoice.KEEP_THOR)).isEqualTo("RomM now has the Thor's save of Pokemon X")
     }
 
+    /** Sync switched off for the Thor on RomM: Upload save and a restore say so, and where to switch it back on. */
+    @Test fun withSyncSwitchedOffOnRommEachRequestSaysSo() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.addSave(7, archiveOf(bytes(2)))
+        romm.switchSync("dev-thor", on = false)
+
+        assertThat(repository.upload(7, "Pokemon X")).isEqualTo(SaveSyncEngine.SYNC_OFF)
+        assertThat(repository.restore(7, "Pokemon X")).isEqualTo("Didn't restore Pokemon X's save: ${SaveSyncEngine.SYNC_OFF}")
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+    }
+
     @Test fun anUnreachableServerIsSaidPlainly() = runBlocking<Unit> {
         settings.setServer(ServerConfig("http://127.0.0.1:1/".toHttpUrl()), "5.3.1")
         install(pokemonX)

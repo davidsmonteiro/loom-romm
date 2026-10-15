@@ -105,7 +105,7 @@ data class SaveSyncReport(
     val waiting: Set<Int> = emptySet(),
     val failed: Map<Int, String> = emptyMap(),
     val unsupported: Map<Int, String> = emptyMap(),
-    /** Why the run couldn't start at all (not paired, no RomM device); null when it ran. */
+    /** Why the run couldn't start at all (not paired, no RomM device, sync switched off on RomM); null when it ran. */
     val unavailable: String? = null,
     /** The run couldn't start until Loom pairs again: RomM has no device for it ([SaveSyncEngine.NO_DEVICE]). */
     val needsPairing: Boolean = false,
@@ -380,10 +380,15 @@ class SaveSyncEngine(
             val negotiated = try {
                 rommCall { api.negotiateSync(SyncNegotiateRequest(deviceId, chunk.mapNotNull { it.clientState() }, chunk.map { it.romId })) }
             } catch (e: RommException.Http) {
-                if (e.code == 400) return "RomM won't sync saves with this device: ${e.detail ?: "refused"}"
-                throw e
+                if (e.code != 400) throw e
+                // RomM 5.4.0's Devices page can switch sync off for one device; negotiate then answers 400.
+                return when (checkDevice(api, deviceId)) {
+                    DeviceCheck.SYNC_OFF -> SYNC_OFF
+                    DeviceCheck.GONE -> NO_DEVICE
+                    DeviceCheck.OK -> "RomM won't sync saves with this device: ${e.detail ?: "refused"}"
+                }
             } catch (e: RommException.NotFound) {
-                return NO_DEVICE
+                return NO_DEVICE // deleted on RomM's Devices page, which unbinds the token too
             }
             val ops = negotiated.operations.filter { it.slot == SAVE_SLOT }.associateBy { it.romId }
             // Negotiate leaves out heads the device "already has" and gives no details for an
@@ -554,6 +559,12 @@ class SaveSyncEngine(
             return Opened.Refused(e.message ?: "Not paired")
         }
         val deviceId = deviceId(api) ?: return Opened.Refused(NO_DEVICE)
+        // Nothing here negotiates, which is where RomM would say it no longer has the device or syncs with it.
+        when (checkDevice(api, deviceId)) {
+            DeviceCheck.GONE -> return Opened.Refused(NO_DEVICE)
+            DeviceCheck.SYNC_OFF -> return Opened.Refused(SYNC_OFF)
+            DeviceCheck.OK -> Unit
+        }
         val install = catalog.install(romId) ?: return Opened.Refused("The game isn't installed any more")
         val rom = catalog.rom(romId) ?: return Opened.Refused("The game isn't in the catalog any more")
         return when (val resolved = units.resolve(rom, install)) {
@@ -802,6 +813,22 @@ class SaveSyncEngine(
         }
     }
 
+    /** Whether RomM still has a device, and syncs saves with it. */
+    private enum class DeviceCheck { OK, GONE, SYNC_OFF }
+
+    /**
+     * Asks RomM about [deviceId]. Whatever else keeps RomM from saying (a token that may not read
+     * devices, an odd answer) counts as [DeviceCheck.OK]: RomM still refuses what it won't do.
+     */
+    private suspend fun checkDevice(api: RommApi, deviceId: String): DeviceCheck = try {
+        if (rommCall { api.device(deviceId) }.syncEnabled) DeviceCheck.OK else DeviceCheck.SYNC_OFF
+    } catch (e: RommException.NotFound) {
+        DeviceCheck.GONE
+    } catch (e: RommException) {
+        if (e is RommException.Unreachable || e is RommException.Unauthorized) throw e
+        DeviceCheck.OK
+    }
+
     private suspend fun writeBaseline(save: ResolvedSave.Ready, localHash: String, saveId: Int, serverHash: String?, serverUpdatedAt: Instant) =
         saves.upsertBaseline(
             SaveBaselineEntity(
@@ -898,6 +925,9 @@ class SaveSyncEngine(
         const val MAX_DOWNLOAD_BYTES = 256L * 1024 * 1024
 
         const val NO_DEVICE = "RomM doesn't have Loom as a device, so saves can't sync. Pair again in Settings with the code Loom shows."
+
+        /** Switched off on RomM's Devices page (RomM 5.4.0): only switching it back on there helps. */
+        const val SYNC_OFF = "Save sync is off for this Thor on RomM's Devices page. Switch it on there; pairing again won't help."
         private const val STALE_LOCAL = "The save on the Thor changed since this choice was shown"
         private const val STALE_SERVER = "RomM's save changed since this choice was shown"
         private const val EMULATOR_UNKNOWN = "unknown"

@@ -833,6 +833,60 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(romm.uploads()).isEmpty()
     }
 
+    /** Sync switched off for the Thor on RomM's Devices page: negotiate answers 400, and the run says what to do instead. */
+    @Test fun withSyncSwitchedOffInRommARunSaysSoWithoutPairAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.switchSync("dev-thor", on = false)
+
+        val report = engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(report.unavailable).isEqualTo(SaveSyncEngine.SYNC_OFF)
+        assertThat(report.needsPairing).isFalse()
+        assertThat(report.summary()).isEqualTo(SaveSyncEngine.SYNC_OFF)
+        assertThat(romm.uploads()).isEmpty()
+        assertThat(state(pokemonX)).isEqualTo(SaveSyncState.LOCAL_NEWER) // the Thor's side, as found
+
+        romm.switchSync("dev-thor", on = true)
+        assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(7)
+    }
+
+    /** Deleted on RomM's Devices page: a restore says to pair again, as a run does, and touches nothing. */
+    @Test fun aRestoreForADeviceRommDeletedAsksToPairAgain() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        saveFolder(pokemonX).deleteRecursively()
+        romm.deleteDevice("dev-thor")
+
+        assertThat(engine().restoreFromServer(7)).isEqualTo(ResolveResult.Failed(SaveSyncEngine.NO_DEVICE))
+        assertThat(contentRequests()).isEmpty()
+        assertThat(saveFolder(pokemonX).exists()).isFalse()
+        engine().sync(SaveSyncRequest.PUSH).let {
+            assertThat(it.unavailable).isEqualTo(SaveSyncEngine.NO_DEVICE)
+            assertThat(it.needsPairing).isTrue()
+        }
+    }
+
+    /** No answer to a conflict goes through while sync is off for the Thor: neither side changes, and it stays to answer. */
+    @Test fun aConflictAnswerForADeviceWithSyncOffChangesNothing() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        romm.addSave(7, archiveOf(bytes(2)))
+        assertThat(engine().sync(SaveSyncRequest.PUSH).conflicts).containsExactly(7)
+        romm.switchSync("dev-thor", on = false)
+
+        for (choice in listOf(ConflictChoice.KEEP_THOR, ConflictChoice.KEEP_SERVER, ConflictChoice.KEEP_BOTH)) {
+            assertThat(engine().resolveConflict(7, choice)).isEqualTo(ResolveResult.Failed(SaveSyncEngine.SYNC_OFF))
+        }
+        assertThat(engine().restoreFromServer(7)).isEqualTo(ResolveResult.Failed(SaveSyncEngine.SYNC_OFF))
+        assertThat(romm.uploads()).isEmpty()
+        assertThat(contentRequests()).isEmpty()
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(backups(pokemonX)).isEmpty()
+        assertThat(saves.conflict(7)!!.skipped).isFalse()
+    }
+
     /** A pasted token isn't bound to a device; the device Loom paired as is found by its identifier. */
     @Test fun aTokenWithoutADeviceUsesTheDeviceLoomPairedAs() = runBlocking<Unit> {
         pair(deviceId = null)

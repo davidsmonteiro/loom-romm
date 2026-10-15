@@ -92,6 +92,9 @@ abstract class SaveSyncTestBase {
         settings.setOnboardingComplete(true)
         credentials = CredentialStore(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "c.preferences_pb") }, cipher, scope)
         pair(deviceId = "dev-thor")
+        // The device Loom's token is bound to. Not under Loom's own identifier: with an unbound
+        // token, Loom finds no device unless a test lists one.
+        romm.devices += romm.device("dev-thor", "loom-thor")
         volume = tmp.newFolder("6365-3230")
         n3ds = File(volume, "ROMs/n3ds")
         listOf("config", "log", "nand", "states", "sysdata").forEach { File(n3ds, it).mkdirs() }

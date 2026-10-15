@@ -676,6 +676,18 @@ class SettingsScreenTest {
         rule.onNodeWithText("Pair again").assertExists()
     }
 
+    /** Sync switched off for the Thor on RomM's Devices page: the line says where to switch it on, and pairing again wouldn't help. */
+    @Test fun syncSwitchedOffShowsNoPairAgain() {
+        state = sample.copy(settings = sample.settings!!.copy(
+            lastSaveSync = SaveSyncOutcome(System.currentTimeMillis() - 5 * 60_000, SaveSyncEngine.SYNC_OFF, failed = true)))
+        show()
+        toTheSaveSwitch()
+        rule.onNodeWithTag("last-save-sync").assertTextEquals("Last sync 5 min ago: ${SaveSyncEngine.SYNC_OFF}")
+        rule.onNodeWithText("Pair again").assertDoesNotExist()
+        press(Key.DirectionDown)
+        rule.onNodeWithTag("azahar-change-folder").assertIsFocused()
+    }
+
     /** Pairing again from Saves comes back to its Pair again, and to the switch once the save sync it starts has run. */
     @Test fun backFromPairingAgainInSavesFocusesItsPairAgain() {
         state = needingPairing(SaveSyncEngine.NO_DEVICE)

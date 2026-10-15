@@ -88,7 +88,9 @@ interface RommApi {
 
     /**
      * Plans a sync, opening a session. RomM before 5.4.0 also cancels this device's other open
-     * sessions; 5.4.0 leaves them to its hourly cleanup, which fails those over a day old.
+     * sessions; 5.4.0 leaves them to its hourly cleanup, which fails those over a day old. Answers
+     * 404 for a device deleted on RomM, and 400 while sync is switched off for it there (or for a
+     * request it refuses).
      */
     @POST("api/sync/negotiate")
     suspend fun negotiateSync(@Body body: SyncNegotiateRequest): SyncNegotiateResponseDto
