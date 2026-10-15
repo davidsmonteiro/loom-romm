@@ -1315,7 +1315,7 @@ class SettingsScreenTest {
             }
         })
         toTheSaveSwitch()
-        rule.onNodeWithTag("ppsspp-card").assertTextEquals("PPSSPP · PSP", "Chosen, but it has no ppsspp.ini")
+        rule.onNodeWithTag("ppsspp-card").assertTextEquals("PPSSPP · PSP", "Chosen, but no ppsspp.ini")
         openDetails("ppsspp")
         rule.onNodeWithTag("ppsspp-folder-status", useUnmergedTree = true).assertTextEquals("You chose this folder, but PPSSPP hasn't used it as its memory stick yet.")
         press(Key.DirectionLeft)

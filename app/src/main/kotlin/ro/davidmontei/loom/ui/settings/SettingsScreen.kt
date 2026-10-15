@@ -1024,7 +1024,8 @@ private fun emulatorFolder(which: SaveFolderFor, state: SettingsUiState): Emulat
             EmulatorFolder(
                 which, folder,
                 card = when {
-                    unused -> "Chosen, but it has no ppsspp.ini"
+                    // Short enough for a card on the Thor's bottom screen.
+                    unused -> "Chosen, but no ppsspp.ini"
                     chosen != null -> "Your chosen folder"
                     folder != null -> "Found in ROMs/saves/PPSSPP"
                     else -> "Not found yet"

@@ -336,7 +336,13 @@ class FitsTheScreenTest {
      * Saves at its tallest: a failed last sync whose reason, the longest, sits beside Pair again, and
      * a card per emulator, each saying where its folder is on one line.
      */
-    @Test fun theSavesSectionFits() {
+    @Test fun theSavesSectionFits() = theSavesSectionFits("settings-saves-tallest")
+
+    /** The same Saves, open on its own on the bottom screen: it fits there too, each card's line in full. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theSavesSectionFitsTheBottomScreen() = theSavesSectionFits("settings-saves-bottom-screen")
+
+    private fun theSavesSectionFits(screenshot: String) {
         val state = tallestSaves(SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true))
         rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
@@ -348,22 +354,29 @@ class FitsTheScreenTest {
         rule.onNodeWithTag("ppsspp-card").assertExists()
         // Each card's line in full. (Labels with letter spacing report a width overflow they don't
         // have, so the ellipsis and the line count are what's checked.)
-        for (line in listOf("Your chosen folder", "Chosen, but it has no user/save", "Chosen, but it isn't there", "Chosen, but it has no ppsspp.ini")) {
+        for (line in listOf("Your chosen folder", "Chosen, but it has no user/save", "Chosen, but it isn't there", "Chosen, but no ppsspp.ini")) {
             assertWithMessage(line).that(ellipsized(line)).isFalse()
             assertWithMessage(line).that(lineCount(line)).isEqualTo(1)
         }
         assertThat(cutShort("Saves from RomM always wait for you.")).isFalse() // the switch's explanation, in full
-        rule.saveScreenshot("settings-saves-tallest")
+        rule.saveScreenshot(screenshot)
     }
 
     /** The same with sync switched off on RomM, days ago: the longest last-sync line, across the section's width. */
-    @Test fun theSavesSectionFitsWithSyncSwitchedOffOnRomm() {
+    @Test fun theSavesSectionFitsWithSyncSwitchedOffOnRomm() = theSavesSectionFitsWithSyncSwitchedOffOnRomm("settings-saves-sync-off")
+
+    /** The same on the bottom screen, Saves open on its own. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theSavesSectionFitsWithSyncSwitchedOffOnRommOnTheBottomScreen() =
+        theSavesSectionFitsWithSyncSwitchedOffOnRomm("settings-saves-sync-off-bottom-screen")
+
+    private fun theSavesSectionFitsWithSyncSwitchedOffOnRomm(screenshot: String) {
         val state = tallestSaves(SaveSyncOutcome(System.currentTimeMillis() - 10 * 86_400_000L, SaveSyncEngine.SYNC_OFF, failed = true))
         rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
         assertThat(lineCount("pairing again won't help.")).isEqualTo(2)
-        rule.saveScreenshot("settings-saves-sync-off")
+        rule.saveScreenshot(screenshot)
     }
 
     /**
@@ -427,9 +440,10 @@ class FitsTheScreenTest {
     /** Saves as on the Thor: both folders found where Loom looks, shown in full, and Loom able to read title IDs. */
     @Test fun theSavesSectionShowsTheThorsFoldersInFull() = theSavesSectionShowsTheThorsFoldersInFull("settings-saves-thor")
 
-    /** The same Saves, open on its own on the bottom screen: it fits there too. */
+    /** The same Saves, open on its own on the bottom screen: the folders found there in full too. */
     @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
-    @Test fun theSavesSectionFitsTheBottomScreen() = theSavesSectionShowsTheThorsFoldersInFull("settings-saves-bottom-screen")
+    @Test fun theSavesSectionShowsTheThorsFoldersInFullOnTheBottomScreen() =
+        theSavesSectionShowsTheThorsFoldersInFull("settings-saves-thor-bottom-screen")
 
     private fun theSavesSectionShowsTheThorsFoldersInFull(screenshot: String) {
         val storage = SettingsScreenTest.sample.storage.copy(
