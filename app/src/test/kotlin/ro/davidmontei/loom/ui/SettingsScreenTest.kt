@@ -582,6 +582,56 @@ class SettingsScreenTest {
         assertThat(calls).contains("swap:true")
     }
 
+    // --- a narrow screen: the list, then one section at a time ---
+
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun onANarrowScreenAOpensTheSectionAlone() {
+        show()
+        rule.onNodeWithTag("section-SERVER").assertIsFocused()
+        rule.onNodeWithTag("settings-content").assertDoesNotExist()
+        goTo(SettingsSection.STORAGE)
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Settings · Storage").assertExists()
+        rule.onNodeWithTag("settings-sections").assertDoesNotExist()
+        rule.onNodeWithText("Change folder").assertIsFocused()
+    }
+
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun bFromASectionReturnsToItInTheList() {
+        show()
+        goTo(SettingsSection.MAPPING)
+        press(Key.DirectionCenter) // Export
+        press(Key.DirectionDown)
+        back()
+        rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+        rule.onNodeWithTag("settings-content").assertDoesNotExist()
+        rule.onNodeWithText("Settings").assertExists()
+        rule.onNodeWithTag("section-MAPPING").assertIsFocused()
+        assertThat(rule.activity.isFinishing).isFalse()
+        press(Key.DirectionCenter) // and A opens it again
+        rule.onNodeWithText("Settings · Platform folders").assertExists()
+    }
+
+    /** Pairing again from a section on a narrow screen comes back to that section, open, on its Pair again. */
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun pairAgainComesBackToItsSection() {
+        val restore = StateRestorationTester(rule)
+        restore.setContent { LoomTestTheme { SettingsContent(state, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        press(Key.DirectionCenter) // Server & pairing: the address
+        repeat(4) { if (focusedText() != "Pair again") press(if (focusedText() == "Sign out") Key.DirectionLeft else Key.DirectionDown) }
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionCenter); press(Key.DirectionRight); press(Key.DirectionCenter) // confirmed
+        assertThat(calls).contains("repair")
+        restore.emulateSavedInstanceStateRestore()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText("Settings · Server & pairing").assertExists()
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        back()
+        rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+        rule.onNodeWithTag("section-SERVER").assertIsFocused()
+    }
+
     /** Found by audit: Pair again threw the working token away at once, without asking. */
     @Test fun pairAgainAsksFirst() {
         show()

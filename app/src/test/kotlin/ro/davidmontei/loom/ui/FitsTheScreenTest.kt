@@ -1,6 +1,7 @@
 package ro.davidmontei.loom.ui
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsActions
@@ -147,6 +148,30 @@ class FitsTheScreenTest {
         assertThat(last.boundsInRoot.bottom).isAtMost(list.boundsInRoot.bottom)
     }
 
+    /** On the bottom screen the list takes the screen's width, every section in it without scrolling. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theSettingsSectionListFitsTheBottomScreen() {
+        theSettingsSectionListFits()
+        rule.onNodeWithTag("settings-content").assertDoesNotExist() // the sections open on their own
+        rule.saveScreenshot("settings-bottom-screen")
+    }
+
+    /** On a phone in portrait each section opens on its own, and fits. */
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun everySectionFitsAPhoneInPortrait() {
+        // A new Settings for each section, as from the library: the list, then A on the section.
+        var shown by mutableStateOf(SettingsSection.SERVER)
+        rule.setContent { LoomTestTheme { key(shown) { SettingsContent(SettingsScreenTest.sample, SettingsScreenTest.noop) } } }
+        for (section in SettingsSection.entries) {
+            shown = section
+            rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+            rule.onNodeWithTag("section-${section.name}").performClick()
+            rule.onNodeWithText("Settings · ${section.title}").assertExists()
+            assertWithMessage(section.name).that(settingsOverflow()).isEqualTo(0f)
+            rule.saveScreenshot("settings-phone-${section.name.lowercase()}")
+        }
+    }
+
     /**
      * Found by review: Downloads & saves scrolled by over 400 px, with every save control below the
      * fold. Downloads and Saves are two sections now, and each fits.
@@ -209,7 +234,13 @@ class FitsTheScreenTest {
     }
 
     /** Saves as on the Thor: both folders found where Loom looks, shown in full, and Loom able to read title IDs. */
-    @Test fun theSavesSectionShowsTheThorsFoldersInFull() {
+    @Test fun theSavesSectionShowsTheThorsFoldersInFull() = theSavesSectionShowsTheThorsFoldersInFull("settings-saves-thor")
+
+    /** The same Saves, open on its own on the bottom screen: it fits there too. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theSavesSectionFitsTheBottomScreen() = theSavesSectionShowsTheThorsFoldersInFull("settings-saves-bottom-screen")
+
+    private fun theSavesSectionShowsTheThorsFoldersInFull(screenshot: String) {
         val storage = SettingsScreenTest.sample.storage.copy(
             romsRoot = "/storage/6365-3230/ROMs", azaharFound = "/storage/6365-3230/ROMs/n3ds", edenFound = "/storage/6365-3230/ROMs/saves/Eden",
             edenProfiles = listOf(EdenProfile("4E431822D6DEFD527268BA35B5C09533", 2, null)), prodKeys = "/storage/6365-3230/ROMs/prod.keys",
@@ -217,7 +248,7 @@ class FitsTheScreenTest {
         rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample.copy(storage = storage), SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
-        rule.saveScreenshot("settings-saves-thor")
+        rule.saveScreenshot(screenshot)
         for (line in listOf("/storage/6365-3230/ROMs/n3ds", "/storage/6365-3230/ROMs/saves/Eden", "Found in ROMs/saves/Eden.")) {
             assertWithMessage(line).that(ellipsized(line)).isFalse()
         }
@@ -227,7 +258,13 @@ class FitsTheScreenTest {
      * Found by audit: the platform folder editor was taller than the screen. With Reset, and the longest hint
      * under the field for a platform without other folders of its own: eight Cocoon folders.
      */
-    @Test fun thePlatformFolderEditorFits() {
+    @Test fun thePlatformFolderEditorFits() = thePlatformFolderEditorFits("settings-mapping-editor-longest-hint")
+
+    /** On the bottom screen the editor takes the screen's width, and still fits. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun thePlatformFolderEditorFitsTheBottomScreen() = thePlatformFolderEditorFits("settings-mapping-editor-bottom-screen")
+
+    private fun thePlatformFolderEditorFits(screenshot: String) {
         val state = SettingsScreenTest.sample.copy(mapping = listOf(SettingsScreenTest.chosenRow(1, "PlayStation 2", "ps2", "ps2", "ps2")))
         val cocoon = listOf("psx", "ps2", "ps3", "psp", "pspminis", "pico8", "pokemini", "pc88", "pc98", "pcfx")
         val actions = object : SettingsActions by SettingsScreenTest.noop { override val cocoonFolders = cocoon }
@@ -237,6 +274,7 @@ class FitsTheScreenTest {
         rule.onNodeWithText("PlayStation 2").performClick()
         rule.onNodeWithText("Other Cocoon folders: psx, ps3, psp, pspminis, pico8, pokemini, pc88, pc98", useUnmergedTree = true).assertExists()
         assertThat(overflow("Files to download")).isEqualTo(0f)
+        rule.saveScreenshot(screenshot)
     }
 
     /** Whether every node holding [texts] lies wholly on the screen: buttons that wrap must not wrap off it. */
