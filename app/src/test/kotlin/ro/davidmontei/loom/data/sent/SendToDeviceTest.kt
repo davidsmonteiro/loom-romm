@@ -25,6 +25,7 @@ import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -188,8 +189,8 @@ class SendToDeviceTest {
 
     private suspend fun jobFor(romId: Int) = db.downloadDao().jobForRom(romId)
 
-    /** Runs the coordinator, as Loom does while it runs. */
-    private fun running() = scope.launch { sendToDevice.run() }
+    /** Runs the coordinator, as Loom does while it runs: started by the time this returns. */
+    private fun running() = scope.launch(start = CoroutineStart.UNDISPATCHED) { sendToDevice.run() }
 
     private suspend fun until(what: suspend () -> Boolean) = withTimeout(5_000) { while (!what()) delay(10) }
 

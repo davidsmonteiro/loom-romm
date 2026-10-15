@@ -151,6 +151,10 @@ class SendToDevice(
      * again on its own ([keepRunning]), so the rest never stops with it.
      */
     suspend fun run(): Unit = coroutineScope {
+        // The token Loom starts with, read before anything else runs: pairing again from then on lets a
+        // refusal RomM gave the old token go.
+        credentials.awaitLoaded()
+        var token = credentials.current.value?.token
         launch { keepRunning { live.run(inputs.map { it.liveTarget() }, socketListener) } }
         launch { keepRunning { inputs.map { it.state() is SendToDeviceState.Ready }.distinctUntilChanged().collect(claims::schedule) } }
         launch {
@@ -163,8 +167,6 @@ class SendToDevice(
         launch {
             // Paired again, maybe after RomM refused the old token or device: that refusal no longer holds.
             // Not for the token Loom started with: a refusal RomM gave it then still does.
-            credentials.awaitLoaded()
-            var token = credentials.current.value?.token
             keepRunning {
                 credentials.current.map { it?.token }.distinctUntilChanged().collect { now ->
                     if (now == token) return@collect
