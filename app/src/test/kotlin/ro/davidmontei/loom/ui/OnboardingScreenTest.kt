@@ -8,9 +8,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -172,6 +174,29 @@ class OnboardingScreenTest {
         rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
         rule.onNodeWithText("Allow background downloads").assertIsFocused()
         rule.onNodeWithText("Allow notifications").assertExists() // still there, for another try
+    }
+
+    /** On the bottom screen, with the steps stacked, each one still starts on the control the next A should press. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun eachStepsFirstControlTakesFocusOnANarrowScreen() {
+        show(OnboardingState())
+        rule.onNodeWithText("Get started").assertIsFocused()
+        update { OnboardingState(step = OnboardingStep.SERVER) }
+        assertThat(rule.onNode(isFocused()).fetchSemanticsNode().config[SemanticsActions.OnClick].label).isEqualTo("Server address")
+        update { it.copy(addressInput = "romm.example.org", serverSummary = "RomM 5.3.1 at https://romm.example.org/") }
+        rule.onNodeWithText("Continue").assertIsFocused()
+        update { OnboardingState(step = OnboardingStep.PAIR) }
+        rule.onNodeWithText("Scan a code").assertIsFocused()
+        update { it.copy(pairMode = PairMode.PAIR_CODE) }
+        rule.onNodeWithTag("pair-input").assertIsFocused()
+        update { OnboardingState(step = OnboardingStep.STORAGE) }
+        rule.onNodeWithText("Open Android settings").assertIsFocused()
+        update { OnboardingState(step = OnboardingStep.ROMS_ROOT, suggestedRoot = File("/storage/9C33-6BBD/ROMs")) }
+        rule.onNodeWithText("Create /storage/9C33-6BBD/ROMs").assertIsFocused()
+        update { OnboardingState(step = OnboardingStep.BACKGROUND) }
+        rule.onNodeWithText("Allow background downloads").assertIsFocused() // notifications are on
+        update { OnboardingState(step = OnboardingStep.SYNC) }
+        rule.onNodeWithText("Continue in the background").assertIsFocused()
     }
 
     /** Found by review: a check that ended after A started editing the address, before the first key, took focus away. */

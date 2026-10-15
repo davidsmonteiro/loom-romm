@@ -31,6 +31,7 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
+import ro.davidmontei.loom.data.download.VolumeInfo
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.storage.saves.EdenProfile
 import ro.davidmontei.loom.data.db.SaveSyncState
@@ -49,6 +50,9 @@ import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.InstallState
 import ro.davidmontei.loom.ui.library.LibraryContent
 import ro.davidmontei.loom.ui.library.LibraryFilter
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import ro.davidmontei.loom.romm.dto.DeviceAuthInitResponse
+import ro.davidmontei.loom.romm.pairing.DeviceAuthSession
 import ro.davidmontei.loom.ui.onboarding.OnboardingActions
 import ro.davidmontei.loom.ui.onboarding.OnboardingContent
 import ro.davidmontei.loom.ui.onboarding.OnboardingState
@@ -127,15 +131,84 @@ class FitsTheScreenTest {
         return layouts.single().hasVisualOverflow
     }
 
+    /** The Server step at its tallest: a checked address, with the plain-HTTP warning. */
+    private val serverStepWithTheHttpWarning = OnboardingState(
+        step = OnboardingStep.SERVER, addressInput = "203.0.113.5:8080", serverSummary = "RomM 5.3.1 at http://203.0.113.5:8080/",
+        insecureWarning = "203.0.113.5 is a public address over plain HTTP: your token would travel unencrypted. Use https:// if you can.",
+    )
+
+    /** The Pair step with a code to approve, its QR code and how long it lasts. */
+    private val pairStepWithItsCode = OnboardingState(
+        step = OnboardingStep.PAIR, sessionStartedAt = System.currentTimeMillis(),
+        session = DeviceAuthSession(
+            "https://romm.example.com/".toHttpUrl(), "ABCD2345", "https://romm.example.com/pair/device".toHttpUrl(),
+            "https://romm.example.com/pair/device?user_code=ABCD2345".toHttpUrl(), 600,
+            DeviceAuthInitResponse("dev-code", "ABCD2345", "/pair/device", "/pair/device?user_code=ABCD2345", expiresIn = 600, interval = 5),
+        ),
+    )
+
     /** Found by audit: with the plain-HTTP warning showing, the Server step scrolled and cut off its title. */
     @Test fun theServerStepFitsWithTheHttpWarning() {
-        val state = OnboardingState(
-            step = OnboardingStep.SERVER, addressInput = "203.0.113.5:8080", serverSummary = "RomM 5.3.1 at http://203.0.113.5:8080/",
-            insecureWarning = "203.0.113.5 is a public address over plain HTTP: your token would travel unencrypted. Use https:// if you can.",
-        )
-        rule.setContent { LoomTestTheme { OnboardingContent(state, NoopOnboardingActions) } }
+        rule.setContent { LoomTestTheme { OnboardingContent(serverStepWithTheHttpWarning, NoopOnboardingActions) } }
         assertThat(overflow()).isEqualTo(0f)
         rule.saveScreenshot("onboarding-server-http-warning")
+    }
+
+    /** On the bottom screen the explanation goes above the form, and the step still fits at its tallest. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theServerStepFitsTheBottomScreen() {
+        rule.setContent { LoomTestTheme { OnboardingContent(serverStepWithTheHttpWarning, NoopOnboardingActions) } }
+        assertThat(overflow()).isEqualTo(0f)
+        onScreen("Check address", "Continue")
+        rule.saveScreenshot("onboarding-server-bottom-screen")
+    }
+
+    /** On the bottom screen the chips stay on one line, and a smaller QR code sits beside the code. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun thePairStepWithItsCodeFitsTheBottomScreen() {
+        rule.setContent { LoomTestTheme { OnboardingContent(pairStepWithItsCode, NoopOnboardingActions) } }
+        assertThat(overflow()).isEqualTo(0f)
+        onScreen("Scan a code", "Enter a pair code", "Paste a token", "ABCD-2345")
+        val qr = rule.onNodeWithContentDescription("QR code", substring = true).fetchSemanticsNode().boundsInRoot
+        assertThat(qr.bottom).isAtMost(rule.onRoot().fetchSemanticsNode().boundsInRoot.bottom)
+        assertThat(lineCount("Waiting for approval")).isAtMost(2)
+        rule.saveScreenshot("onboarding-pair-bottom-screen")
+    }
+
+    /** On a phone in portrait every step fits, one column each, the QR code under the pairing code. */
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun everyStepFitsAPhoneInPortrait() {
+        var state by mutableStateOf(OnboardingState())
+        rule.setContent { LoomTestTheme { OnboardingContent(state, NoopOnboardingActions) } }
+        val steps = listOf(
+            OnboardingState(), serverStepWithTheHttpWarning, pairStepWithItsCode, OnboardingState(step = OnboardingStep.STORAGE),
+            OnboardingState(step = OnboardingStep.BACKGROUND), OnboardingState(step = OnboardingStep.SYNC),
+        )
+        for (step in steps) {
+            state = step
+            assertWithMessage(step.step.name).that(overflow()).isEqualTo(0f)
+            if (step.step == OnboardingStep.PAIR) onScreen("Scan a code", "Enter a pair code", "Paste a token", "ABCD-2345")
+            rule.saveScreenshot("onboarding-phone-${step.step.name.lowercase()}")
+        }
+        // The ROMs step's folder list scrolls in its own pane, under the suggestion.
+        state = romsStep
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        onScreen("Create /storage/9C33-6BBD/ROMs", "Or browse", "SD card")
+        rule.saveScreenshot("onboarding-phone-roms_root")
+    }
+
+    /** The ROMs step, with a folder to suggest and the SD card to browse. */
+    private val romsStep = File("/storage/9C33-6BBD").let { card ->
+        OnboardingState(step = OnboardingStep.ROMS_ROOT, suggestedRoot = File(card, "ROMs"), volumes = listOf(VolumeInfo("9C33-6BBD", card, "SD card", true)))
+    }
+
+    /** On the bottom screen the folder list goes under the suggestion, with room to browse in its own pane. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theRomsStepFitsTheBottomScreen() {
+        rule.setContent { LoomTestTheme { OnboardingContent(romsStep, NoopOnboardingActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        onScreen("Which folder does Cocoon scan?", "Create /storage/9C33-6BBD/ROMs", "Or browse", "SD card")
+        rule.saveScreenshot("onboarding-roms-bottom-screen")
     }
 
     /** Every section is in the list without scrolling it: a section that has to be scrolled to is easily missed. */
