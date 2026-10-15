@@ -95,6 +95,7 @@ class SettingsSaveSyncViewModelTest {
             CatalogSyncScheduler(workManager), RommConnector(OkHttpClient()), ActiveServer(settings, credentials, OkHttpClient(), scope),
             SaveSyncTriggers(settings, SaveSyncScheduler(workManager)),
             SendToDeviceStore(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "send_to_device.preferences_pb") }),
+            {},
         )
     }
 

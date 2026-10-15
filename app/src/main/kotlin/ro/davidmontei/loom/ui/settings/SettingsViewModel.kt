@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ro.davidmontei.loom.BuildConfig
+import ro.davidmontei.loom.data.auth.BeforeSignOut
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.Credentials
 import ro.davidmontei.loom.data.catalog.CatalogSyncScheduler
@@ -114,6 +116,7 @@ class SettingsViewModel @Inject constructor(
     private val server: ActiveServer,
     private val saveSync: SaveSyncTriggers,
     private val sendToDevice: SendToDeviceStore,
+    private val beforeSignOut: BeforeSignOut,
 ) : ViewModel() {
 
     private val storageInfo = MutableStateFlow(StorageInfo(null, null, null, null))
@@ -184,7 +187,11 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun signOut() = viewModelScope.launch {
-        credentials.clear()
+        // To the end even if Settings closes meanwhile: RomM hears first, while Loom still has its token.
+        withContext(NonCancellable) {
+            beforeSignOut.beforeSignOut()
+            credentials.clear()
+        }
         _messages.send("Signed out. Your library and installed games stay on the device.")
     }
 

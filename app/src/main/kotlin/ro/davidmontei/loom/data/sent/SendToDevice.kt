@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.Credentials
 import ro.davidmontei.loom.data.download.DownloadNotifications
@@ -117,6 +118,7 @@ class SendToDevice(
     private val live: LiveNudges,
     scope: CoroutineScope,
     private val restartAfterMs: Long = RESTART_AFTER_MS,
+    private val withdrawWithinMs: Long = WITHDRAW_WITHIN_MS,
 ) {
     /** What decides the state, read together. */
     private data class Inputs(val settings: Settings, val credentials: Credentials?, val store: SendToDeviceSettings)
@@ -328,6 +330,26 @@ class SendToDevice(
         return goOn
     }
 
+    /**
+     * Loom is signing out: RomM is told not to offer the device under "Install on device" any more, while
+     * Loom still holds the token to tell it. Only briefly, and whatever RomM answers, as signing out goes
+     * on regardless; out of reach then, RomM offers the device until its owner deletes it there.
+     */
+    suspend fun withdraw() {
+        val off = inputs().declaration()?.copy(receive = false) ?: return
+        if (off == declared) return // RomM knows already
+        try {
+            withTimeoutOrNull(withdrawWithinMs) {
+                server.call { api -> rommCall { api.updateDevice(off.deviceId, DeviceUpdateRequest(mapOf(REMOTE_INSTALL to false))) } }
+                declared = off // pairing again by QR code, with the same device, declares it again
+            }
+        } catch (e: NotPairedException) {
+            // Signed out meanwhile.
+        } catch (e: RommException) {
+            // Out of reach, or the device or token refused: nothing more to do before signing out.
+        }
+    }
+
     /** Tells RomM what the device can do. A refused device needs pairing again; a passing problem, the next claim. */
     private suspend fun declare(declaration: Declaration) {
         try {
@@ -391,5 +413,8 @@ class SendToDevice(
 
         /** How long a part of [run] that failed waits before it starts again. */
         const val RESTART_AFTER_MS = 10_000L
+
+        /** How long signing out waits for RomM to hear the device is no longer offered ([withdraw]). */
+        const val WITHDRAW_WITHIN_MS = 3_000L
     }
 }

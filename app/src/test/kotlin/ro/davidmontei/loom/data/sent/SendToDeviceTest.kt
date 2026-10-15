@@ -98,6 +98,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.system.measureTimeMillis
 
 /**
  * Games sent from RomM's web UI, against a RomM that keeps install requests as 5.4.0 does: each game
@@ -169,7 +170,7 @@ class SendToDeviceTest {
         sendToDevice = SendToDevice(
             settings, credentials, store, server, ServerInfo(settings, store), reachability, queue, downloads,
             DownloadNotifications(context), ClaimScheduler(workManager), LiveNudges({ _, _ -> connection() }), scope,
-            restartAfterMs = 50,
+            restartAfterMs = 50, withdrawWithinMs = 300,
         )
         db.catalogDao().upsertPlatforms(listOf(PlatformEntity(1, "snes", "snes", "SNES", "Super Nintendo", 1, "t")))
         db.catalogDao().upsertRoms(listOf(rom(10), rom(11)))
@@ -715,6 +716,45 @@ class SendToDeviceTest {
         until { sendToDevice.state.value == SendToDeviceState.Ready("dev-thor") }
     }
 
+    // --- signing out ---
+
+    /** Signing out, RomM stops offering the Thor; paired again by QR code, with the same device, it's offered again. */
+    @Test fun signingOutStopsRommOfferingTheDevice() = runBlocking<Unit> {
+        running()
+        until { fake.declared.size == 1 }
+
+        sendToDevice.withdraw()
+        credentials.clear()
+
+        assertThat(fake.declared.last()).isEqualTo("dev-thor" to """{"capabilities":{"remote_install":false}}""")
+        credentials.save(PairedCredentials(romm.url("/"), "rmm_y", "dev-thor", "david", null))
+        until { fake.declared.size >= 3 }
+        assertThat(fake.declared.last()).isEqualTo("dev-thor" to """{"capabilities":{"remote_install":true}}""")
+    }
+
+    /** Switched off, RomM has heard so already: signing out tells it nothing more. */
+    @Test fun signingOutWithTheSwitchOffTellsRommNothingMore() = runBlocking<Unit> {
+        store.setReceive(false)
+        running()
+        until { fake.declared.size == 1 }
+
+        sendToDevice.withdraw()
+
+        assertThat(fake.declared).containsExactly("dev-thor" to """{"capabilities":{"remote_install":false}}""")
+    }
+
+    /** RomM slow to answer doesn't hold signing out up for long. */
+    @Test fun signingOutDoesntWaitLongForRomm() = runBlocking<Unit> {
+        val answer = CountDownLatch(1)
+        fake.declareAnswer = { answer.await(5, TimeUnit.SECONDS); null }
+        try {
+            val took = measureTimeMillis { sendToDevice.withdraw() }
+            assertThat(took).isLessThan(2_000)
+        } finally {
+            answer.countDown()
+        }
+    }
+
     // --- in the background ---
 
     /** Every 15 minutes with a network, only while games can come: switched off, it stops; on again, it's back. */
@@ -778,6 +818,9 @@ class SendToDeviceTest {
         /** The claim's answer when not the usual 200. */
         @Volatile var claimAnswer: Int? = null
 
+        /** `PUT api/devices/{id}`'s answer when not RomM's usual one (which a null answer gives). */
+        @Volatile var declareAnswer: (() -> MockResponse?)? = null
+
         /** `PUT …/installs/{id}`'s answer, by request, when not RomM's usual one (which a null answer gives). */
         @Volatile var reportAnswer: ((String) -> MockResponse?)? = null
 
@@ -803,6 +846,7 @@ class SendToDeviceTest {
                 return romAnswer?.invoke(id) ?: json(romJson(id, 400 + id, ByteArray(1_000) { it.toByte() }).toString())
             }
             Regex("""/api/devices/([^/]+)$""").find(path)?.takeIf { method == "PUT" }?.let { m ->
+                declareAnswer?.invoke()?.let { return it }
                 if (deviceDeleted) return error(404, "Device not found")
                 val body = request.body?.utf8().orEmpty()
                 declared += m.groupValues[1] to body

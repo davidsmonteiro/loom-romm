@@ -50,6 +50,7 @@ import ro.davidmontei.loom.romm.pairing.PairedCredentials
 import ro.davidmontei.loom.romm.pairing.RommConnector
 import ro.davidmontei.loom.ui.settings.SettingsViewModel
 import java.io.File
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** The settings ViewModel: the library sync it saves and reports, and whether games sent from RomM can come. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -64,6 +65,9 @@ class SettingsViewModelTest {
     private lateinit var credentials: CredentialStore
     private lateinit var sendToDevice: SendToDeviceStore
     private lateinit var vm: SettingsViewModel
+
+    /** The token Loom still held each time signing out told RomM first. */
+    private val toldRommWith = CopyOnWriteArrayList<String?>()
 
     @Before fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
@@ -85,6 +89,7 @@ class SettingsViewModelTest {
             InstallManager(db.catalogDao(), settings, mapping, volumes), sync, RommConnector(OkHttpClient()),
             ActiveServer(settings, credentials, OkHttpClient(), scope),
             SaveSyncTriggers(settings, SaveSyncScheduler(WorkManager.getInstance(context))), sendToDevice,
+            { toldRommWith += credentials.current.value?.token },
         )
     }
 
@@ -140,5 +145,15 @@ class SettingsViewModelTest {
         } finally {
             watching.cancel()
         }
+    }
+
+    /** Signing out tells RomM first (to stop offering the Thor for games), while Loom still has the token to. */
+    @Test fun signingOutTellsRommFirstThenForgetsTheToken() = runBlocking<Unit> {
+        credentials.save(PairedCredentials("http://romm.example.com/".toHttpUrl(), "rmm_x", "dev-thor", "david", null))
+
+        vm.signOut().join()
+
+        assertThat(toldRommWith).containsExactly("rmm_x")
+        assertThat(credentials.current.value).isNull()
     }
 }

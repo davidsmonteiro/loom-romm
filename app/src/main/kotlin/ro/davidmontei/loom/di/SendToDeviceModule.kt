@@ -13,6 +13,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineScope
 import okhttp3.OkHttpClient
+import ro.davidmontei.loom.data.auth.BeforeSignOut
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.download.DownloadNotifications
 import ro.davidmontei.loom.data.download.DownloadRepository
@@ -69,4 +70,8 @@ object SendToDeviceModule {
         live: LiveNudges,
         @AppScope scope: CoroutineScope,
     ) = SendToDevice(settings, credentials, store, server, serverInfo, reachability, queue, downloads, notifications, claims, live, scope)
+
+    /** Signing out, RomM stops offering the device first. */
+    @Provides
+    fun beforeSignOut(sendToDevice: SendToDevice) = BeforeSignOut { sendToDevice.withdraw() }
 }
