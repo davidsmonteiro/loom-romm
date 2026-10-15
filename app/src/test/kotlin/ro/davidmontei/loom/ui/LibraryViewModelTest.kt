@@ -49,6 +49,7 @@ import ro.davidmontei.loom.data.db.SwitchTitleEntity
 import ro.davidmontei.loom.data.db.SwitchTitleSource
 import ro.davidmontei.loom.data.db.VerifiedBy
 import ro.davidmontei.loom.data.download.DownloadRepository
+import ro.davidmontei.loom.data.download.QueueGame
 import ro.davidmontei.loom.data.download.QueueKicker
 import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.install.InstallManager
@@ -114,11 +115,14 @@ class LibraryViewModelTest {
         val eden = EdenSaves(settings, db.catalogDao(), db.saveDao())
         val engine = SaveSyncEngine(db.catalogDao(), db.saveDao(), server, credentials, settings, SaveUnitResolver(settings, volumes, eden), volumes,
             File(tmp.root, "cache"))
+        val downloads = DownloadRepository(db.downloadDao(), db.catalogDao(), server, mapping, settings, volumes, QueueKicker(workManager))
+        val folders = FolderChooser(settings, mapping)
+        val syncScheduler = CatalogSyncScheduler(workManager)
         vm = LibraryViewModel(
             db.catalogDao(),
-            DownloadRepository(db.downloadDao(), db.catalogDao(), server, mapping, settings, volumes, QueueKicker(workManager)),
+            downloads,
             InstallManager(db.catalogDao(), settings, mapping, volumes),
-            CatalogSyncScheduler(workManager), server, settings, FolderChooser(settings, mapping),
+            syncScheduler, server, settings, folders, QueueGame(db.catalogDao(), downloads, folders, syncScheduler),
             SaveRepository(engine, db.saveDao(), eden, scope),
             reachability,
         )

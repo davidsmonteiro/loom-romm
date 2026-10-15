@@ -35,7 +35,9 @@ sealed interface EnqueueResult {
     data class Queued(val jobId: Long) : EnqueueResult
     data object AlreadyQueued : EnqueueResult
     data object AlreadyInstalled : EnqueueResult
-    data class Failed(val message: String) : EnqueueResult
+
+    /** [transient]: a passing problem (RomM out of reach, busy or failing for now) that asking again later can get past. */
+    data class Failed(val message: String, val transient: Boolean = false) : EnqueueResult
 }
 
 /**
@@ -58,9 +60,20 @@ class DownloadRepository(
     val jobs = dao.observeJobs()
     val recentInstalls = dao.observeRecentInstalls()
 
-    suspend fun enqueue(romId: Int): EnqueueResult {
+    /** Whether [romId] has a job in the queue, failed ones included. */
+    suspend fun hasJob(romId: Int): Boolean = dao.jobForRom(romId) != null
+
+    /**
+     * Queues [romId], planned from what RomM has now ([known], when the caller just asked RomM for it).
+     * [installRequestId]: the RomM install request that sent the game, kept on its job.
+     */
+    suspend fun enqueue(romId: Int, installRequestId: String? = null, known: RomDto? = null): EnqueueResult {
         dao.jobForRom(romId)?.let { existing ->
-            if (existing.phase == JobPhase.FAILED.name) { retry(existing.id); return EnqueueResult.Queued(existing.id) }
+            if (existing.phase == JobPhase.FAILED.name) {
+                retry(existing.id)
+                installRequestId?.let { dao.setInstallRequest(existing.id, it) }
+                return EnqueueResult.Queued(existing.id)
+            }
             return EnqueueResult.AlreadyQueued
         }
         if (catalog.install(romId) != null) return EnqueueResult.AlreadyInstalled
@@ -68,16 +81,12 @@ class DownloadRepository(
         if (!volumes.hasAllFilesAccess()) return EnqueueResult.Failed("Loom needs all-files access to write to your ROMs folder")
         val volume = volumes.forPath(romsRoot) ?: return EnqueueResult.Failed("The storage holding $romsRoot isn't mounted")
 
-        val rom = try {
-            server.call { api -> rommCall { api.rom(romId) } }
+        val rom = known ?: try {
+            romFromRomm(romId)
         } catch (e: NotPairedException) {
-            return EnqueueResult.Failed("Pair Loom with your RomM server first")
-        } catch (e: RommException.Unreachable) {
-            return EnqueueResult.Failed("Can't reach the RomM server")
-        } catch (e: RommException.NotFound) {
-            return EnqueueResult.Failed("RomM no longer has this game. Sync the library to update it.")
+            return whyNot(e)
         } catch (e: RommException) {
-            return EnqueueResult.Failed(e.message ?: "Couldn't reach RomM")
+            return whyNot(e)
         }
         val plan = try {
             planFor(rom)
@@ -91,11 +100,26 @@ class DownloadRepository(
                 romId = romId, platformId = rom.platformId, title = title, phase = JobPhase.QUEUED.name,
                 planJson = EngineJson.encodeToString(DownloadPlan.serializer(), plan), fingerprint = plan.fingerprint,
                 volumeUuid = volume.id, stagingRoot = volume.stagingRoot.path, romsRoot = romsRoot,
-                bytesTotal = plan.totalBytes, queueOrder = now, updatedAt = now,
+                bytesTotal = plan.totalBytes, queueOrder = now, updatedAt = now, installRequestId = installRequestId,
             ),
         ) { jobId -> partsFor(jobId, plan).map { it.toEntity() } }
         kicker.kick()
         return EnqueueResult.Queued(id)
+    }
+
+    /** The game as RomM has it now. Throws [NotPairedException] or [RommException], which [whyNot] puts in words. */
+    suspend fun romFromRomm(romId: Int): RomDto = server.call { api -> rommCall { api.rom(romId) } }
+
+    /** What queueing says when RomM couldn't be asked about the game. */
+    fun whyNot(e: Exception): EnqueueResult.Failed = when (e) {
+        is NotPairedException -> EnqueueResult.Failed("Pair Loom with your RomM server first")
+        is RommException.Unreachable -> EnqueueResult.Failed("Can't reach the RomM server", transient = true)
+        is RommException.NotFound -> EnqueueResult.Failed("RomM no longer has this game. Sync the library to update it.")
+        // RomM busy (409: its state moved on meanwhile), rate-limiting, or failing on its side (5xx, a proxy's 52x) can pass.
+        else -> EnqueueResult.Failed(
+            e.message ?: "Couldn't reach RomM",
+            transient = e is RommException.Conflict || e is RommException.RateLimited || (e is RommException.Http && e.code >= 500),
+        )
     }
 
     suspend fun planFor(rom: RomDto): DownloadPlan =

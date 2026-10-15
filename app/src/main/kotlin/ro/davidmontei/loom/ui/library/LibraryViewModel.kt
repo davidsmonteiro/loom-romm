@@ -28,7 +28,7 @@ import ro.davidmontei.loom.data.catalog.CatalogSyncer
 import ro.davidmontei.loom.data.db.CatalogDao
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.data.download.DownloadRepository
-import ro.davidmontei.loom.data.download.EnqueueResult
+import ro.davidmontei.loom.data.download.QueueGame
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.install.OffloadResult
 import ro.davidmontei.loom.data.mapping.FolderChooser
@@ -88,6 +88,7 @@ class LibraryViewModel @Inject constructor(
     private val server: ActiveServer,
     settings: SettingsStore,
     private val folders: FolderChooser,
+    private val queueGame: QueueGame,
     private val saves: SaveRepository,
     reachability: ServerReachability,
 ) : ViewModel() {
@@ -160,27 +161,13 @@ class LibraryViewModel @Inject constructor(
      * X on a game. A platform's first download settles its system folder: from what is on the card
      * when that's clear, else by asking ([folderQuestion]). Either way the choice is remembered.
      */
-    fun download(game: GameItem) = viewModelScope.launch {
-        val platform = platforms.value.firstOrNull { it.platform.id == game.platformId }?.platform ?: return@launch enqueue(game)
-        when (val d = folders.decide(platform.slug, platform.fsSlug)) {
-            null -> enqueue(game) // the card can't be read: nothing to decide from, and queueing says why
-            is FolderDecision.Ask ->
-                _folderQuestion.value = FolderQuestion(game, platform.displayName, platform.slug, platform.fsSlug, d.options, d.suggested)
-            is FolderDecision.Use -> {
-                if (d.why != FolderDecision.Why.CHOSEN) folders.choose(platform.fsSlug, d.folder, detected = true)
-                // Found on the card rather than the default: say where, the one time it's decided.
-                val found = d.why == FolderDecision.Why.HAS_GAMES || d.why == FolderDecision.Why.ONLY_FOLDER
-                enqueue(game, note = if (found) "${platform.displayName} games go in ${d.folder}/" else null)
-            }
-        }
-    }
+    fun download(game: GameItem) = viewModelScope.launch { say(game, queueGame.queue(game.id)) }
 
     /** The answer to [folderQuestion]: remembered for the platform, then the game is queued. */
     fun chooseFolder(folder: String) = viewModelScope.launch {
         val q = _folderQuestion.value ?: return@launch
         _folderQuestion.value = null
-        folders.choose(q.fsSlug, folder)
-        enqueue(q.game)
+        queueGame.folderChosen(q.fsSlug, folder, thenQueue = q.game.id)?.let { say(q.game, it) }
     }
 
     fun showAllFolders() = viewModelScope.launch {
@@ -193,14 +180,15 @@ class LibraryViewModel @Inject constructor(
 
     fun dismissFolderQuestion() { _folderQuestion.value = null }
 
-    private suspend fun enqueue(game: GameItem, note: String? = null) {
-        val text = when (val r = downloads.enqueue(game.id)) {
-            is EnqueueResult.Queued -> "${game.title} added to the queue" + note?.let { ". $it" }.orEmpty()
-            EnqueueResult.AlreadyQueued -> "${game.title} is already in the queue"
-            EnqueueResult.AlreadyInstalled -> "${game.title} is already on your device"
-            is EnqueueResult.Failed -> r.message
+    /** How queueing [game] went, in a message, or the folder question to answer first. */
+    private suspend fun say(game: GameItem, outcome: QueueGame.Outcome) = when (outcome) {
+        is QueueGame.Outcome.AskFolder -> outcome.ask.let {
+            _folderQuestion.value = FolderQuestion(game, it.platformName, it.slug, it.fsSlug, it.options, it.suggested)
         }
-        _messages.send(text)
+        is QueueGame.Outcome.Queued -> _messages.send("${game.title} added to the queue" + outcome.folderNote?.let { ". $it" }.orEmpty())
+        QueueGame.Outcome.AlreadyQueued -> _messages.send("${game.title} is already in the queue")
+        QueueGame.Outcome.AlreadyInstalled -> _messages.send("${game.title} is already on your device")
+        is QueueGame.Outcome.Failed -> _messages.send(outcome.message)
     }
 
     fun offload(game: GameItem) = viewModelScope.launch {

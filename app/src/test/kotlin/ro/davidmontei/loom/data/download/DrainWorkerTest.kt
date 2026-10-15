@@ -23,11 +23,6 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -57,7 +52,6 @@ import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.PartState
 import ro.davidmontei.loom.storage.plan.NameSanitizer
 import java.io.File
-import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -106,28 +100,7 @@ class DrainWorkerTest {
     /** RomM no longer has the game, from the second time it's asked. */
     @Volatile private var goneLater = false
 
-    private fun sha1(bytes: ByteArray) = MessageDigest.getInstance("SHA-1").digest(bytes).joinToString("") { "%02x".format(it) }
-
-    private fun rom(fileId: Int, data: ByteArray) = buildJsonObject {
-        put("id", 10); put("platform_id", 1); put("platform_slug", "snes"); put("platform_fs_slug", "snes")
-        put("name", "Chrono Trigger"); put("name_sort_key", null as String?); put("fs_name", "Chrono Trigger.sfc")
-        put("fs_name_no_tags", "Chrono Trigger"); put("fs_name_no_ext", "Chrono Trigger"); put("fs_extension", "sfc")
-        put("full_path", "roms/snes/Chrono Trigger.sfc")
-        put("fs_size_bytes", data.size); put("path_cover_small", ""); put("path_cover_large", "")
-        put("url_cover", null as String?); put("regions", buildJsonArray { add(JsonPrimitive("USA")) })
-        put("languages", JsonArray(emptyList())); put("tags", JsonArray(emptyList())); put("revision", null as String?)
-        put("crc_hash", ""); put("md5_hash", null as String?); put("sha1_hash", null as String?)
-        put("has_simple_single_file", true); put("has_nested_single_file", false); put("has_multiple_files", false)
-        put("missing_from_fs", false); put("is_physical", false)
-        put("created_at", "2026-09-01T00:00:00+00:00"); put("updated_at", "2026-10-01T10:00:00+00:00")
-        put("files", JsonArray(listOf(buildJsonObject {
-            put("id", fileId); put("rom_id", 10); put("file_name", "Chrono Trigger.sfc"); put("file_path", "roms/snes")
-            put("full_path", "roms/snes/Chrono Trigger.sfc"); put("file_size_bytes", data.size); put("is_top_level", true)
-            put("crc_hash", ""); put("md5_hash", null as String?); put("sha1_hash", sha1(data))
-            put("archive_members", null as String?); put("category", null as String?)
-            put("updated_at", "2026-10-01T10:00:00+00:00")
-        })))
-    }
+    private fun rom(fileId: Int, data: ByteArray) = romJson(10, fileId, data)
 
     private val dispatcher = object : Dispatcher() {
         override fun dispatch(request: RecordedRequest): MockResponse {
@@ -300,7 +273,7 @@ class DrainWorkerTest {
     /** Found by review: X on a game while RomM couldn't be reached threw out of the library, which closed Loom. */
     @Test fun queueingWhileRommCantBeReachedSaysSo() = runBlocking<Unit> {
         romm.close()
-        assertThat(downloads.enqueue(10)).isEqualTo(EnqueueResult.Failed("Can't reach the RomM server"))
+        assertThat(downloads.enqueue(10)).isEqualTo(EnqueueResult.Failed("Can't reach the RomM server", transient = true))
         assertThat(db.downloadDao().jobForRom(10)).isNull()
     }
 
