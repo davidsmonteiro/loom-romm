@@ -183,6 +183,35 @@ class FitsTheScreenTest {
     }
 
     /**
+     * Found by review: on a window shorter than the Thor's, a phone in landscape, the QR code beside
+     * the whole step left the chips two lines, and where to enter the code and how long it lasts went
+     * below the hints, where the pad can't scroll. The QR code goes beside the code instead.
+     */
+    @Config(qualifiers = PHONE_LANDSCAPE)
+    @Test fun thePairStepWithItsCodeFitsAPhoneInLandscape() = thePairStepWithItsCodeFitsAShortScreen("onboarding-pair-phone-landscape")
+
+    @Config(qualifiers = SMALL_PHONE_LANDSCAPE)
+    @Test fun thePairStepWithItsCodeFitsASmallPhoneInLandscape() =
+        thePairStepWithItsCodeFitsAShortScreen("onboarding-pair-small-phone-landscape")
+
+    private fun thePairStepWithItsCodeFitsAShortScreen(screenshot: String) {
+        rule.setContent { LoomTestTheme { OnboardingContent(pairStepWithItsCode, NoopOnboardingActions) } }
+        rule.saveScreenshot(screenshot)
+        assertThat(overflow()).isEqualTo(0f)
+        onScreen("Scan a code", "Enter a pair code", "Paste a token", "ABCD-2345")
+        val root = rule.onRoot().fetchSemanticsNode().boundsInRoot
+        for (line in listOf("Or open", "Waiting for approval")) {
+            val bounds = rule.onNodeWithText(line, substring = true).fetchSemanticsNode().boundsInRoot
+            assertWithMessage(line).that(bounds.bottom).isAtMost(root.bottom)
+        }
+        val qr = rule.onNodeWithContentDescription("QR code", substring = true).fetchSemanticsNode().boundsInRoot
+        assertThat(qr.bottom).isAtMost(root.bottom)
+        assertThat(lineCount("Scan a code")).isEqualTo(1)
+        assertThat(rule.onNodeWithText("Paste a token").fetchSemanticsNode().boundsInRoot.top)
+            .isEqualTo(rule.onNodeWithText("Scan a code").fetchSemanticsNode().boundsInRoot.top) // the chips on one line
+    }
+
+    /**
      * Found by review: when waiting for approval failed, the error went under the code, below the
      * bottom screen's hints, where the pad couldn't scroll. The code goes, and the error shows under
      * Get a new code.

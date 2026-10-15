@@ -42,6 +42,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -290,13 +291,17 @@ private fun Pair(state: OnboardingState, actions: OnboardingActions, first: Focu
     // The QR code sits beside the whole step rather than under it: nothing below the chips takes focus, so on a
     // gamepad anything pushed off the bottom of the screen could never be scrolled to. A narrow screen has no
     // room beside the step: a tall one (a phone) has room under it, and a short one (the Thor's bottom screen)
-    // has a smaller code beside the words about it. With a second screen showing, it is drawn there instead, larger.
+    // has a smaller code beside the words about it. So does a window shorter than the Thor's (a phone in
+    // landscape), where the step needs the width to keep its lines from wrapping down past the bottom.
+    // With a second screen showing, it is drawn there instead, larger.
     val layout = rememberLoomLayout()
     val qrHere = !secondScreenShowing()
+    val shorterThanTheThor = LocalWindowInfo.current.containerDpSize.height < SHORTER_THAN_THE_THOR
+    val qrBesideStep = qrHere && !layout.compact && !shorterThanTheThor
     val qrUnder = qrHere && layout.compact && layout.tallEnough
-    val qrBesideCode = qrHere && layout.compact && !layout.tallEnough
+    val qrBesideCode = qrHere && !qrBesideStep && !qrUnder
     Row(horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.m)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (shorterThanTheThor) Space.s else Space.m)) {
             Title("Pair with RomM")
             // Choosing a way to pair puts focus on its field, so the next A starts typing (not on the first chip,
             // where it would switch back). On a phone they take two lines.
@@ -312,8 +317,10 @@ private fun Pair(state: OnboardingState, actions: OnboardingActions, first: Focu
                     LoomButton("Get a new code", onClick = actions::startDeviceAuth, primary = true)
                 } else if (qrBesideCode) {
                     Row(horizontalArrangement = Arrangement.spacedBy(Space.l)) {
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.s)) { SessionCode(session, state.sessionStartedAt) }
-                        QrCode(session.verificationUrlComplete.toString(), size = SHORT_SCREEN_QR)
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                            SessionCode(session, state.sessionStartedAt, small = shorterThanTheThor)
+                        }
+                        QrCode(session.verificationUrlComplete.toString(), size = if (shorterThanTheThor) SHORT_WINDOW_QR else SHORT_SCREEN_QR)
                     }
                 } else {
                     SessionCode(session, state.sessionStartedAt, qrHere)
@@ -341,22 +348,29 @@ private fun Pair(state: OnboardingState, actions: OnboardingActions, first: Focu
                 }
             }
         }
-        if (session != null && qrHere && !layout.compact) QrCode(session.verificationUrlComplete.toString(), size = 232.dp)
+        if (session != null && qrBesideStep) QrCode(session.verificationUrlComplete.toString(), size = 232.dp)
     }
 }
 
 /** The QR code beside the code on a short, narrow screen: the Thor's bottom one. */
 private val SHORT_SCREEN_QR = 152.dp
 
+/** Less than the 468 dp of either of the Thor's screens, which the step is laid out for: a phone in landscape. */
+private val SHORTER_THAN_THE_THOR = 460.dp
+
+/** The QR code beside the code on a window shorter than the Thor's: as tall as the code's four lines, with its margin. */
+private val SHORT_WINDOW_QR = 104.dp
+
 /**
  * The code to approve Loom with, where to enter it without the QR code, and how long it lasts.
- * [qrHere]: false when the QR code is on the second screen.
+ * [qrHere]: false when the QR code is on the second screen. [small]: its first line a size smaller,
+ * so it keeps to one line on a short window.
  */
 @Composable
-private fun SessionCode(session: DeviceAuthSession, startedAt: Long, qrHere: Boolean = true) {
+private fun SessionCode(session: DeviceAuthSession, startedAt: Long, qrHere: Boolean = true, small: Boolean = false) {
     Text(if (qrHere) "Scan with your phone, sign in to RomM if asked, and approve Loom."
         else "Scan the QR code on the other screen with your phone, sign in to RomM if asked, and approve Loom.",
-        style = MaterialTheme.typography.bodyLarge)
+        style = if (small) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge)
     Text(session.displayCode, style = pairingCodeStyle(), color = LoomColors.Accent)
     Text("Or open ${session.verificationUrl} and enter the code.", style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
     Countdown(startedAt, session.expiresInSeconds)

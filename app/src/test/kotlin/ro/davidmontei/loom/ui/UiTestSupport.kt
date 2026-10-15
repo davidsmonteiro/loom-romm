@@ -48,6 +48,9 @@ const val PHONE_PORTRAIT = "w411dp-h891dp-port-420dpi"
 /** The same phone in landscape. */
 const val PHONE_LANDSCAPE = "w891dp-h411dp-land-420dpi"
 
+/** A phone 360 dp wide, the commonest width, in landscape: 2340×1080 px at 480 dpi, so 780×360 dp. */
+const val SMALL_PHONE_LANDSCAPE = "w780dp-h360dp-land-xxhdpi"
+
 /** A tablet in landscape: 2560×1600 px at xhdpi, the size of Compose's reference tablet (`Devices.TABLET`, 1280×800 dp). */
 const val TABLET_LANDSCAPE = "w1280dp-h800dp-land-xhdpi"
 
