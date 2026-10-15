@@ -26,6 +26,7 @@ import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.CoverNetwork
+import ro.davidmontei.loom.net.ServerInfo
 import ro.davidmontei.loom.net.onUnmeteredNetwork
 import kotlinx.coroutines.CoroutineScope
 import okhttp3.OkHttpClient
@@ -47,7 +48,8 @@ object DataModule {
     fun workManager(@ApplicationContext context: Context): WorkManager = WorkManager.getInstance(context)
 
     @Provides @Singleton
-    fun catalogSyncer(dao: CatalogDao, settings: SettingsStore) = CatalogSyncer(dao, settings)
+    fun catalogSyncer(dao: CatalogDao, settings: SettingsStore, serverInfo: ServerInfo) =
+        CatalogSyncer(dao, settings, onHeartbeat = serverInfo::record)
 
     @Provides @Singleton
     fun installManager(catalog: CatalogDao, settings: SettingsStore, mapping: MappingRepository, volumes: StorageVolumes) =

@@ -9,6 +9,7 @@ import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.romm.RommJson
 import ro.davidmontei.loom.romm.api.RommApi
 import ro.davidmontei.loom.romm.dto.ArchiveMemberDto
+import ro.davidmontei.loom.romm.dto.HeartbeatDto
 import ro.davidmontei.loom.romm.dto.PlatformDto
 import ro.davidmontei.loom.romm.dto.RomDto
 import ro.davidmontei.loom.romm.pageRoms
@@ -36,10 +37,13 @@ class CatalogSyncer(
     private val dao: CatalogDao,
     private val settings: SettingsStore,
     private val nowMs: () -> Long = System::currentTimeMillis,
+    /** Records what the sync's heartbeat says of the server (see [ro.davidmontei.loom.net.ServerInfo]). */
+    private val onHeartbeat: suspend (HeartbeatDto) -> Unit = { settings.setServerVersion(it.system.version) },
 ) {
     suspend fun sync(api: RommApi, full: Boolean, onProgress: suspend (SyncProgress) -> Unit = {}): SyncResult {
-        val version = rommCall { api.heartbeat() }.system.version
-        settings.setServerVersion(version)
+        val heartbeat = rommCall { api.heartbeat() }
+        onHeartbeat(heartbeat)
+        val version = heartbeat.system.version
 
         val platforms = rommCall { api.platforms() }
         dao.upsertPlatforms(platforms.map { it.toEntity() })

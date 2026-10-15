@@ -12,8 +12,8 @@ import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.net.AuthInterceptor
 import ro.davidmontei.loom.net.ReachabilityInterceptor
 import ro.davidmontei.loom.net.ReachabilityWatch
+import ro.davidmontei.loom.net.ServerInfo
 import ro.davidmontei.loom.net.ServerReachability
-import ro.davidmontei.loom.romm.rommCall
 import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
@@ -54,10 +54,10 @@ object NetworkModule {
     @Provides @Singleton
     fun serverReachability() = ServerReachability()
 
-    /** Asks RomM again when there's reason to (see [ReachabilityWatch]), with a heartbeat. */
+    /** Asks RomM again when there's reason to (see [ReachabilityWatch]), with a heartbeat, whose news is kept. */
     @Provides @Singleton
-    fun reachabilityWatch(reachability: ServerReachability, server: ActiveServer) =
-        ReachabilityWatch(reachability) { server.call { api -> rommCall { api.heartbeat() } } }
+    fun reachabilityWatch(reachability: ServerReachability, server: ActiveServer, serverInfo: ServerInfo) =
+        ReachabilityWatch(reachability) { server.call { api -> serverInfo.heartbeat(api) } }
 
     @Provides @Singleton @ApiHttp
     fun apiClient(@BareHttp bare: OkHttpClient, server: dagger.Lazy<ActiveServer>, reachability: ServerReachability): OkHttpClient =

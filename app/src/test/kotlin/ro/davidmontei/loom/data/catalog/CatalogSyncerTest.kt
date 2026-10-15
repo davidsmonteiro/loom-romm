@@ -31,7 +31,9 @@ import ro.davidmontei.loom.data.db.InstallKind
 import ro.davidmontei.loom.data.db.InstallSource
 import ro.davidmontei.loom.data.db.LoomDatabase
 import ro.davidmontei.loom.data.db.VerifiedBy
+import ro.davidmontei.loom.data.sent.SendToDeviceStore
 import ro.davidmontei.loom.data.settings.SettingsStore
+import ro.davidmontei.loom.net.ServerInfo
 import ro.davidmontei.loom.romm.RommJson
 import ro.davidmontei.loom.romm.RommServiceFactory
 import ro.davidmontei.loom.romm.dto.PlatformDto
@@ -192,6 +194,21 @@ class CatalogSyncerTest {
         // From then on, incremental again.
         server.enqueue(heartbeat()); server.enqueue(json("[]")); server.enqueue(json(page(emptyList(), total = 0))); server.enqueue(json("[10]"))
         assertThat(syncer.sync(api, full = false).full).isFalse()
+    }
+
+    /** Through the app's graph a sync's heartbeat goes to [ServerInfo], so it also learns whether RomM can send games here. */
+    @Test fun aSyncRecordsWhatTheHeartbeatSays() = runBlocking<Unit> {
+        val sendToDevice = SendToDeviceStore(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "d.preferences_pb") })
+        val syncer = CatalogSyncer(db.catalogDao(), settings, nowMs = { 1_000L }, onHeartbeat = ServerInfo(settings, sendToDevice)::record)
+        server.enqueue(json("""{"SYSTEM":{"VERSION":"5.4.0","SHOW_SETUP_WIZARD":false},
+            "DEVICE_INSTALL":{"ENABLED":false,"EXCLUDED_PLATFORM_SLUGS":["win"]}}"""))
+        server.enqueue(json("[]"))
+        server.enqueue(json(page(emptyList(), total = 0)))
+        server.enqueue(json("[]"))
+
+        assertThat(syncer.sync(api, full = true).serverVersion).isEqualTo("5.4.0")
+        assertThat(settings.snapshot().serverVersion).isEqualTo("5.4.0")
+        assertThat(sendToDevice.snapshot().installsEnabled).isFalse()
     }
 
     @Test fun watermarkMathHandlesSpacesAndOffsets() {

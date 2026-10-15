@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import mockwebserver3.MockResponse
@@ -23,10 +24,12 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.TokenCipher
+import ro.davidmontei.loom.data.sent.SendToDeviceStore
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.data.settings.WriteThroughDataStore
 import ro.davidmontei.loom.net.ActiveServer
+import ro.davidmontei.loom.net.ServerInfo
 import ro.davidmontei.loom.net.ServerReachability
 import java.io.File
 
@@ -46,6 +49,38 @@ class AppModuleTest {
     @Test fun theSettingsFileIsKeptInMemory() {
         val prefs = AppModule.settingsPrefs(ApplicationProvider.getApplicationContext(), scope)
         assertThat(prefs).isInstanceOf(WriteThroughDataStore::class.java)
+    }
+
+    /**
+     * The reachability check is a heartbeat Loom makes each time it comes to the front: what RomM says
+     * in it is kept, so an upgraded server shows its version, and whether it can send games here, at once.
+     */
+    @Test fun theReachabilityHeartbeatRecordsWhatRommSays() = runBlocking<Unit> {
+        MockWebServer().apply { start() }.use { romm ->
+            fun prefs(name: String) = PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "$name.preferences_pb") }
+            val settings = SettingsStore(prefs("s"))
+            settings.setServer(ServerConfig(romm.url("/")), "5.3.1")
+            val credentials = CredentialStore(prefs("c"), object : TokenCipher {
+                override fun encrypt(plaintext: String) = plaintext
+                override fun decrypt(blob: String) = blob
+            }, scope)
+            val sendToDevice = SendToDeviceStore(prefs("d"))
+            romm.enqueue(MockResponse.Builder().code(200).setHeader("Content-Type", "application/json")
+                .body("""{"SYSTEM":{"VERSION":"5.4.0","SHOW_SETUP_WIZARD":false},"DEVICE_INSTALL":{"ENABLED":true,"EXCLUDED_PLATFORM_SLUGS":[]}}""")
+                .build())
+            val reachability = ServerReachability()
+            val server = ActiveServer(settings, credentials, NetworkModule.bareClient(), scope)
+            val watch = NetworkModule.reachabilityWatch(reachability, server, ServerInfo(settings, sendToDevice))
+            val watching = scope.launch { watch.run() }
+            try {
+                watch.inFront(true)
+                withTimeout(5_000) { while (sendToDevice.snapshot().installsEnabled != true) delay(10) }
+                assertThat(settings.snapshot().serverVersion).isEqualTo("5.4.0")
+                assertThat(romm.takeRequest().url.encodedPath).isEqualTo("/api/heartbeat")
+            } finally {
+                watching.cancel()
+            }
+        }
     }
 
     /** Every request to RomM, the API's (syncs, covers, saves) and the downloads', tells the library whether it can be reached. */

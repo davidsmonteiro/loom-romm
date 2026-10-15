@@ -19,8 +19,8 @@ import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.data.settings.Settings
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
+import ro.davidmontei.loom.net.ServerInfo
 import ro.davidmontei.loom.romm.RommException
-import ro.davidmontei.loom.romm.rommCall
 import java.util.concurrent.TimeUnit
 
 /**
@@ -35,6 +35,7 @@ class CatalogRefreshWorker @AssistedInject constructor(
     private val credentials: CredentialStore,
     private val server: ActiveServer,
     private val sync: CatalogSyncScheduler,
+    private val serverInfo: ServerInfo,
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
@@ -53,7 +54,7 @@ class CatalogRefreshWorker @AssistedInject constructor(
 
     /** False only when RomM can't be reached: any other answer (a rejected token, say) is the sync's to report. */
     private suspend fun rommAnswers(): Boolean = try {
-        server.call { api -> rommCall { api.heartbeat() } }
+        server.call { api -> serverInfo.heartbeat(api) }
         true
     } catch (e: RommException.Unreachable) {
         false

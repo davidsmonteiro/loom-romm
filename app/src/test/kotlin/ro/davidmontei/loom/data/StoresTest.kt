@@ -34,6 +34,8 @@ import org.junit.rules.TemporaryFolder
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.TokenCipher
 import ro.davidmontei.loom.data.mapping.MappingRepository
+import ro.davidmontei.loom.data.sent.SendToDeviceSettings
+import ro.davidmontei.loom.data.sent.SendToDeviceStore
 import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.SettingsStore
@@ -275,5 +277,20 @@ class StoresTest {
         assertThat(store.snapshot().autoUploadSaves).isTrue()
         store.setAutoUploadSaves(false)
         assertThat(store.snapshot().autoUploadSaves).isFalse()
+    }
+
+    /** Games sent from RomM come unless switched off; nothing is known of the server or the pairing until it says. */
+    @Test fun receivingGamesFromRommIsOnUntilTurnedOff() = runBlocking<Unit> {
+        val store = SendToDeviceStore(prefs("send_to_device"))
+        val fresh = store.snapshot()
+        assertThat(fresh.receive).isTrue()
+        assertThat(fresh.installsEnabled).isNull()
+        assertThat(fresh.needsPairing).isFalse()
+        store.setReceive(false)
+        store.setInstallsEnabled(false)
+        store.setNeedsPairing(true)
+        assertThat(store.snapshot()).isEqualTo(SendToDeviceSettings(receive = false, installsEnabled = false, needsPairing = true))
+        store.setInstallsEnabled(null)
+        assertThat(store.snapshot().installsEnabled).isNull()
     }
 }

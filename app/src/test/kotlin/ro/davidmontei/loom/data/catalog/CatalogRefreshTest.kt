@@ -39,11 +39,13 @@ import org.junit.runner.RunWith
 import ro.davidmontei.loom.data.auth.CredentialStore
 import ro.davidmontei.loom.data.auth.TokenCipher
 import ro.davidmontei.loom.data.saves.SaveSyncScheduler
+import ro.davidmontei.loom.data.sent.SendToDeviceStore
 import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.headless.Commands
 import ro.davidmontei.loom.net.ActiveServer
+import ro.davidmontei.loom.net.ServerInfo
 import ro.davidmontei.loom.romm.pairing.PairedCredentials
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -61,6 +63,7 @@ class CatalogRefreshTest {
     private lateinit var server: ActiveServer
     private lateinit var sync: CatalogSyncScheduler
     private lateinit var refresh: CatalogRefreshScheduler
+    private lateinit var sendToDevice: SendToDeviceStore
 
     private val hour = TimeUnit.HOURS.toMillis(1)
     private val romm = MockWebServer()
@@ -81,6 +84,7 @@ class CatalogRefreshTest {
         server = ActiveServer(settings, credentials, OkHttpClient(), scope)
         sync = CatalogSyncScheduler(workManager)
         refresh = CatalogRefreshScheduler(workManager)
+        sendToDevice = SendToDeviceStore(prefs("send_to_device"))
     }
 
     @After fun tearDown() { romm.close(); scope.cancel() }
@@ -208,7 +212,7 @@ class CatalogRefreshTest {
     private fun refreshWorker(runAttempts: Int = 0) = TestListenableWorkerBuilder<CatalogRefreshWorker>(context)
         .setWorkerFactory(object : WorkerFactory() {
             override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) =
-                CatalogRefreshWorker(appContext, workerParameters, settings, credentials, server, sync)
+                CatalogRefreshWorker(appContext, workerParameters, settings, credentials, server, sync, ServerInfo(settings, sendToDevice))
         })
         .setRunAttemptCount(runAttempts)
         .build()
@@ -227,6 +231,18 @@ class CatalogRefreshTest {
         val queued = syncWork().single()
         assertThat(queued.state).isEqualTo(WorkInfo.State.ENQUEUED)
         assertThat(queued.tags).contains(CatalogSyncWorker.UNIQUE_NAME)
+    }
+
+    /** The refresh's heartbeat is news too: a server upgraded since the last sync shows its new version at once. */
+    @Test fun theRefreshsHeartbeatRecordsTheServerVersion() = runBlocking<Unit> {
+        romm.enqueue(MockResponse.Builder().code(200).setHeader("Content-Type", "application/json")
+            .body("""{"SYSTEM":{"VERSION":"5.4.0","SHOW_SETUP_WIZARD":false},"DEVICE_INSTALL":{"ENABLED":true,"EXCLUDED_PLATFORM_SLUGS":[]}}""")
+            .build())
+        finishSetup(romm.url("/")) // recorded 5.3.1 at pairing
+        pair()
+        assertThat(refreshWorker().doWork()).isEqualTo(ListenableWorker.Result.success())
+        assertThat(settings.snapshot().serverVersion).isEqualTo("5.4.0")
+        assertThat(sendToDevice.snapshot().installsEnabled).isTrue()
     }
 
     @Test fun aRefreshDoesNothingWhenNotPaired() = runBlocking<Unit> {
