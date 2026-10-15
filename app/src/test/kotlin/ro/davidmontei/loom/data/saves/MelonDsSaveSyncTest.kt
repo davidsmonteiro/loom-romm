@@ -197,6 +197,20 @@ class MelonDsSaveSyncTest : SaveSyncTestBase() {
             .isEqualTo("New Super Mario Bros has the same melonDS save file (MARIO.sav), and Loom syncs a save for one game only")
     }
 
+    /** DSiWare keeps its save in melonDS's NAND, never in a .sav: one named as a cartridge is doesn't stop it. */
+    @Test fun aDsiWareTitleNamedAsACartridgeDoesntStopIt() = runBlocking<Unit> {
+        installDs(marioDs, file = "Foo (USA).nds")
+        installDs(zeldaDs, file = "Foo (USA).nds", platform = "nintendo-dsi", dsiWare = true)
+        File(melonDs, "Foo (USA).sav").apply { writeBytes(save1); setLastModified(clock.minusSeconds(600).toEpochMilli()) }
+
+        val report = engine().sync(SaveSyncRequest.PUSH)
+
+        assertThat(report.uploaded).containsExactly(marioDs.romId)
+        assertThat(romm.head(marioDs.romId)!!.bytes).isEqualTo(save1)
+        assertThat(report.unsupported.keys).containsExactly(zeldaDs.romId)
+        assertThat(report.unsupported.getValue(zeldaDs.romId)).isEqualTo(MelonDsSaves.DSIWARE)
+    }
+
     @Test fun dsiWareSaysWhyItIsntSynced() = runBlocking<Unit> {
         installDs(marioDs, platform = "nintendo-dsi", dsiWare = true)
 

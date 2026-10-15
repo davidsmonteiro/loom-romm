@@ -13,6 +13,7 @@ import ro.davidmontei.loom.storage.saves.MelonDsSaveLocation
 import ro.davidmontei.loom.storage.saves.MelonDsSaveLocator
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
 
 /**
  * DS games' saves in melonDS: one raw `.sav` per game in its save folder, named after the ROM file
@@ -60,16 +61,18 @@ class MelonDsSaves(private val settings: SettingsStore, private val catalog: Cat
     /**
      * The title of another installed DS game whose save melonDS would keep as [name] too, compared
      * as the SD card compares names. Read from the installs alone, so a clash stops both games
-     * before either syncs: only a folder install is listed, for its one ROM.
+     * before either syncs: only a folder install is listed, for its one ROM, and only a game whose
+     * name clashes has its header read. DSiWare has no `.sav`, so it clashes with none.
      *
-     * @throws IOException when another game's folder can't be listed.
+     * @throws IOException when another game's folder or ROM can't be read.
      */
     private suspend fun otherGameWithSave(romId: Int, name: String): String? {
         val key = NameSanitizer.key(name)
         val other = catalog.installsOf(SaveUnitResolver.MELONDS_PLATFORMS).filter { it.romId != romId }.firstOrNull { install ->
             val installed = File(install.romsRoot, install.relPath)
-            val rom = if (install.kind == InstallKind.FILE) installed.name else MelonDsSaveLocator.cartOf(installed.toPath())?.fileName?.toString()
-            rom != null && NameSanitizer.key(MelonDsSaveLocator.saveNameFor(rom)) == key
+            val cart = if (install.kind == InstallKind.FILE) installed.toPath() else MelonDsSaveLocator.cartOf(installed.toPath())
+            cart != null && NameSanitizer.key(MelonDsSaveLocator.saveNameFor(cart.fileName.toString())) == key &&
+                !(Files.isRegularFile(cart) && MelonDsSaveLocator.isDsiWare(cart))
         } ?: return null
         return catalog.rom(other.romId)?.title ?: "Another game"
     }

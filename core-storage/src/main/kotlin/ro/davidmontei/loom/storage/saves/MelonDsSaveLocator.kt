@@ -63,14 +63,22 @@ object MelonDsSaveLocator {
     }
 
     /**
+     * Whether [cart], a file melonDS opens, is DSiWare, whose save melonDS keeps in its DSi NAND
+     * and not in a `.sav`. Never an archive: its header is its own, not the ROM's; melonDS's
+     * listing reads inside it, Loom doesn't.
+     *
+     * @throws java.io.IOException when the file can't be read: try again later.
+     */
+    fun isDsiWare(cart: Path): Boolean = cart.extension.lowercase() !in ARCHIVES && NdsHeader.read(cart)?.isDsiWare == true
+
+    /**
      * The save of the game installed at [installed] in [saveDir], melonDS's save folder.
      *
      * @throws java.io.IOException when the install or the folder can't be read: try again later.
      */
     fun locate(saveDir: Path, installed: Path): MelonDsSaveLocation {
         val cart = cartOf(installed) ?: return MelonDsSaveLocation.NoCartridge
-        // An archive's header is its own, not the ROM's: melonDS's listing reads inside it, Loom doesn't.
-        if (cart.extension.lowercase() !in ARCHIVES && NdsHeader.read(cart)?.isDsiWare == true) return MelonDsSaveLocation.DsiWare
+        if (isDsiWare(cart)) return MelonDsSaveLocation.DsiWare
         if (!saveDir.isDirectory(LinkOption.NOFOLLOW_LINKS)) return MelonDsSaveLocation.NoFolder
         return MelonDsSaveLocation.Found(SaveUnit.SingleFile(saveDir.resolve(saveNameFor(cart.name))))
     }
