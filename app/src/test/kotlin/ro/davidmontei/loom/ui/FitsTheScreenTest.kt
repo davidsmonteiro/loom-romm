@@ -24,6 +24,7 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
+import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.storage.saves.EdenProfile
 import ro.davidmontei.loom.data.db.SaveSyncState
@@ -417,9 +418,11 @@ class FitsTheScreenTest {
         val game = GameItem(40, title, 16_300_000_000, null, listOf("World"), InstallState.INSTALLED, null, null, null, adopted = true,
             removedOnServer = false, installPath = "switch/$title.xci", save = GameSave(true, SaveSyncState.NEEDS_FOLDER, EdenSaves.NO_KEYS, "eden"))
         val options = (1..12).map { SaveFolderOption("0100%012X".format(it * 0x1000L), 4, 1_200_000, System.currentTimeMillis() - it * 3_600_000L) }
-        val state = LibraryScreenTest().state.copy(games = listOf(game), saveFolderQuestion = SaveFolderQuestion(40, title, "eden", options, current = null))
+        val state = LibraryScreenTest().state.copy(games = listOf(game),
+            saveFolderQuestion = SaveFolderQuestion(40, title, "eden", options, current = options.first().id))
         rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
         assertThat(overflow("Which Eden save folder is $title's?")).isEqualTo(0f)
+        assertThat(ellipsized("4 files · ${formatBytes(1_200_000)} · chosen now")).isFalse()
         rule.saveScreenshot("library-save-folder-question")
     }
 
@@ -430,11 +433,14 @@ class FitsTheScreenTest {
             removedOnServer = false, installPath = "psp/$title.chd",
             save = GameSave(true, SaveSyncState.NEEDS_FOLDER, "RomM didn't read this game's disc ID, and Loom can't read a CHD on the Thor", "ppsspp"))
         val options = (1..12).map { SaveFolderOption("ULUS%05d".format(10_000 + it), 9, 12_400_000, System.currentTimeMillis() - it * 3_600_000L, folderCount = 3) }
-        val question = SaveFolderQuestion(40, title, "ppsspp", options, current = null, kind = SaveFolderQuestion.Kind.PREFIX)
+        // Asked again from its details: the folders chosen now say so.
+        val question = SaveFolderQuestion(40, title, "ppsspp", options, current = options.first().id, kind = SaveFolderQuestion.Kind.PREFIX)
         val state = LibraryScreenTest().state.copy(games = listOf(game), saveFolderQuestion = question)
         rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
         assertThat(overflow("Which PPSSPP save folders are $title's?")).isEqualTo(0f)
         assertThat(cutShort("Its details can change this later.")).isFalse()
+        // What each holds and how much, beside when it changed: a line each.
+        assertThat(ellipsized("3 folders · ${formatBytes(12_400_000)} · chosen now")).isFalse()
         rule.saveScreenshot("library-psp-save-folder-question")
     }
 

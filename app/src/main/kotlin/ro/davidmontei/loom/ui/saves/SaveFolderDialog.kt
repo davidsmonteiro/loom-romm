@@ -168,9 +168,10 @@ fun SaveFolderDialog(q: SaveFolderQuestion, onChoose: (String) -> Unit, onDismis
                         ).joinToString(" · ")
                         LoomRow(
                             title = option.name,
-                            // Only two folders side by side: room for when each changed and what it holds, a line each.
-                            subtitle = if (synced) listOfNotNull(changed, holds).joinToString("\n") else listOfNotNull(changed, holds).joinToString(" · "),
-                            subtitleLines = if (synced) 2 else 1,
+                            // When each changed and what it holds, a line each: in a half-width cell, one line cut off the
+                            // size and which is chosen now. The list scrolls in its own pane.
+                            subtitle = listOfNotNull(changed, holds).joinToString("\n"),
+                            subtitleLines = 2,
                             dense = true,
                             selected = option.id == q.current,
                             onClick = { onChoose(option.id) },
