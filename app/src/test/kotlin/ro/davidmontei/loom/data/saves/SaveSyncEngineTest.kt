@@ -446,6 +446,32 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
     }
 
+    /**
+     * A restore that fails the same way at every attempt (here the card refusing the new files)
+     * backs the Thor's save up once, not before each attempt: ten attempts would otherwise push
+     * out every older backup, one of them maybe the only copy of a save.
+     */
+    @Test fun aRestoreFailingEveryTimeKeepsTheOlderBackups() = runBlocking<Unit> {
+        install(pokemonX)
+        writeSave(pokemonX, bytes(1))
+        engine().sync(SaveSyncRequest.PUSH)
+        val older = File(volume, ".loom/save-backups/7/20261001-000000-000 Pokemon X.zip").apply {
+            parentFile!!.mkdirs(); writeBytes(archiveOf(bytes(9)))
+        }
+        romm.addSave(7, archiveOf(bytes(2)), device = "dev-argosy")
+        mover = SaveRestorer.FileMover { from, to ->
+            if (from.any { it.toString() == "new" }) throw IOException("card removed")
+            SaveRestorer.FileMover.Rename.move(from, to)
+        }
+
+        repeat(12) { assertThat(engine().sync(SaveSyncRequest.PULL).failed).containsKey(7) }
+        repeat(3) { assertThat(engine().restoreFromServer(7)).isInstanceOf(ResolveResult.Failed::class.java) }
+
+        assertThat(older.exists()).isTrue()
+        assertThat(backups(pokemonX)).hasSize(2)
+        assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+    }
+
     /** Other slots (another app's "channel", manual saves) are none of Loom's business. */
     @Test fun savesInOtherSlotsAreLeftAlone() = runBlocking<Unit> {
         install(pokemonX)

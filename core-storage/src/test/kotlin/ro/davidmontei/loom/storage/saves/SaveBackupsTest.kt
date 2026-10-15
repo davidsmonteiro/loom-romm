@@ -23,6 +23,12 @@ class SaveBackupsTest {
     private var clock = Instant.parse("2026-10-13T22:15:07.123Z")
     private fun backups(keep: Int = 10) = SaveBackups(path(".loom/save-backups"), keep) { clock }
     private fun unit() = listOf(SaveRoot("data", folderOf(path("data"), "00000001/main" to AZAHAR_MAIN, "00000001.metadata" to AZAHAR_METADATA)))
+
+    /** The unit holding a save of its own, [n], and that save's hash. */
+    private fun unit(n: Int): Pair<List<SaveRoot>, String> {
+        val roots = listOf(SaveRoot("data", folderOf(path("data"), "00000001/main" to byteArrayOf(n.toByte()), "00000001.metadata" to AZAHAR_METADATA)))
+        return roots to SaveHasher.hashUnit(roots)!!
+    }
     private fun rawUnit() = SaveUnit.SingleFile(folderOf(path("melonDS"), "Mario Kart DS.sav" to RAW_SAVE).resolve("Mario Kart DS.sav"))
 
     @Test fun aBackupIsTheUnitsArchiveNamedByTime() {
@@ -82,7 +88,8 @@ class SaveBackupsTest {
         val other = path(".loom/save-backups/42/notes.txt").also { Files.createDirectories(it.parent); Files.write(it, byteArrayOf(1)) }
         val made = (1..5).map {
             clock = clock.plus(Duration.ofMinutes(1))
-            backups(keep = 3).backUp("42", "Game", unit(), AZAHAR_UNIT_HASH).file
+            val (unit, hash) = unit(it)
+            backups(keep = 3).backUp("42", "Game", unit, hash).file
         }
         backups(keep = 3).backUp("7", "Other", unit(), AZAHAR_UNIT_HASH)
         assertThat(backups().list("42")).containsExactly(made[4], made[3], made[2]).inOrder()
@@ -98,12 +105,13 @@ class SaveBackupsTest {
         clock = Instant.parse("2027-10-10T00:00:00Z")
         repeat(10) {
             clock = clock.plus(Duration.ofDays(1))
-            backups().backUp("42", "Game", unit(), AZAHAR_UNIT_HASH)
+            val (unit, hash) = unit(it)
+            backups().backUp("42", "Game", unit, hash)
         }
         clock = Instant.parse("2026-10-14T12:00:00Z")
 
-        val first = backups().backUp("42", "Game", unit(), AZAHAR_UNIT_HASH).file
-        val second = backups().backUp("42", "Game", unit(), AZAHAR_UNIT_HASH).file
+        val first = unit(20).let { (unit, hash) -> backups().backUp("42", "Game", unit, hash).file }
+        val second = unit(21).let { (unit, hash) -> backups().backUp("42", "Game", unit, hash).file }
 
         assertThat(Files.exists(first)).isTrue()
         assertThat(Files.exists(second)).isTrue()
@@ -120,9 +128,40 @@ class SaveBackupsTest {
     }
 
     @Test fun twoBackupsInTheSameMillisecondBothSurvive() {
-        val first = backups().backUp("42", "Game", unit(), AZAHAR_UNIT_HASH).file
-        val second = backups().backUp("42", "Game", unit(), AZAHAR_UNIT_HASH).file
+        val first = unit(1).let { (unit, hash) -> backups().backUp("42", "Game", unit, hash).file }
+        val second = unit(2).let { (unit, hash) -> backups().backUp("42", "Game", unit, hash).file }
         assertThat(second).isNotEqualTo(first)
         assertThat(backups().list("42")).hasSize(2)
+    }
+
+    /**
+     * A restore that fails the same way every time backs the same save up before each attempt.
+     * Those copies would push out the older backups, one of them maybe the only copy of a save the
+     * owner replaced: a save the newest backup already holds isn't backed up again.
+     */
+    @Test fun theSameSaveAsTheNewestBackupIsntBackedUpAgain() {
+        val older = (1..3).map {
+            clock = clock.plus(Duration.ofMinutes(1))
+            val (unit, hash) = unit(it)
+            backups(keep = 4).backUp("42", "Game", unit, hash).file
+        }
+        val (unit, hash) = unit(9)
+        val made = (1..12).map {
+            clock = clock.plus(Duration.ofMinutes(1))
+            backups(keep = 4).backUp("42", "Game", unit, hash)
+        }
+
+        assertThat(made.map { it.file }.toSet()).hasSize(1)
+        assertThat(made.first().hash).isEqualTo(hash)
+        assertThat(SaveHasher.hashFile(made.first().file)).isEqualTo(hash)
+        assertThat(backups().list("42")).containsExactly(made.first().file, older[2], older[1], older[0]).inOrder()
+
+        // Raw saves too, and a save that changed since is still refused rather than taken as backed up.
+        val raw = backups().backUp("7", "Mario Kart DS", rawUnit(), RAW_SAVE_MD5).file
+        clock = clock.plus(Duration.ofMinutes(1))
+        assertThat(backups().backUp("7", "Mario Kart DS", rawUnit(), RAW_SAVE_MD5).file).isEqualTo(raw)
+        Files.write(rawUnit().file, byteArrayOf(1))
+        assertThrows(SaveChangedException::class.java) { backups().backUp("7", "Mario Kart DS", SaveUnit.SingleFile(path("melonDS/Mario Kart DS.sav")), RAW_SAVE_MD5) }
+        assertThat(backups().list("7")).containsExactly(raw)
     }
 }

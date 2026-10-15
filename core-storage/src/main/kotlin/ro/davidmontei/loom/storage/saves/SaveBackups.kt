@@ -39,7 +39,9 @@ class SaveBackups(
     /**
      * Archives [unit] under [key] (one folder per game) and returns the copy once it reads back
      * as [expectedHash], the hash Loom decided on. Then prunes that game's oldest backups, never
-     * the one just made.
+     * the one just made. When the game's newest backup already holds that save, it is the copy:
+     * a restore failing the same way at every attempt would otherwise fill the folder with one
+     * save, pushing out older ones that may be the only copy of another.
      *
      * @throws SaveChangedException when the unit no longer hashes to [expectedHash].
      * @throws IOException when the copy can't be written or doesn't read back intact. The unit
@@ -48,6 +50,10 @@ class SaveBackups(
     fun backUp(key: String, label: String, unit: SaveUnit, expectedHash: String): Backup {
         val folder = Files.createDirectories(dir.resolve(key))
         val extension = if (unit is SaveUnit.SingleFile) "sav" else "zip"
+        newestHolding(key, extension, expectedHash)?.let { newest ->
+            if (unit.hash() != expectedHash) throw SaveChangedException("The save changed before it was backed up")
+            return Backup(newest, expectedHash)
+        }
         val name = freeName(folder, "${STAMP.format(stampFor(key))} ${NameSanitizer.sanitize(label, fallback = "save")}", extension)
         val part = folder.resolve(".$name.part")
         try {
@@ -75,6 +81,17 @@ class SaveBackups(
         if (!Files.isDirectory(folder)) return emptyList()
         return checkedIo { Files.list(folder).use { list -> list.iterator().asSequence().filter(::isBackup).toList() } }
             .sortedByDescending { it.fileName.toString() }
+    }
+
+    /** The game's newest backup when it is a copy of the save hashing as [hash], in the kind of file [extension] names; else null. */
+    private fun newestHolding(key: String, extension: String, hash: String): Path? {
+        val newest = list(key).firstOrNull()?.takeIf { it.fileName.toString().endsWith(".$extension") } ?: return null
+        val held = try {
+            if (extension == "sav") SaveHasher.md5(newest) else SaveHasher.hashFile(newest)
+        } catch (e: IOException) {
+            return null // unreadable: a new backup is made
+        }
+        return newest.takeIf { held == hash }
     }
 
     private fun prune(key: String, made: Path) {
