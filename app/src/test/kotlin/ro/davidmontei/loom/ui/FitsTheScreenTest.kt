@@ -506,13 +506,33 @@ class FitsTheScreenTest {
     }
 
     /** The same, for a Switch game whose save folder the user picked: Change save folder fits beside the answers. */
-    @Test fun theSaveConflictChoiceWithChangeSaveFolderFits() = theSaveConflictChoiceWithChangeSaveFolderFits("queue-conflict-choice-change-folder")
+    @Test fun theSaveConflictChoiceWithChangeSaveFolderFits() = theSaveConflictsAnswersFitWhole("queue-conflict-choice-change-folder")
 
     /** On the bottom screen the five buttons wrap, every one of them on the screen. */
     @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
-    @Test fun theSaveConflictChoiceFitsTheBottomScreen() {
-        theSaveConflictChoiceWithChangeSaveFolderFits("queue-conflict-choice-bottom-screen")
-        onScreen("Change save folder", "Skip", "Keep Thor", "Keep server", "Keep both")
+    @Test fun theSaveConflictChoiceFitsTheBottomScreen() = theSaveConflictsAnswersFitWhole("queue-conflict-choice-bottom-screen")
+
+    /**
+     * Found by review: a window from 600 dp to about 830 kept the Thor's single line of buttons, and
+     * the last answers were squeezed, Keep both to "Keep", or to nothing at 600. They wrap instead.
+     */
+    @Config(qualifiers = TABLET_PORTRAIT)
+    @Test fun theSaveConflictsAnswersFitATabletInPortrait() = theSaveConflictsAnswersFitWhole("queue-conflict-choice-tablet-portrait")
+
+    @Config(qualifiers = SMALL_TABLET_PORTRAIT)
+    @Test fun theSaveConflictsAnswersFitASmallTabletInPortrait() = theSaveConflictsAnswersFitWhole("queue-conflict-choice-small-tablet")
+
+    private fun theSaveConflictsAnswersFitWhole(screenshot: String) {
+        theSaveConflictChoiceWithChangeSaveFolderFits(screenshot)
+        val answers = arrayOf("Change save folder", "Skip", "Keep Thor", "Keep server", "Keep both")
+        onScreen(*answers)
+        for (answer in answers) {
+            val label = rule.onNodeWithText(answer, useUnmergedTree = true).fetchSemanticsNode()
+            val layouts = mutableListOf<TextLayoutResult>()
+            label.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+            // A button's label is one line: squeezed, the rest of it is left out.
+            assertWithMessage(answer).that(layouts.single().multiParagraph.didExceedMaxLines).isFalse()
+        }
     }
 
     private fun theSaveConflictChoiceWithChangeSaveFolderFits(screenshot: String) {

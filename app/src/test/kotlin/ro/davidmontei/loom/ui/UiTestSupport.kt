@@ -54,6 +54,9 @@ const val TABLET_LANDSCAPE = "w1280dp-h800dp-land-xhdpi"
 /** The same tablet in portrait. */
 const val TABLET_PORTRAIT = "w800dp-h1280dp-port-xhdpi"
 
+/** A 7-inch tablet in portrait: 1200×1920 px at xhdpi, 600×960 dp, the narrowest window that isn't COMPACT. */
+const val SMALL_TABLET_PORTRAIT = "w600dp-h960dp-port-xhdpi"
+
 @Composable
 fun LoomTestTheme(content: @Composable () -> Unit) = LoomTheme {
     CompositionLocalProvider(LocalIndication provides FocusRingIndication()) { DialogHost { content() } }

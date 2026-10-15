@@ -522,7 +522,8 @@ fun DialogHost(content: @Composable () -> Unit) {
  *
  * [maxWidth] can be raised (to [Dp.Unspecified]: the screen's width) for a form that would
  * otherwise not fit the screen's height. On a narrow screen every dialog takes its width, with
- * narrower margins and a smaller title, and its buttons wrap onto another line rather than squeeze.
+ * narrower margins and a smaller title. On any screen its buttons wrap onto another line rather
+ * than squeeze, whenever they don't fit on one.
  */
 @Composable
 fun LoomDialog(
@@ -580,15 +581,12 @@ private fun DialogSurface(
         ) {
             Text(title, style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge)
             body()
-            if (compact) {
-                FlowRow(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Space.m, Alignment.End),
-                    verticalArrangement = Arrangement.spacedBy(Space.s),
-                ) { buttons(first) }
-            } else {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.m, Alignment.End)) { buttons(first) }
-            }
+            // One line where they fit, as on the Thor's top screen; wrapped where they don't, at any width.
+            FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Space.m, Alignment.End),
+                verticalArrangement = Arrangement.spacedBy(Space.s),
+            ) { buttons(first) }
         }
     }
 }
