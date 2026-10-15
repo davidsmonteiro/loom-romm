@@ -164,8 +164,8 @@ class PpssppSaves(
      */
     private suspend fun checkPick(recorded: SaveKeyEntity, chosen: PspDiscId, found: Answer, looked: String): Disc {
         if (found is Answer.Found && found.id != chosen) {
-            val who = if (found.source == SaveKeySource.ROMM) "RomM says" else "the game's image says"
-            return Disc.Ask("You chose the save folders starting with $chosen, but $who it is ${found.id}. Choose its save folders again")
+            val who = if (found.source == SaveKeySource.ROMM) "RomM says" else "Its image says"
+            return Disc.Ask("$who it is ${found.id}, not $chosen as you chose")
         }
         saves.upsertSaveKey(recorded.copy(imageFingerprint = looked))
         return Disc.Known(chosen)
@@ -179,15 +179,15 @@ class PpssppSaves(
 
     private fun answer(fromRomm: PspDiscId?, image: PspDiscIdResult): Answer = when {
         image is PspDiscIdResult.Disagree -> Answer.Unclear(
-            "Its image names two disc IDs, ${image.umd} in UMD_DATA.BIN and ${image.sfo} in PARAM.SFO, so Loom can't tell which its save folders start with",
+            "Its image names two disc IDs: ${image.umd} in UMD_DATA.BIN, ${image.sfo} in PARAM.SFO",
         )
         fromRomm != null && image is PspDiscIdResult.Found && image.discId != fromRomm -> Answer.Unclear(
-            "RomM says this is disc $fromRomm but its image says ${image.discId}, so Loom can't tell which its save folders start with",
+            "RomM says it is $fromRomm, its image ${image.discId}",
         )
         fromRomm != null -> Answer.Found(fromRomm, SaveKeySource.ROMM)
         image is PspDiscIdResult.Found -> Answer.Found(image.discId, SaveKeySource.IMAGE)
-        image is PspDiscIdResult.NotRead -> Answer.Unclear("RomM didn't read this game's disc ID, and Loom can't read a ${image.format} on the Thor")
-        else -> Answer.Unclear("RomM didn't read this game's disc ID, and Loom can't: ${(image as PspDiscIdResult.None).reason}")
+        image is PspDiscIdResult.NotRead -> Answer.Unclear("RomM didn't read its disc ID, and Loom can't read a ${image.format} on the Thor")
+        else -> Answer.Unclear("RomM didn't read its disc ID, and Loom can't: ${(image as PspDiscIdResult.None).reason}")
     }
 
     /**

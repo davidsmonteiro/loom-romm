@@ -349,6 +349,43 @@ class FitsTheScreenTest {
         rule.saveScreenshot("library-details-switch-buttons")
     }
 
+    /**
+     * A DS or PSP game's details with its save's reason at its longest, under a long title and path:
+     * what to set in melonDS or PPSSPP, where there are no save buttons, and why Loom asks for a PSP
+     * game's save folders, above the button that asks, in full.
+     */
+    @Test fun aDsOrPspGamesSaveReasonFitsInFull() {
+        val title = "Monster Hunter Freedom Unite (USA) (En,Fr,De,Es,It) (Rev 1) (Greatest Hits) (v1.01)"
+        val roms = "/storage/6365-3230/ROMs"
+        val saves = listOf(
+            GameSave(true, SaveSyncState.UNSUPPORTED, "melonDS's saves aren't in $roms/saves/melonDS: in melonDS's Save Files settings, " +
+                "turn off Save next to ROM file and set the Save file directory there, or choose its folder in Settings", "melonds"),
+            GameSave(true, SaveSyncState.UNSUPPORTED, "PPSSPP's memory stick isn't $roms/saves/PPSSPP: in PPSSPP's System settings, set the " +
+                "Memory Stick folder there, or choose PPSSPP's folder in Settings", "ppsspp"),
+            GameSave(true, SaveSyncState.UNSUPPORTED, "New Super Mario Bros. (USA, Australia) (Rev 1) has the same melonDS save file " +
+                "(New Super Mario Bros. (USA, Australia) (Rev 1).sav), and Loom syncs a save for one game only", "melonds"),
+            GameSave(true, SaveSyncState.UNSUPPORTED, "Monster Hunter Freedom Unite (USA) (En,Fr,De,Es,It) (Rev 1) has the same PSP disc ID " +
+                "(ULUS10391), and Loom syncs a game's save folders for one game only", "ppsspp"),
+            GameSave(true, SaveSyncState.NEEDS_FOLDER, "Its image says it is ULUS10084, not ULUS10041 as you chose", "ppsspp"),
+            GameSave(true, SaveSyncState.NEEDS_FOLDER, "Its image names two disc IDs: ULUS10084 in UMD_DATA.BIN, ULJM05500 in PARAM.SFO", "ppsspp"),
+            GameSave(true, SaveSyncState.NEEDS_FOLDER, "RomM says it is ULUS10084, its image ULJM05500", "ppsspp"),
+            GameSave(true, SaveSyncState.NEEDS_FOLDER, "RomM didn't read its disc ID, and Loom can't read a CHD on the Thor", "ppsspp"),
+            GameSave(true, SaveSyncState.NEEDS_FOLDER, "RomM didn't read its disc ID, and Loom can't: the PBP's PARAM.SFO names no disc ID", "ppsspp"),
+        )
+        val game = GameItem(40, title, 1_600_000_000, null, listOf("USA"), InstallState.INSTALLED, null, null, null, adopted = true,
+            removedOnServer = false, installPath = "psp/$title.chd", save = saves.first())
+        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game)))
+        rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        rule.onNodeWithTag("game-40").performClick()
+        for (save in saves) {
+            state = state.copy(games = listOf(game.copy(save = save)))
+            assertWithMessage(save.detail).that(overflow(title)).isEqualTo(0f)
+            assertWithMessage(save.detail).that(cutShort(save.detail!!.takeLast(20))).isFalse()
+        }
+        rule.saveScreenshot("library-details-psp-reason")
+    }
+
     /** Which Eden save folder is a game's: the explanation in full, and the folders in a list of their own. */
     @Test fun theSaveFolderQuestionFits() {
         val title = "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)"

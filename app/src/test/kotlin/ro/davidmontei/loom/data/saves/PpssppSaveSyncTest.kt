@@ -103,7 +103,7 @@ class PpssppSaveSyncTest : SaveSyncTestBase() {
         assertThat(romm.head(lumines.romId)!!.hash).isEqualTo(LUMINES_HASH)
         assertThat(saves.saveKey("ppsspp", lumines.romId)!!.source).isEqualTo(SaveKeySource.ROMM)
         assertThat(state(patapon)).isEqualTo(SaveSyncState.NEEDS_FOLDER)
-        assertThat(detail(patapon)).isEqualTo("RomM didn't read this game's disc ID, and Loom can't read a CHD on the Thor")
+        assertThat(detail(patapon)).isEqualTo("RomM didn't read its disc ID, and Loom can't read a CHD on the Thor")
     }
 
     /** RomM and the disc naming different IDs, or the disc naming two: the owner says which folders are the game's. */
@@ -117,9 +117,9 @@ class PpssppSaveSyncTest : SaveSyncTestBase() {
         assertThat(romm.uploads()).isEmpty()
         assertThat(state(lumines)).isEqualTo(SaveSyncState.NEEDS_FOLDER)
         assertThat(report.unsupported.getValue(lumines.romId))
-            .isEqualTo("RomM says this is disc ULUS10065 but its image says ULUS10064, so Loom can't tell which its save folders start with")
+            .isEqualTo("RomM says it is ULUS10065, its image ULUS10064")
         assertThat(report.unsupported.getValue(patapon.romId)).isEqualTo(
-            "Its image names two disc IDs, ULUS10064 in UMD_DATA.BIN and ULUS10065 in PARAM.SFO, so Loom can't tell which its save folders start with",
+            "Its image names two disc IDs: ULUS10064 in UMD_DATA.BIN, ULUS10065 in PARAM.SFO",
         )
         assertThat(saves.saveKey("ppsspp", lumines.romId)).isNull()
     }
@@ -453,7 +453,7 @@ class PpssppSaveSyncTest : SaveSyncTestBase() {
 
         assertThat(state(lumines)).isEqualTo(SaveSyncState.NEEDS_FOLDER)
         assertThat(detail(lumines))
-            .isEqualTo("You chose the save folders starting with NPUZ00001, but RomM says it is ULUS10064. Choose its save folders again")
+            .isEqualTo("RomM says it is ULUS10064, not NPUZ00001 as you chose")
         assertThat(romm.uploads()).hasSize(uploads)
         assertThat((ppssppSaves().folderChoice(lumines.romId) as FolderChoice.Options).current).isEqualTo("NPUZ00001")
 
