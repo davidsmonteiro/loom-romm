@@ -777,9 +777,10 @@ class SaveSyncEngine(
 
     /**
      * Replaces the Thor's save with the server's [head]: the save must still hash as [expectedLocal]
-     * (what the decision was made on), is backed up, and the download must match RomM's hash
-     * before [SaveRestorer] swaps it in. RomM hears about it (`/downloaded`) only once the save is
-     * in place, and only then is the baseline written. [UnrestorableSaveException] when the save
+     * (what the decision was made on), and the download must match RomM's hash and be laid out as
+     * the unit is. Only then is the Thor's save backed up and [SaveRestorer] swaps the download in.
+     * RomM hears about it (`/downloaded`) only once the save is in place, and only then is the
+     * baseline written. [UnrestorableSaveException] when the save is larger than Loom downloads or
      * isn't laid out as the unit is, so it never could be restored here. A raw save loses Argosy's
      * hardcore trailer on the way: the baseline then holds the hash of what the Thor has, and
      * RomM's of what it has.
@@ -789,11 +790,10 @@ class SaveSyncEngine(
     ) {
         val current = save.unit.hash()
         if (current != expectedLocal) throw SaveChangedException("The save on the Thor changed since Loom looked; nothing was replaced")
-        if (current != null) backups(save.unit).backUp(romId.toString(), save.title, save.unit, current)
         val file = File(workDir, "download-$romId-${UUID.randomUUID()}.${save.extension()}")
         try {
             rommCall { api.saveContent(head.saveId, deviceId, sessionId) }.use { body ->
-                body.byteStream().use { input -> copyCapped(input, file) }
+                body.byteStream().use { input -> copyCapped(input, file, save) }
             }
             val expected = head.contentHash
             if (expected != null && SaveHasher.hashFile(file.toPath()) != expected && SaveHasher.md5(file.toPath()) != expected) {
@@ -805,6 +805,9 @@ class SaveSyncEngine(
                 is SaveUnit.Prefixed -> PpssppSaveLocator.forRestore(unit, file.toPath(), save.maxUnitBytes)
                 is SaveUnit.SingleFile -> unit.also { checkRaw(save, file) }
             }
+            // Only a save that can go in place needs the Thor's backed up: one refused above, every
+            // time, would otherwise add a copy of the same save at each attempt.
+            if (current != null) backups(save.unit).backUp(romId.toString(), save.title, save.unit, current)
             val restored = restorer.restore(file.toPath(), target, current, save.maxUnitBytes)
             // The hash the download was checked against: RomM 5.4.0 keeps it as this device's baseline.
             rommCall { api.confirmSaveDownloaded(head.saveId, SaveDownloadedRequest(deviceId, head.contentHash)) }
@@ -866,7 +869,12 @@ class SaveSyncEngine(
         }
     }
 
-    private fun copyCapped(input: java.io.InputStream, file: File) {
+    /**
+     * Writes [input], RomM's save for [save], to [file]. A save larger than Loom downloads stays so
+     * for as long as it is RomM's: [UnrestorableSaveException], so it is one conflict, not a
+     * download and a failure each time.
+     */
+    private fun copyCapped(input: java.io.InputStream, file: File, save: ResolvedSave.Ready) {
         workDir.mkdirs()
         Files.newOutputStream(file.toPath()).use { out ->
             val buffer = ByteArray(64 * 1024)
@@ -875,10 +883,16 @@ class SaveSyncEngine(
                 val n = input.read(buffer)
                 if (n < 0) break
                 total += n
-                if (total > maxDownloadBytes) throw SaveArchiveException("RomM's save is larger than a save can be")
+                if (total > maxDownloadBytes) throw UnrestorableSaveException(tooLargeToDownload(save))
                 out.write(buffer, 0, n)
             }
         }
+    }
+
+    /** Why RomM's save for [save] can't come down: larger than Loom downloads. For a PSP game, most likely installed data. */
+    private fun tooLargeToDownload(save: ResolvedSave.Ready): String {
+        val why = if (save.emulator == PpssppSaveLocator.EMULATOR_ID) ": it likely holds data the game installed" else ""
+        return "RomM's save is over ${formatBytes(maxDownloadBytes)}, more than Loom downloads$why; nothing was replaced"
     }
 
     private fun backups(unit: SaveUnit): SaveBackups {

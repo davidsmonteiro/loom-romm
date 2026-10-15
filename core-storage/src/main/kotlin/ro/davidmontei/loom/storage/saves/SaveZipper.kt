@@ -43,8 +43,8 @@ open class SaveArchiveException(message: String) : IOException(message)
 
 /**
  * RomM's save for a game, which Loom refuses however often it tries: it isn't laid out as the
- * game's emulator keeps its save. Unlike a download that failed, it stays so until the save on
- * RomM changes.
+ * game's emulator keeps its save, or is larger than Loom downloads. Unlike a download that
+ * failed, it stays so until the save on RomM changes.
  */
 class UnrestorableSaveException(message: String) : SaveArchiveException(message)
 

@@ -434,16 +434,33 @@ class SaveSyncEngineTest : SaveSyncTestBase() {
         assertThat(romm.paths()).doesNotContain("POST /api/saves/${bare.id}/downloaded")
     }
 
-    @Test fun aDownloadLargerThanASaveCanBeIsRefused() = runBlocking<Unit> {
+    /**
+     * A RomM save larger than Loom downloads stays so while it is RomM's: one conflict saying so,
+     * not a failure every pull, each downloading it again and backing the Thor's save up again,
+     * pushing out older backups. Nothing that can't go in place is backed up for.
+     */
+    @Test fun aDownloadLargerThanASaveCanBeIsOneConflict() = runBlocking<Unit> {
         install(pokemonX)
         writeSave(pokemonX, bytes(1))
         engine().sync(SaveSyncRequest.PUSH)
-        romm.addSave(7, archiveOf(bytes(2)))
+        val large = romm.addSave(7, archiveOf(bytes(2)))
 
-        val report = engine(maxDownloadBytes = 100).sync(SaveSyncRequest.PULL)
+        repeat(12) {
+            val report = engine(maxDownloadBytes = 100).sync(SaveSyncRequest.PULL)
+            assertThat(report.failed).isEmpty()
+            assertThat(report.conflicts).containsExactly(7)
+        }
 
-        assertThat(report.failed.getValue(7)).contains("larger than a save can be")
+        val conflict = saves.conflict(7)!!
+        assertThat(conflict.reason).isEqualTo(SyncDecision.SERVER_UNREADABLE.name)
+        assertThat(conflict.serverSaveId).isEqualTo(large.id)
+        assertThat(conflict.detail).isEqualTo("RomM's save is over 100 B, more than Loom downloads; nothing was replaced")
+        assertThat(contentRequests()).hasSize(1)
+        assertThat(backups(pokemonX)).isEmpty()
         assertThat(localMain(pokemonX)).isEqualTo(bytes(1))
+        assertThat(engine(maxDownloadBytes = 100).resolveConflict(7, ConflictChoice.KEEP_SERVER))
+            .isEqualTo(ResolveResult.Failed(conflict.detail!!, stale = true))
+        assertThat(backups(pokemonX)).isEmpty()
     }
 
     /**

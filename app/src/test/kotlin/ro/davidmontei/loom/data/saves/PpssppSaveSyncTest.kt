@@ -222,6 +222,25 @@ class PpssppSaveSyncTest : SaveSyncTestBase() {
         assertThat(saveData.list()).asList().isEmpty()
     }
 
+    /**
+     * Argosy before 2.21 zipped a game's installed data with its saves. An archive larger than Loom
+     * downloads stays so: one conflict saying what it likely holds, and no backup at each pull.
+     */
+    @Test fun anArchiveLargerThanLoomDownloadsIsOneConflict() = runBlocking<Unit> {
+        installPsp(lumines)
+        writeLuminesSaves()
+        engine().sync(SaveSyncRequest.PUSH)
+        romm.addSave(lumines.romId, argosyArchive("ULUS10064INSTALL/DATA.DAT" to ByteArray(64 * 1024).also(java.util.Random(1)::nextBytes)), emulator = "ppsspp", device = "dev-argosy")
+
+        repeat(3) { assertThat(engine(maxDownloadBytes = 32 * 1024).sync(SaveSyncRequest.PULL).conflicts).containsExactly(lumines.romId) }
+
+        assertThat(saves.conflict(lumines.romId)!!.reason).isEqualTo(SyncDecision.SERVER_UNREADABLE.name)
+        assertThat(detail(lumines))
+            .isEqualTo("RomM's save is over 32.0 KB, more than Loom downloads: it likely holds data the game installed; nothing was replaced")
+        assertThat(romm.requests.filter { it.url.encodedPath.endsWith("/content") }).hasSize(1)
+        assertThat(File(volume, ".loom/save-backups/${lumines.romId}").exists()).isFalse()
+    }
+
     /** PPSSPP Gold keeps its saves on the same memory stick: Argosy's upload from it is PPSSPP's save. */
     @Test fun ppssppGoldsSaveIsTheSameEmulators() = runBlocking<Unit> {
         installPsp(lumines)
