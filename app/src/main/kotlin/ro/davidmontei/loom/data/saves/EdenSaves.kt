@@ -6,8 +6,8 @@ import ro.davidmontei.loom.data.db.CatalogDao
 import ro.davidmontei.loom.data.db.InstallEntity
 import ro.davidmontei.loom.data.db.RomEntity
 import ro.davidmontei.loom.data.db.SaveDao
-import ro.davidmontei.loom.data.db.SwitchTitleEntity
-import ro.davidmontei.loom.data.db.SwitchTitleSource
+import ro.davidmontei.loom.data.db.SaveKeyEntity
+import ro.davidmontei.loom.data.db.SaveKeySource
 import ro.davidmontei.loom.data.db.SyncedFolderEntity
 import ro.davidmontei.loom.data.settings.Settings
 import ro.davidmontei.loom.data.settings.SettingsStore
@@ -125,7 +125,7 @@ class EdenSaves(
                 is Title.CantLook -> return Placed.Stop(ResolvedSave.Unavailable(rom.id, title.reason))
             }
             // Two games syncing one folder would restore each other's saves over it.
-            saves.otherGamesWithSwitchTitle(titleId.toString(), rom.id).firstOrNull()?.let { other ->
+            saves.otherGamesWithSaveKey(EMULATOR, titleId.toString(), rom.id).firstOrNull()?.let { other ->
                 return Placed.Stop(ResolvedSave.Unsupported(
                     rom.id, "$other has the same Eden save folder ($titleId), and Loom syncs a folder for one game only",
                 ))
@@ -190,8 +190,8 @@ class EdenSaves(
             val profiles = locator.profiles()
             val profile = profiles.singleOrNull() ?: profiles.firstOrNull { it.equals(s.edenProfile, ignoreCase = true) }
             if (profiles.size > 1 && profile == null) return@withContext EdenFolderChoice.Unavailable(SEVERAL_PROFILES)
-            val taken = saves.switchTitlesTakenBesides(romId).toSet()
-            val current = saves.switchTitle(romId)?.takeIf { it.source == SwitchTitleSource.OWNER }?.let { SwitchTitleId.parse(it.titleId) }
+            val taken = saves.saveKeysTakenBesides(EMULATOR, romId).toSet()
+            val current = saves.saveKey(EMULATOR, romId)?.takeIf { it.source == SaveKeySource.OWNER }?.let { SwitchTitleId.parse(it.saveKey) }
             EdenFolderChoice.Options(locator.titleFolders(profile).filter { it.titleId.toString() !in taken }, current)
         } catch (e: IOException) {
             EdenFolderChoice.Unavailable("Couldn't read Eden's save folder: ${e.message}")
@@ -203,7 +203,7 @@ class EdenSaves(
      * Which of that title's two folders Loom syncs is asked again, should Eden keep it in both.
      */
     suspend fun chooseFolder(romId: Int, titleId: SwitchTitleId) {
-        saves.upsertSwitchTitle(SwitchTitleEntity(romId, titleId.toString(), SwitchTitleSource.OWNER, null, now()))
+        saves.upsertSaveKey(SaveKeyEntity(EMULATOR, romId, titleId.toString(), SaveKeySource.OWNER, null, now()))
         saves.forgetSyncedFolder(romId)
     }
 
@@ -226,23 +226,23 @@ class EdenSaves(
      * image can't say otherwise ([checkPick]).
      */
     private suspend fun titleId(rom: RomEntity, install: InstallEntity): Title {
-        val recorded = saves.switchTitle(rom.id)
+        val recorded = saves.saveKey(EMULATOR, rom.id)
         val images = imagesOf(File(install.romsRoot, install.relPath))
         val imagesPrint = images.joinToString("\n") { "${it.path}\t${it.length()}\t${it.lastModified()}" }
         val keyFiles = keyFiles(install.romsRoot, install.relPath.substringBefore('/')).filter(File::isFile)
-        if (recorded?.source == SwitchTitleSource.OWNER) {
-            SwitchTitleId.parse(recorded.titleId)?.let { return checkPick(recorded, it, images, imagesPrint, keyFiles) }
+        if (recorded?.source == SaveKeySource.OWNER) {
+            SwitchTitleId.parse(recorded.saveKey)?.let { return checkPick(recorded, it, images, imagesPrint, keyFiles) }
         }
-        if (recorded?.source == SwitchTitleSource.IMAGE && recorded.imageFingerprint == imagesPrint) {
-            SwitchTitleId.parse(recorded.titleId)?.let { return Title.Known(it) }
+        if (recorded?.source == SaveKeySource.IMAGE && recorded.imageFingerprint == imagesPrint) {
+            SwitchTitleId.parse(recorded.saveKey)?.let { return Title.Known(it) }
         }
         // From here an ID read from the image before no longer holds: the image changed. If this
         // read finds none, it is forgotten, so it doesn't keep its folder from other games.
         val title = readTitle(images, keyFiles)
         if (title is Title.Known) {
-            saves.upsertSwitchTitle(SwitchTitleEntity(rom.id, title.id.toString(), SwitchTitleSource.IMAGE, imagesPrint, now()))
-        } else if (recorded?.source == SwitchTitleSource.IMAGE && title !is Title.CantLook) {
-            saves.forgetReadSwitchTitle(rom.id)
+            saves.upsertSaveKey(SaveKeyEntity(EMULATOR, rom.id, title.id.toString(), SaveKeySource.IMAGE, imagesPrint, now()))
+        } else if (recorded?.source == SaveKeySource.IMAGE && title !is Title.CantLook) {
+            saves.forgetLearnedSaveKey(EMULATOR, rom.id)
         }
         return title
     }
@@ -253,7 +253,7 @@ class EdenSaves(
      * another game's folder under this one would put the wrong save on RomM. Once the image agrees,
      * or can't tell (no key, a file Loom can't read), the pick is kept with what was looked at.
      */
-    private suspend fun checkPick(recorded: SwitchTitleEntity, chosen: SwitchTitleId, images: List<File>, imagesPrint: String, keyFiles: List<File>): Title {
+    private suspend fun checkPick(recorded: SaveKeyEntity, chosen: SwitchTitleId, images: List<File>, imagesPrint: String, keyFiles: List<File>): Title {
         val looked = imagesPrint + keyFiles.joinToString("") { "\nkeys\t${it.path}\t${it.length()}\t${it.lastModified()}" }
         if (images.isEmpty() || recorded.imageFingerprint == looked) return Title.Known(chosen)
         val said = when (val read = readImages(images, keyFiles)) {
@@ -271,7 +271,7 @@ class EdenSaves(
         if (said.isNotEmpty() && chosen !in said) {
             return Title.Ask("You chose the $chosen save folder, but the game's file says it is ${said.joinToString(" or ")}. Choose its folder again")
         }
-        saves.upsertSwitchTitle(recorded.copy(imageFingerprint = looked))
+        saves.upsertSaveKey(recorded.copy(imageFingerprint = looked))
         return Title.Known(chosen)
     }
 
@@ -338,6 +338,9 @@ class EdenSaves(
     private fun isImage(file: File) = file.extension.lowercase() in SwitchTitleIdReader.EXTENSIONS
 
     companion object {
+        /** Eden's id, under which its games' title IDs are kept with other emulators' save keys. */
+        private const val EMULATOR = EdenSaveLocator.EMULATOR_ID
+
         /** Which of a game's two Eden folders [folder] is, as the owner knows it: "console-wide" or "profile". */
         fun kind(folder: Path) = if (EdenSaveLocator.isConsoleWideFolder(folder)) "console-wide" else "profile"
 

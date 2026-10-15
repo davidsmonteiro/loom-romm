@@ -102,8 +102,8 @@ class SaveRepository(
 
     suspend fun serverSaveInfo(romId: Int, saveId: Int): ServerSaveInfo? = engine.serverSaveInfo(romId, saveId)
 
-    /** The Switch games whose Eden save folder the owner chose: they can choose another. */
-    fun observeChosenFolders(): Flow<Set<Int>> = saves.observeOwnerChosenSwitchTitles().map { it.toSet() }
+    /** The games whose save folder the owner chose, as for a Switch game whose title ID Loom can't read: they can choose another. */
+    fun observeChosenFolders(): Flow<Set<Int>> = saves.observeOwnerChosenSaveKeys().map { it.toSet() }
 
     /** The Eden save folders the owner can pick [romId]'s from. */
     suspend fun saveFolderChoice(romId: Int): EdenFolderChoice = eden.folderChoice(romId)

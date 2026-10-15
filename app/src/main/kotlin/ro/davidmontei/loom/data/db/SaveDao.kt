@@ -98,31 +98,34 @@ interface SaveDao {
 
     @Upsert suspend fun upsertUnit(unit: SaveUnitEntity)
 
-    // --- Switch title IDs ---
+    // --- save keys: what names each game's save in its emulator's save folder ---
 
-    @Query("SELECT * FROM switch_titles WHERE rom_id = :romId")
-    suspend fun switchTitle(romId: Int): SwitchTitleEntity?
+    @Query("SELECT * FROM save_keys WHERE emulator = :emulator AND rom_id = :romId")
+    suspend fun saveKey(emulator: String, romId: Int): SaveKeyEntity?
 
-    @Upsert suspend fun upsertSwitchTitle(title: SwitchTitleEntity)
+    @Upsert suspend fun upsertSaveKey(key: SaveKeyEntity)
 
-    /** Forgets a title ID read from a game's image (never the owner's pick). */
-    @Query("DELETE FROM switch_titles WHERE rom_id = :romId AND source = 'IMAGE'")
-    suspend fun forgetReadSwitchTitle(romId: Int)
+    /** Forgets a key Loom learned, from the game's image or from RomM (never the owner's pick). */
+    @Query("DELETE FROM save_keys WHERE emulator = :emulator AND rom_id = :romId AND source != 'OWNER'")
+    suspend fun forgetLearnedSaveKey(emulator: String, romId: Int)
 
-    /** The titles of the installed games other than [romId] whose save folder is [titleId]'s. */
+    /** The titles of the installed games other than [romId] whose save [emulator] keeps under [key]. */
     @Query(
-        """SELECT r.title FROM switch_titles t JOIN installs i ON i.rom_id = t.rom_id JOIN roms r ON r.id = t.rom_id
-           WHERE t.title_id = :titleId AND t.rom_id != :romId ORDER BY r.sort_key""",
+        """SELECT r.title FROM save_keys k JOIN installs i ON i.rom_id = k.rom_id JOIN roms r ON r.id = k.rom_id
+           WHERE k.emulator = :emulator AND k.save_key = :key AND k.rom_id != :romId ORDER BY r.sort_key""",
     )
-    suspend fun otherGamesWithSwitchTitle(titleId: String, romId: Int): List<String>
+    suspend fun otherGamesWithSaveKey(emulator: String, key: String, romId: Int): List<String>
 
-    /** The title IDs of the installed games other than [romId]: those save folders are taken. */
-    @Query("SELECT t.title_id FROM switch_titles t JOIN installs i ON i.rom_id = t.rom_id WHERE t.rom_id != :romId")
-    suspend fun switchTitlesTakenBesides(romId: Int): List<String>
+    /** The keys of [emulator]'s installed games other than [romId]: those saves are taken. */
+    @Query(
+        """SELECT k.save_key FROM save_keys k JOIN installs i ON i.rom_id = k.rom_id
+           WHERE k.emulator = :emulator AND k.rom_id != :romId""",
+    )
+    suspend fun saveKeysTakenBesides(emulator: String, romId: Int): List<String>
 
-    /** The games whose save folder the owner chose, so they can choose again. */
-    @Query("SELECT rom_id FROM switch_titles WHERE source = 'OWNER'")
-    fun observeOwnerChosenSwitchTitles(): Flow<List<Int>>
+    /** The games whose save folder the owner chose, whatever the emulator, so they can choose again. */
+    @Query("SELECT DISTINCT rom_id FROM save_keys WHERE source = 'OWNER'")
+    fun observeOwnerChosenSaveKeys(): Flow<List<Int>>
 
     // --- the folder a Switch game's save is synced from, of the two Eden kept it in ---
 

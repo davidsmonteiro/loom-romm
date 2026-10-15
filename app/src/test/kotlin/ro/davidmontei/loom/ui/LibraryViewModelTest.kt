@@ -45,8 +45,8 @@ import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.RomEntity
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.db.SaveUnitEntity
-import ro.davidmontei.loom.data.db.SwitchTitleEntity
-import ro.davidmontei.loom.data.db.SwitchTitleSource
+import ro.davidmontei.loom.data.db.SaveKeyEntity
+import ro.davidmontei.loom.data.db.SaveKeySource
 import ro.davidmontei.loom.data.db.VerifiedBy
 import ro.davidmontei.loom.data.download.DownloadRepository
 import ro.davidmontei.loom.data.download.QueueKicker
@@ -252,7 +252,7 @@ class LibraryViewModelTest {
         val message = async { vm.messages.first() }
         vm.chooseSaveFolder("0100AAAA00000000").join()
         assertThat(vm.saveFolderQuestion.value).isNull()
-        assertThat(db.saveDao().switchTitle(40)!!.titleId).isEqualTo("0100AAAA00000000")
+        assertThat(db.saveDao().saveKey("eden", 40)!!.saveKey).isEqualTo("0100AAAA00000000")
         assertThat(withTimeout(5_000) { message.await() }).startsWith("Wonder's save is Eden's 0100AAAA00000000 folder")
         assertThat(gamesOnScreen { games -> games.single().save?.folderChosen == true }.single().save!!.folderChosen).isTrue()
     }
@@ -265,7 +265,7 @@ class LibraryViewModelTest {
         db.catalogDao().upsertPlatforms(listOf(PlatformEntity(4, "switch", "switch", "Nintendo Switch", "Nintendo Switch", 1, "t")))
         db.catalogDao().upsertRoms(listOf(rom(40, 4, "switch", "Wonder", "Wonder.xci")))
         installed(40, 4, "switch/Wonder.xci")
-        db.saveDao().upsertSwitchTitle(SwitchTitleEntity(40, "0100AAAA00000000", SwitchTitleSource.OWNER, null, 0))
+        db.saveDao().upsertSaveKey(SaveKeyEntity("eden", 40, "0100AAAA00000000", SaveKeySource.OWNER, null, 0))
         val users = File(roms, "saves/Eden/user/save/0000000000000000")
         val profile = File(users, "4E431822D6DEFD527268BA35B5C09533/0100AAAA00000000").apply { mkdirs() }
         File(profile, "game_data.sav").writeBytes(ByteArray(64))

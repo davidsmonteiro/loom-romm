@@ -5,6 +5,7 @@ import android.database.sqlite.SQLiteDatabase
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -94,8 +95,8 @@ class MigrationTest {
         try {
             val saves = room.saveDao()
             assertThat(saves.baseline(7, "autosave")!!.unitPath).isEqualTo("/x/data")
-            saves.upsertSwitchTitle(SwitchTitleEntity(30, "010015100B514000", SwitchTitleSource.OWNER, null, 1))
-            assertThat(saves.switchTitle(30)!!.source).isEqualTo(SwitchTitleSource.OWNER)
+            saves.upsertSaveKey(SaveKeyEntity("eden", 30, "010015100B514000", SaveKeySource.OWNER, null, 1))
+            assertThat(saves.saveKey("eden", 30)!!.source).isEqualTo(SaveKeySource.OWNER)
         } finally {
             room.close()
         }
@@ -112,7 +113,7 @@ class MigrationTest {
         val room = DataModule.database(context)
         try {
             val saves = room.saveDao()
-            assertThat(saves.switchTitle(30)!!.titleId).isEqualTo("010015100B514000")
+            assertThat(saves.saveKey("eden", 30)!!.saveKey).isEqualTo("010015100B514000")
             val folder = "/storage/6365-3230/ROMs/saves/Eden/user/save/0000000000000000/${"0".repeat(32)}/010015100B514000"
             saves.upsertSyncedFolder(SyncedFolderEntity(30, folder, 2))
             assertThat(saves.syncedFolder(30)!!.folder).isEqualTo(folder)
@@ -154,6 +155,43 @@ class MigrationTest {
             assertThat(downloads.jobForInstallRequest("req-1")!!.id).isEqualTo(sent)
             downloads.setInstallRequest(3, "req-2")
             assertThat(downloads.jobForInstallRequest("req-2")!!.romId).isEqualTo(7)
+        } finally {
+            room.close()
+        }
+    }
+
+    /**
+     * Version 6's Switch title IDs, read or chosen, become Eden's save keys for those games, so
+     * PPSSPP's disc IDs can sit beside them; the folders owners chose to sync from stay as they were.
+     */
+    @Test fun version6MovesSwitchTitleIdsIntoTheSaveKeyTable() = runBlocking<Unit> {
+        val folder = "/storage/6365-3230/ROMs/saves/Eden/user/save/0000000000000000/${"0".repeat(32)}/010015100B514000"
+        val file = context.getDatabasePath(DB).apply { parentFile!!.mkdirs(); delete() }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            createFromSchema(db, version = 6)
+            db.execSQL("INSERT INTO switch_titles VALUES (30, '010015100B514000', 'IMAGE', 'print', 1)")
+            db.execSQL("INSERT INTO switch_titles VALUES (31, '01001F5010DFA000', 'OWNER', NULL, 2)")
+            db.execSQL("INSERT INTO synced_folders VALUES (30, '$folder', 3)")
+        }
+
+        val room = DataModule.database(context)
+        try {
+            val saves = room.saveDao()
+            assertThat(saves.saveKey("eden", 30)).isEqualTo(SaveKeyEntity("eden", 30, "010015100B514000", SaveKeySource.IMAGE, "print", 1))
+            assertThat(saves.saveKey("eden", 31)).isEqualTo(SaveKeyEntity("eden", 31, "01001F5010DFA000", SaveKeySource.OWNER, null, 2))
+            assertThat(saves.observeOwnerChosenSaveKeys().first()).containsExactly(31)
+            assertThat(saves.syncedFolder(30)!!.folder).isEqualTo(folder)
+            assertThat(room.openHelper.readableDatabase.query("SELECT name FROM sqlite_master WHERE name = 'switch_titles'").use { it.count })
+                .isEqualTo(0)
+
+            // A PSP game's disc ID sits beside them, under PPSSPP's id.
+            saves.upsertSaveKey(SaveKeyEntity("ppsspp", 30, "ULUS10064", SaveKeySource.ROMM, null, 4))
+            assertThat(saves.saveKey("ppsspp", 30)!!.saveKey).isEqualTo("ULUS10064")
+            assertThat(saves.saveKey("eden", 30)!!.saveKey).isEqualTo("010015100B514000")
+            saves.forgetLearnedSaveKey("ppsspp", 30)
+            saves.forgetLearnedSaveKey("eden", 31) // the owner's pick stays
+            assertThat(saves.saveKey("ppsspp", 30)).isNull()
+            assertThat(saves.saveKey("eden", 31)).isNotNull()
         } finally {
             room.close()
         }

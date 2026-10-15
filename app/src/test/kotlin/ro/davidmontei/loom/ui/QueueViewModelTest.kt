@@ -162,7 +162,7 @@ class QueueViewModelTest : SaveSyncTestBase() {
         assertThat(withTimeout(10_000) { message.await() }).isEqualTo("Super Mario Bros Wonder's save is Eden's ${wonder.titleId} folder")
         val after = withTimeout(5_000) { vm.state.first { it.conflicts.isEmpty() } }
         assertThat(after.saveFolderQuestion).isNull()
-        assertThat(db.saveDao().switchTitle(wonder.romId)!!.titleId).isEqualTo(wonder.titleId)
+        assertThat(db.saveDao().saveKey("eden", wonder.romId)!!.saveKey).isEqualTo(wonder.titleId)
         assertThat(db.saveDao().unit(wonder.romId)!!.state).isEqualTo(SaveSyncState.IN_SYNC) // the same save as RomM's
         assertThat(romm.uploads()).isEmpty()
     }

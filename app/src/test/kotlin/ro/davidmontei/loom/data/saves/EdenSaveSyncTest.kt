@@ -8,7 +8,7 @@ import org.junit.runner.RunWith
 import org.robolectric.shadows.ShadowLog
 import ro.davidmontei.loom.data.db.InstallKind
 import ro.davidmontei.loom.data.db.SaveSyncState
-import ro.davidmontei.loom.data.db.SwitchTitleSource
+import ro.davidmontei.loom.data.db.SaveKeySource
 import ro.davidmontei.loom.storage.saves.SaveHasher
 import ro.davidmontei.loom.storage.saves.SaveRestorer
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
@@ -56,9 +56,9 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         installSwitch(wonder)
         writeEdenSave(wonder, bytes(1))
         engine().sync(SaveSyncRequest.PUSH)
-        val recorded = saves.switchTitle(wonder.romId)!!
-        assertThat(recorded.titleId).isEqualTo("0100A0B00C0D0000")
-        assertThat(recorded.source).isEqualTo(SwitchTitleSource.IMAGE)
+        val recorded = saves.saveKey("eden", wonder.romId)!!
+        assertThat(recorded.saveKey).isEqualTo("0100A0B00C0D0000")
+        assertThat(recorded.source).isEqualTo(SaveKeySource.IMAGE)
 
         File(volume, "ROMs/prod.keys").delete() // nothing to read the image with now
         engine().sync(SaveSyncRequest.PUSH)
@@ -85,8 +85,8 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         fun holdsKey(bytes: ByteArray) = String(bytes, Charsets.ISO_8859_1).let { it.contains(key, ignoreCase = true) || it.contains(raw) }
         fun holdsKey(text: String?) = text != null && holdsKey(text.toByteArray(Charsets.ISO_8859_1))
         // The database: what Loom recorded of the game.
-        val title = saves.switchTitle(wonder.romId)!!
-        assertThat(listOf(title.titleId, title.imageFingerprint).none(::holdsKey)).isTrue()
+        val title = saves.saveKey("eden", wonder.romId)!!
+        assertThat(listOf(title.saveKey, title.imageFingerprint).none(::holdsKey)).isTrue()
         val unit = saves.unit(wonder.romId)!!
         assertThat(listOf(unit.detail, unit.unitPath, unit.fingerprint, unit.localHash).none(::holdsKey)).isTrue()
         // Every file Loom wrote (settings, scratch space, the card's backups) and RomM's stored saves.
@@ -115,7 +115,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         eden().chooseFolder(wonder.romId, SwitchTitleId.parse(wonder.titleId)!!)
         assertThat(engine().sync(SaveSyncRequest.PUSH).uploaded).containsExactly(wonder.romId)
         assertThat(archiveEntries(romm.head(wonder.romId)!!.bytes)).contains("0100A0B00C0D0000/game_data.sav")
-        assertThat(saves.switchTitle(wonder.romId)!!.source).isEqualTo(SwitchTitleSource.OWNER)
+        assertThat(saves.saveKey("eden", wonder.romId)!!.source).isEqualTo(SaveKeySource.OWNER)
         assertThat((eden().folderChoice(wonder.romId) as EdenFolderChoice.Options).current.toString()).isEqualTo(wonder.titleId)
     }
 
@@ -145,7 +145,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         eden().chooseFolder(wonder.romId, SwitchTitleId.parse(wonder.titleId)!!)
         engine().sync(SaveSyncRequest.PUSH)
         assertThat(state(wonder)).isNotEqualTo(SaveSyncState.NEEDS_FOLDER)
-        assertThat(saves.switchTitle(wonder.romId)!!.imageFingerprint).isNotNull() // checked against the image, not read again
+        assertThat(saves.saveKey("eden", wonder.romId)!!.imageFingerprint).isNotNull() // checked against the image, not read again
     }
 
     /** A pick the game's file agrees with, or can't speak to (no prod.keys), stands. */
@@ -157,7 +157,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         putProdKeys()
         engine().sync(SaveSyncRequest.PUSH)
         assertThat(state(wonder)).isEqualTo(SaveSyncState.IN_SYNC)
-        assertThat(saves.switchTitle(wonder.romId)!!.source).isEqualTo(SwitchTitleSource.OWNER)
+        assertThat(saves.saveKey("eden", wonder.romId)!!.source).isEqualTo(SaveKeySource.OWNER)
     }
 
     /** A prod.keys without a usable header_key, or whose key opens nothing, doesn't hide a good one in the Switch folder. */
@@ -196,7 +196,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         installSwitch(wonder)
         writeEdenSave(wonder, bytes(1))
         engine().sync(SaveSyncRequest.PUSH)
-        assertThat(saves.switchTitle(wonder.romId)).isNotNull()
+        assertThat(saves.saveKey("eden", wonder.romId)).isNotNull()
 
         File(volume, "ROMs/prod.keys").delete()
         val image = File(volume, "ROMs/switch/Super Mario Bros Wonder.xci")
@@ -204,7 +204,7 @@ class EdenSaveSyncTest : SaveSyncTestBase() {
         installSwitch(arceus)
         engine().sync(SaveSyncRequest.PUSH)
 
-        assertThat(saves.switchTitle(wonder.romId)).isNull()
+        assertThat(saves.saveKey("eden", wonder.romId)).isNull()
         val choice = eden().folderChoice(arceus.romId) as EdenFolderChoice.Options
         assertThat(choice.folders.map { it.titleId.toString() }).contains(wonder.titleId)
     }
