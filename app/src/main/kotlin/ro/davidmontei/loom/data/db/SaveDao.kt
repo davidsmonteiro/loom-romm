@@ -105,6 +105,10 @@ interface SaveDao {
 
     @Upsert suspend fun upsertSaveKey(key: SaveKeyEntity)
 
+    /** Every game's key in [emulator]'s save folder, installed or not. */
+    @Query("SELECT * FROM save_keys WHERE emulator = :emulator")
+    suspend fun saveKeysOf(emulator: String): List<SaveKeyEntity>
+
     /** Forgets a key Loom learned, from the game's image or from RomM (never the owner's pick). */
     @Query("DELETE FROM save_keys WHERE emulator = :emulator AND rom_id = :romId AND source != 'OWNER'")
     suspend fun forgetLearnedSaveKey(emulator: String, romId: Int)

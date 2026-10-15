@@ -72,23 +72,31 @@ class PpssppSaves(
         }
     }
 
-    /** The title of another installed PSP game whose saves start with [discId] too, by its save key or RomM's ID. */
+    /** The title of another installed PSP game whose saves start with [discId] too ([othersDiscIds]). */
     private suspend fun otherGameWithDisc(romId: Int, discId: PspDiscId): String? =
-        saves.otherGamesWithSaveKey(EMULATOR, discId.value, romId).firstOrNull()
-            ?: catalog.installedRomsOf(SaveUnitResolver.PPSSPP_PLATFORMS).firstOrNull { it.id != romId && rommDiscId(it) == discId }?.title
+        othersDiscIds(romId).firstOrNull { (_, id) -> id == discId.value }?.first?.title
+
+    /**
+     * The other installed PSP games, each with the disc ID its saves start with: its save key, which
+     * may be the owner's pick over RomM's ID, else RomM's ID, so RomM's IDs count before a game is read.
+     */
+    private suspend fun othersDiscIds(romId: Int): List<Pair<RomEntity, String>> {
+        val keys = saves.saveKeysOf(EMULATOR).associateBy { it.romId }
+        return catalog.installedRomsOf(SaveUnitResolver.PPSSPP_PLATFORMS).filter { it.id != romId }
+            .mapNotNull { rom -> (keys[rom.id]?.saveKey ?: rommDiscId(rom)?.value)?.let { rom to it } }
+    }
 
     /**
      * What the owner can pick [romId]'s save folders from: the disc IDs SAVEDATA's save folders
-     * start with that no other installed game has (by its save key or RomM's ID), the most
-     * recently played first, each with its folders' count and size.
+     * start with that no other installed game has ([othersDiscIds]), the most recently played
+     * first, each with its folders' count and size.
      */
     suspend fun folderChoice(romId: Int): FolderChoice = withContext(Dispatchers.IO) {
         val install = catalog.install(romId) ?: return@withContext FolderChoice.Unavailable("The game isn't installed any more")
         val stick = memoryStick(settings.snapshot(), install.romsRoot)
             ?: return@withContext FolderChoice.Unavailable("Loom can't find PPSSPP's memory stick: choose it in Settings")
         try {
-            val others = catalog.installedRomsOf(SaveUnitResolver.PPSSPP_PLATFORMS).filter { it.id != romId }.mapNotNull { rommDiscId(it)?.value }
-            val taken = saves.saveKeysTakenBesides(EMULATOR, romId).toSet() + others
+            val taken = saves.saveKeysTakenBesides(EMULATOR, romId).toSet() + othersDiscIds(romId).map { it.second }
             val current = saves.saveKey(EMULATOR, romId)?.takeIf { it.source == SaveKeySource.OWNER }?.saveKey
             val prefixes = PpssppSaveLocator.prefixes(PpssppSaveLocator.saveDataOf(stick.toPath())).filter { it.discId.value !in taken }
             FolderChoice.Options(

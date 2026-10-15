@@ -364,6 +364,31 @@ class PpssppSaveSyncTest : SaveSyncTestBase() {
     }
 
     /**
+     * A game the owner gave other folders than its RomM ID's syncs those alone: that ID no longer
+     * stops another game that has it, nor is it kept from that game's choice.
+     */
+    @Test fun aPickOverRommsIdLeavesThatIdToTheGameWithIt() = runBlocking<Unit> {
+        installPsp(lumines, rommTitleId = "ULUS10064")
+        installPsp(patapon, fixture = "disagree.iso", rommTitleId = "ULUS10064") // its image says ULUS10064 and ULUS10065
+        writeLuminesSaves()
+        writePrefix("ULUS10065", minutesAgo = 5, "DATA00")
+        val first = engine().sync(SaveSyncRequest.PUSH)
+        assertThat(first.unsupported.getValue(lumines.romId)).startsWith("Patapon has the same PSP disc ID (ULUS10064)")
+        assertThat(state(patapon)).isEqualTo(SaveSyncState.NEEDS_FOLDER)
+
+        ppssppSaves().choosePrefix(patapon.romId, PspDiscId("ULUS10065"))
+
+        assertThat((ppssppSaves().folderChoice(lumines.romId) as FolderChoice.Options).options.map { it.key }).contains("ULUS10064")
+        val report = engine().sync(SaveSyncRequest.PUSH)
+        assertThat(report.unsupported).isEmpty()
+        assertThat(report.uploaded).containsExactly(lumines.romId, patapon.romId)
+        assertThat(romm.head(lumines.romId)!!.hash).isEqualTo(LUMINES_HASH)
+        assertThat(saves.unit(patapon.romId)!!.unitPath).isEqualTo("${saveData.path}/ULUS10065*")
+        // Lumines has the ID now, by its own save key: Patapon's choice doesn't offer it.
+        assertThat((ppssppSaves().folderChoice(patapon.romId) as FolderChoice.Options).options.map { it.key }).containsExactly("ULUS10065")
+    }
+
+    /**
      * The owner's pick is the game's save from then on, and can be changed: Loom looks again at
      * once, and the game's details offer to choose again.
      */
