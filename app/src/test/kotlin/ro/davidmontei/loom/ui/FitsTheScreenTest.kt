@@ -58,6 +58,7 @@ import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.InstallState
 import ro.davidmontei.loom.ui.library.LibraryContent
 import ro.davidmontei.loom.ui.library.LibraryFilter
+import ro.davidmontei.loom.ui.library.RomDetails
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import ro.davidmontei.loom.romm.dto.DeviceAuthInitResponse
 import ro.davidmontei.loom.romm.pairing.DeviceAuthSession
@@ -519,6 +520,10 @@ class FitsTheScreenTest {
         rule.saveScreenshot(screenshot)
     }
 
+    /** What RomM says of game [id] at its longest: the details take only the year from it, in their first line. */
+    private fun cameOutIn(id: Int) = RomDetails(id, "A summary long enough to fill a panel, which the details never show. ".repeat(14), 2014,
+        listOf("Role-playing (RPG)", "Turn-based strategy (TBS)", "Adventure"), listOf("Square Enix", "The Pokémon Company"))
+
     /** Whether every node holding [texts] lies wholly on the screen: buttons that wrap must not wrap off it. */
     private fun onScreen(vararg texts: String) {
         val root = rule.onRoot().fetchSemanticsNode().boundsInRoot
@@ -548,11 +553,12 @@ class FitsTheScreenTest {
         val title = "Pokémon Omega Ruby (USA) (En,Ja,Fr,De,Es,It,Ko) (Rev 2) [Special Demo Edition]"
         val game = GameItem(30, title, 3_900_000_000, null, listOf("USA"), InstallState.INSTALLED, null, null, null, adopted = true,
             removedOnServer = false, installPath = "n3ds/$title.3ds", save = GameSave(true, SaveSyncState.SERVER_NEWER, null, "azahar"))
-        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game)))
+        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game), focusedDetails = cameOutIn(30)))
         rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
         rule.onNodeWithTag("game-30").performClick()
         assertThat(overflow(title)).isEqualTo(0f)
+        rule.onNodeWithText("Super Nintendo · 2014 · ${formatBytes(3_900_000_000)} · USA").assertExists()
         rule.saveScreenshot(screenshot)
         val failed = GameSave(true, SaveSyncState.ERROR, "Couldn't read the save: /storage/6365-3230/ROMs/n3ds/sdmc/Nintendo 3DS/" +
             "00000000000000000000000000000000/00000000000000000000000000000000/title/00040000/0011c400/data (Permission denied)", "azahar")
@@ -586,7 +592,7 @@ class FitsTheScreenTest {
         val ask = GameSave(true, SaveSyncState.NEEDS_FOLDER, EdenSaves.WRONG_KEY, "eden")
         val game = GameItem(40, title, 16_300_000_000, null, listOf("World"), InstallState.INSTALLED, null, null, null, adopted = true,
             removedOnServer = false, installPath = "switch/$title.xci", save = ask)
-        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game)))
+        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game), focusedDetails = cameOutIn(40)))
         rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
         rule.onNodeWithTag("game-40").performClick()
@@ -624,7 +630,7 @@ class FitsTheScreenTest {
         )
         val game = GameItem(40, title, 1_600_000_000, null, listOf("USA"), InstallState.INSTALLED, null, null, null, adopted = true,
             removedOnServer = false, installPath = "psp/$title.chd", save = saves.first())
-        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game)))
+        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game), focusedDetails = cameOutIn(40)))
         rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
         rule.onNodeWithTag("game-40").performClick()
@@ -645,7 +651,7 @@ class FitsTheScreenTest {
         val conflict = GameSave(true, SaveSyncState.CONFLICT, null, "ppsspp", folderChosen = true)
         val game = GameItem(40, title, 1_600_000_000, null, listOf("USA"), InstallState.INSTALLED, null, null, null, adopted = true,
             removedOnServer = false, installPath = "psp/$title.chd", save = conflict)
-        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game)))
+        var state by mutableStateOf(LibraryScreenTest().state.copy(games = listOf(game), focusedDetails = cameOutIn(40)))
         rule.setContent { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } }
         rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
         rule.onNodeWithTag("game-40").performClick()
@@ -1025,9 +1031,14 @@ class FitsTheScreenTest {
         rule.assertFitsIn("details-beside")
         rule.onNode(hasText(title) and hasAnyAncestor(hasTestTag("details-beside"))).assertExists()
         rule.saveScreenshot(screenshot)
+        // With what RomM says of it at its longest too: it takes the room left, or none.
+        state = state.copy(focusedDetails = cameOutIn(30))
+        rule.assertFitsIn("details-beside")
+        rule.onNode(hasText(title) and hasAnyAncestor(hasTestTag("details-beside"))).assertExists()
+        rule.saveScreenshot("$screenshot-romm")
         val finishing = game.copy(state = InstallState.DOWNLOADING, stateDetail = "Finishing…", progress = 1f, jobId = 30, installPath = null,
             save = null, finishing = true, adopted = false, matchedByName = false)
-        state = state.copy(games = listOf(finishing) + state.games.drop(1))
+        state = state.copy(games = listOf(finishing) + state.games.drop(1), focusedDetails = null)
         rule.assertFitsIn("details-beside")
         rule.onNode(hasText("Finishing…") and hasAnyAncestor(hasTestTag("details-beside"))).assertExists()
         rule.saveScreenshot("$screenshot-finishing")
@@ -1036,6 +1047,28 @@ class FitsTheScreenTest {
     /** A phone on its side has the width for the details beside the games, but little height: a small cover beside the title. */
     @Config(qualifiers = PHONE_LANDSCAPE)
     @Test fun theDetailsBesideFitAPhoneInLandscape() = theDetailsBesideFit("library-details-beside-phone")
+
+    /** A game as most are, with all RomM says of it: the year, genres and companies, and the summary in the room left. */
+    private fun rommsDetailsFitBeside(screenshot: String) {
+        val game = GameItem(31, "Pokémon X", 1_700_000_000, null, listOf("Europe"), InstallState.INSTALLED, null, null, null, adopted = false,
+            removedOnServer = false, installPath = "n3ds/Pokémon X.3ds", save = GameSave(true, SaveSyncState.IN_SYNC, null, "azahar"))
+        val state = LibraryScreenTest().state.copy(games = listOf(game) + LibraryScreenTest().state.games, focusedDetails = cameOutIn(31))
+        rule.setContent { CompositionLocalProvider(LocalInputModeManager provides pad) { LoomTestTheme { LibraryContent(state, NoopLibraryActions) } } }
+        rule.assertFitsIn("details-beside")
+        rule.onNode(hasText("2014", substring = true) and hasAnyAncestor(hasTestTag("details-beside"))).assertExists()
+        rule.saveScreenshot(screenshot)
+    }
+
+    @Config(qualifiers = PHONE_LANDSCAPE)
+    @Test fun rommsDetailsFitBesideOnAPhoneInLandscape() = rommsDetailsFitBeside("library-details-beside-phone-romm-typical")
+
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun rommsDetailsFitBesideOnATablet() {
+        rommsDetailsFitBeside("library-details-beside-tablet-romm-typical")
+        rule.onNodeWithTag("summary", useUnmergedTree = true).assertExists()
+        val cover = rule.onNodeWithTag("panel-cover").fetchSemanticsNode().boundsInRoot
+        assertThat(with(rule.density) { cover.height.toDp() }).isAtLeast(240.dp) // above the words, and large
+    }
 
     @Config(qualifiers = TABLET_LANDSCAPE)
     @Test fun theDetailsBesideFitATablet() {

@@ -21,13 +21,16 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import ro.davidmontei.loom.data.catalog.CatalogSyncer
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.storage.engine.JobPhase
+import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.saves.SyncDecision
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.InstallState
+import ro.davidmontei.loom.ui.library.RomDetails
 import ro.davidmontei.loom.ui.queue.transferLine
 import ro.davidmontei.loom.ui.second.CompanionContent
 import ro.davidmontei.loom.ui.second.CompanionHolder
@@ -77,6 +80,77 @@ class SecondScreenContentTest {
         assertThat(with(rule.density) { cover.height.toDp().value }).isAtLeast(240f) // beside the words, and large
         rule.saveScreenshot("second-screen-game")
     }
+
+    // --- what RomM says of the game: its year, genres, companies and summary ---
+
+    /** A 3DS game as most are: a title on one line, on the device, its save in sync. */
+    private val pokemonX = GameItem(31, "Pokémon X", 1_700_000_000, null, listOf("Europe"), InstallState.INSTALLED, null, null, null,
+        adopted = false, removedOnServer = false, installPath = "n3ds/Pokémon X.3ds", save = GameSave(true, SaveSyncState.IN_SYNC, null, "azahar"))
+
+    /** What RomM says of it at its longest: three long genres, two companies, and a summary cut at a thousand characters. */
+    private val pokemonXDetails = RomDetails(31,
+        ("Pokémon X and Pokémon Y introduce a new generation of Pokémon to be discovered in a stunning 3D world. Players begin their " +
+            "journey in the Kalos region, a land of breathtaking beauty, as they set out to become Pokémon Trainers. ").repeat(5)
+            .take(CatalogSyncer.SUMMARY_LENGTH - 1).trimEnd() + "…",
+        2013, listOf("Role-playing (RPG)", "Turn-based strategy (TBS)", "Adventure"), listOf("Game Freak", "The Pokémon Company"))
+
+    /** The year, genres and companies, then the summary in the room left: all of it on the bottom screen, with the queue's strip. */
+    @Test fun everythingFitsTheBottomScreenAtOnce() {
+        val downloading = QueueScreenTest.item(1, "The Legend of Zelda: Tears of the Kingdom (World) (En,Ja,Fr,De,Es,It,Nl,Ru,Ko,Zh) (v1.2.1)",
+            JobPhase.DOWNLOADING, done = 1_300_000_000, speed = 11_800_000)
+        show(CompanionContent.Game(pokemonX, "Nintendo 3DS", null, pokemonXDetails), QueueStrip(downloading, waiting = 2, failed = 0, conflicts = 1))
+        rule.assertFitsIn("second-screen")
+        rule.onNodeWithText("2013 · Role-playing (RPG), Turn-based strategy (TBS), Adventure").assertExists()
+        rule.onNodeWithText("Game Freak, The Pokémon Company").assertExists()
+        rule.onNodeWithText("Nintendo 3DS · ${formatBytes(1_700_000_000)} · Europe").assertExists() // the year isn't said twice
+        assertThat(lines("summary")).isAtLeast(2)
+        val cover = rule.onNodeWithTag("panel-cover").fetchSemanticsNode().boundsInRoot
+        assertThat(with(rule.density) { cover.height.toDp().value }).isAtLeast(240f) // still beside the words, and large
+        rule.saveScreenshot("second-screen-game-details")
+        strip = null // without the strip, the summary takes its room
+        rule.assertFitsIn("second-screen")
+        rule.saveScreenshot("second-screen-game-details-alone")
+    }
+
+    /** The summary runs on as far as the room lets it, then ends in an ellipsis. */
+    @Test fun aLongSummaryEndsInAnEllipsis() {
+        show(CompanionContent.Game(pokemonX, "Nintendo 3DS", null, pokemonXDetails))
+        rule.assertFitsIn("second-screen")
+        val layout = layout("summary")
+        assertThat(layout.isLineEllipsized(layout.lineCount - 1)).isTrue()
+        // A short one is there in full.
+        content = CompanionContent.Game(pokemonX, "Nintendo 3DS", null, pokemonXDetails.copy(summary = "Catch them all in Kalos."))
+        rule.assertFitsIn("second-screen")
+        assertThat(layout("summary").let { it.isLineEllipsized(it.lineCount - 1) }).isFalse()
+    }
+
+    /**
+     * Under the game at its tallest there is little room: what RomM says takes what's left, a line at a time,
+     * and what has no room is left out rather than cut through.
+     */
+    @Test fun rommsDetailsGiveWayToTheGamesOwnLines() {
+        show(CompanionContent.Game(tallest, "Nintendo 3DS", null, pokemonXDetails.copy(romId = 30)))
+        rule.assertFitsIn("second-screen")
+        rule.onNodeWithText(title).assertExists()
+        rule.onNodeWithTag("save-line", useUnmergedTree = true).assertExists()
+        rule.saveScreenshot("second-screen-game-tallest-details")
+    }
+
+    /** Another game's details, still there as the focus moves on, aren't shown as this one's. */
+    @Test fun anotherGamesDetailsArentShown() {
+        show(CompanionContent.Game(tallest, "Nintendo 3DS", null, pokemonXDetails))
+        rule.onNodeWithTag("about-the-game").assertDoesNotExist()
+        rule.onNodeWithText("Game Freak, The Pokémon Company").assertDoesNotExist()
+    }
+
+    private fun layout(tag: String): TextLayoutResult {
+        val node = rule.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode()
+        val layouts = mutableListOf<TextLayoutResult>()
+        node.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+        return layouts.single()
+    }
+
+    private fun lines(tag: String) = layout(tag).lineCount
 
     @Test fun aDownloadsProgressAndFinishingShow() {
         val downloading = tallest.copy(state = InstallState.DOWNLOADING, progress = 0.42f, jobId = 30, installPath = null, save = null,

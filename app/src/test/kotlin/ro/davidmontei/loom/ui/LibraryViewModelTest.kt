@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -42,6 +43,7 @@ import ro.davidmontei.loom.data.db.InstallKind
 import ro.davidmontei.loom.data.db.InstallSource
 import ro.davidmontei.loom.data.db.LoomDatabase
 import ro.davidmontei.loom.data.db.PlatformEntity
+import ro.davidmontei.loom.data.db.RomDetailsEntity
 import ro.davidmontei.loom.data.db.RomEntity
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.db.SaveUnitEntity
@@ -69,10 +71,12 @@ import ro.davidmontei.loom.storage.mapping.MappingSource
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.LibraryViewModel
+import ro.davidmontei.loom.ui.library.RomDetails
 import ro.davidmontei.loom.ui.library.saveLine
 import ro.davidmontei.loom.ui.library.toItem
 import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 import java.io.File
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** A platform's first download: where its games go, decided from the card or asked. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -166,6 +170,51 @@ class LibraryViewModelTest {
         vm.selectPlatform(platformId)
         withTimeout(5_000) { vm.selected.first { it?.platform?.id == platformId } }
         db.catalogDao().observeGames(platformId, 0, "").first().single().toItem()
+    }
+
+    // --- what RomM says of the game the panels show ---
+
+    private val alleyMaster = RomDetailsEntity(10, "Bowl against the clock.", 1986, "Sport", "Cinematronics\nData East")
+    private val sonic = RomDetailsEntity(20, "A blue hedgehog races to stop Dr. Robotnik.", 1991, "Platform", "Sega")
+
+    /** The details the view model shows, once they are [what]. */
+    private suspend fun detailsBecome(what: (RomDetails?) -> Boolean) = withTimeout(5_000) { vm.focusedDetails.first(what) }
+
+    @Test fun focusingAGameLoadsItsDetails() = runBlocking<Unit> {
+        val dao = db.catalogDao()
+        dao.writePage(listOf(dao.rom(10)!!), emptyList(), listOf(alleyMaster))
+        val shown = async(Dispatchers.IO) { detailsBecome { it != null } }
+        vm.focus(10)
+        assertThat(shown.await()).isEqualTo(RomDetails(10, "Bowl against the clock.", 1986, listOf("Sport"), listOf("Cinematronics", "Data East")))
+        // A sync rewriting them shows the new ones.
+        val updated = async(Dispatchers.IO) { detailsBecome { it?.releaseYear == 1987 } }
+        dao.writePage(listOf(dao.rom(10)!!), emptyList(), listOf(alleyMaster.copy(releaseYear = 1987)))
+        assertThat(updated.await()!!.romId).isEqualTo(10)
+    }
+
+    /**
+     * Focus moving on never leaves the last game's details showing, not even while the new game's are
+     * read: they go at once. A game RomM says nothing of shows none.
+     */
+    @Test fun anotherGamesDetailsAreNeverShown() = runBlocking<Unit> {
+        val dao = db.catalogDao()
+        dao.writePage(listOf(dao.rom(10)!!), emptyList(), listOf(alleyMaster))
+        val seen = CopyOnWriteArrayList<RomDetails?>()
+        val watching = launch(Dispatchers.Unconfined) { vm.focusedDetails.collect { seen += it } }
+        try {
+            vm.focus(10)
+            detailsBecome { it?.romId == 10 }
+            vm.focus(20)
+            assertThat(vm.focusedDetails.value).isNull() // at once, while Sonic's are read
+            Thread.sleep(300)
+            assertThat(vm.focusedDetails.value).isNull() // RomM says nothing of it
+            dao.writePage(listOf(dao.rom(20)!!), emptyList(), listOf(sonic))
+            assertThat(detailsBecome { it != null }!!.romId).isEqualTo(20)
+            assertThat(seen.filterNotNull().map { it.romId }.distinct()).containsExactly(10, 20).inOrder()
+            assertThat(seen.dropWhile { it?.romId != 10 }.dropWhile { it?.romId == 10 }.first()).isNull()
+        } finally {
+            watching.cancel()
+        }
     }
 
     /** The Thor's ES-DE template: arcade, mame, fbneo and fba all exist, empty. Loom asks, once. */

@@ -95,6 +95,22 @@ data class RomDto(
     @SerialName("created_at") val createdAt: String,
     @SerialName("updated_at") val updatedAt: String,
     val files: List<RomFileDto>,
+    /** What the game is about, from its metadata source (IGDB, ScreenScraper…); null when unmatched. */
+    val summary: String? = null,
+    /** The year, genres and companies RomM gathered from its metadata sources. */
+    val metadatum: RomMetadataDto? = null,
+)
+
+/**
+ * `RomMetadataSchema`: what RomM merged from the game's metadata sources, every list empty for a game
+ * none matched. Defaulted throughout, so a server that leaves any of it out still reads.
+ */
+@Serializable
+data class RomMetadataDto(
+    val genres: List<String> = emptyList(),
+    val companies: List<String> = emptyList(),
+    /** The first release, in milliseconds since the epoch (RomM's Pegasus export divides it by 1000). */
+    @SerialName("first_release_date") val firstReleaseDate: Long? = null,
 )
 
 /** `RomFileSchema`. Hashes may be null *or empty*; RomM writes "" when it skipped hashing. */

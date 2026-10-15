@@ -110,6 +110,17 @@ class LibraryViewModel @Inject constructor(
         LibraryHeader(sync, s.lastCatalogSyncEpochMs, jobs.count { it.phase != "FAILED" }, offline = reach == ServerReachability.State.UNREACHABLE)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryHeader(CatalogSyncStatus(false), null, 0))
 
+    private val focusedGame = MutableStateFlow<Int?>(null)
+
+    /**
+     * What RomM says of the game last [focus]ed, as the catalog has it: null until one is, and while
+     * RomM says nothing of it. Never another game's: focus moving on clears it until the new game's is read.
+     */
+    val focusedDetails: StateFlow<RomDetails?> = focusedGame
+        .flatMapLatest { id -> if (id == null) flowOf(null) else catalog.observeDetails(id).map { it?.toDetails() } }
+        .combine(focusedGame) { details, id -> details?.takeIf { it.romId == id } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     /** Base URL for cover art. Covers are cached by path, so changing the address keeps them. */
     val coverBase: StateFlow<HttpUrl?> = settings.settings.map { it.server?.url }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -128,6 +139,9 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun selectPlatform(id: Int) { selectedId.value = id }
+
+    /** The panels show game [id] now (see [focusedDetails]). */
+    fun focus(id: Int) { focusedGame.value = id }
 
     /** L1/R1: previous/next platform, wrapping around. */
     fun cyclePlatform(step: Int) {

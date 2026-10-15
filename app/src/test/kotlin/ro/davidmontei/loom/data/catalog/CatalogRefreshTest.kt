@@ -291,4 +291,30 @@ class CatalogRefreshTest {
         assertThat(refreshWorker().doWork()).isEqualTo(ListenableWorker.Result.success())
         assertThat(syncWork().single().state).isEqualTo(WorkInfo.State.ENQUEUED)
     }
+
+    /**
+     * Opened for the first time after an upgrade that stores more of each game (RomM's summary and
+     * genres): one sync is queued by itself, which the syncer makes a full one. Opened again before it
+     * ran, the one queued stays.
+     */
+    @Test fun theFirstOpenAfterAnUpgradeQueuesASync() = runBlocking<Unit> {
+        finishSetup()
+        settings.setCatalogSynced("2026-10-07T09:30:00.000000+00:00", now, CatalogSyncer.CATALOG_FIELDS - 1)
+        assertThat(sync.syncAfterUpgrade(settings.snapshot(), paired = true)).isTrue()
+        val queued = syncWork().single()
+        assertThat(queued.state).isEqualTo(WorkInfo.State.ENQUEUED)
+        assertThat(sync.syncAfterUpgrade(settings.snapshot(), paired = true)).isTrue()
+        assertThat(syncWork().single().id).isEqualTo(queued.id)
+    }
+
+    /** Not before setup is done, nor signed out, where it could only fail; and not once a sync has filled the catalog in. */
+    @Test fun noSyncAfterAnUpgradeUnlessItCanRunAndIsNeeded() = runBlocking<Unit> {
+        settings.setCatalogSynced("2026-10-07T09:30:00.000000+00:00", now, CatalogSyncer.CATALOG_FIELDS - 1)
+        assertThat(sync.syncAfterUpgrade(settings.snapshot(), paired = true)).isFalse()
+        finishSetup()
+        assertThat(sync.syncAfterUpgrade(settings.snapshot(), paired = false)).isFalse()
+        settings.setCatalogSynced("2026-10-15T09:30:00.000000+00:00", now, CatalogSyncer.CATALOG_FIELDS)
+        assertThat(sync.syncAfterUpgrade(settings.snapshot(), paired = true)).isFalse()
+        assertThat(syncWork()).isEmpty()
+    }
 }

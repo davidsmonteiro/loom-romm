@@ -81,6 +81,27 @@ data class RomFileEntity(
 )
 
 /**
+ * What RomM says of a ROM beyond its files, for the panels that show the focused game: a summary,
+ * cut short, the year of its first release, and a few of its genres and companies. Kept apart from
+ * [RomEntity] so the library's rows, read again at every download tick, don't carry it; only the
+ * focused game's is read. A ROM RomM says none of this about has no row.
+ */
+@Entity(
+    tableName = "rom_details",
+    foreignKeys = [ForeignKey(RomEntity::class, ["id"], ["rom_id"], onDelete = ForeignKey.CASCADE)],
+)
+data class RomDetailsEntity(
+    @PrimaryKey @ColumnInfo(name = "rom_id") val romId: Int,
+    val summary: String?,
+    /** The year of the first release, in UTC. */
+    @ColumnInfo(name = "release_year") val releaseYear: Int?,
+    /** One per line: a company's name can hold a comma ("Square Co., Ltd."). Empty for none. */
+    val genres: String,
+    /** One per line, as [genres]. */
+    val companies: String,
+)
+
+/**
  * A ROM present on the device as one entry in its system folder. Paths are stored relative to
  * the ROMs root together with the volume, so an unmounted SD card never reads as "uninstalled".
  */

@@ -76,6 +76,10 @@ object RommFixtures {
         titleId: String? = null,
         saveTarget: String? = null,
         saveTargetLayout: String? = null,
+        summary: String? = "A fixture ROM.",
+        genres: List<String> = listOf("Role-playing (RPG)"),
+        companies: List<String> = listOf("Square"),
+        firstReleaseDate: Long? = 794_880_000_000, // 1995-03-11, in milliseconds as RomM sends it
     ) = buildJsonObject {
         put("id", id); put("platform_id", platformId); put("platform_slug", platformSlug)
         put("platform_fs_slug", platformSlug); put("platform_custom_name", JsonNull)
@@ -103,7 +107,16 @@ object RommFixtures {
         putJsonObject("igdb_metadata") { put("total_rating", "91.2"); putJsonArray("genres") { add(JsonPrimitive("RPG")) } }
         putJsonObject("rom_user") { put("is_main_sibling", true) }
         putJsonArray("sibling_roms") {}
-        put("summary", "A fixture ROM.")
+        put("summary", summary.json())
+        putJsonObject("metadatum") {
+            put("rom_id", id)
+            putJsonArray("genres") { genres.forEach { add(JsonPrimitive(it)) } }
+            putJsonArray("franchises") {}; putJsonArray("collections") {}
+            putJsonArray("companies") { companies.forEach { add(JsonPrimitive(it)) } }
+            putJsonArray("publishers") {}; putJsonArray("developers") {}; putJsonArray("game_modes") {}; putJsonArray("age_ratings") {}
+            put("player_count", "1"); put("first_release_date", firstReleaseDate?.let(::JsonPrimitive) ?: JsonNull)
+            put("average_rating", JsonNull)
+        }
     }
 
     fun page(items: List<JsonObject>, total: Int?, limit: Int, offset: Int) = buildJsonObject {

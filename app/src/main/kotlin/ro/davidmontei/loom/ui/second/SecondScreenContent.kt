@@ -76,7 +76,7 @@ private fun Lit(content: CompanionContent, strip: QueueStrip?) {
             CompanionContent.Idle ->
                 Image(painterResource(R.drawable.ic_loom_mark), contentDescription = "Loom", modifier = Modifier.size(72.dp).align(Alignment.Center))
             is CompanionContent.Game -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Space.m)) {
-                GamePanel(content.game, content.platformName, content.coverBase, Modifier.weight(1f).fillMaxWidth())
+                GamePanel(content.game, content.platformName, content.coverBase, content.details, Modifier.weight(1f).fillMaxWidth())
                 strip?.let { QueueStripRow(it) }
             }
             is CompanionContent.Conflict -> ConflictPanel(content.item, Modifier.fillMaxSize())

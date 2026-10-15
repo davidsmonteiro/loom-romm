@@ -29,9 +29,18 @@ import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.StatusBadge
 import ro.davidmontei.loom.ui.theme.LoomColors
 
-/** What a game is, in a line: "Super Nintendo · 1.5 MB · USA, Europe". */
-fun factsLine(game: GameItem, platformName: String?): String =
-    listOfNotNull(platformName, formatBytes(game.sizeBytes), game.regions.takeIf { it.isNotEmpty() }?.joinToString()).joinToString(" · ")
+/** What a game is, in a line: "Super Nintendo · 1.5 MB · USA, Europe", with the [year] it came out after the platform, when given. */
+fun factsLine(game: GameItem, platformName: String?, year: Int? = null): String =
+    listOfNotNull(platformName, year?.toString(), formatBytes(game.sizeBytes), game.regions.takeIf { it.isNotEmpty() }?.joinToString())
+        .joinToString(" · ")
+
+/** When the game came out and what kind it is: "1995 · Role-playing (RPG), Adventure"; null when RomM says neither. */
+fun releaseLine(details: RomDetails): String? =
+    listOfNotNull(details.releaseYear?.toString(), details.genres.takeIf { it.isNotEmpty() }?.joinToString()).joinToString(" · ")
+        .ifEmpty { null }
+
+/** Who made it: "Square, Nintendo"; null when RomM doesn't say. */
+fun companiesLine(details: RomDetails): String? = details.companies.joinToString().ifEmpty { null }
 
 /** Where the game is: on the device and where, how its download goes, or why it failed and whether retrying helps. */
 fun stateLines(game: GameItem): List<String> = buildList {
@@ -92,12 +101,16 @@ internal fun saveColor(save: GameSave) = when (save.state) {
  * save's line: the details' look at the save and its buttons. A panel only ever shows the save as
  * it stands; looking at it is the details' to start.
  *
+ * The details name the [year] the game came out in their first line; the panels say it with the rest
+ * of what RomM says of the game ([AboutTheGame]).
+ *
  * Its parts are the column's own, spaced as the column spaces them.
  */
 @Composable
 fun ColumnScope.GameFacts(
     game: GameItem,
     platformName: String?,
+    year: Int? = null,
     saveLines: Int = 2,
     lineLimit: Int = Int.MAX_VALUE,
     style: TextStyle = MaterialTheme.typography.bodyLarge,
@@ -106,7 +119,7 @@ fun ColumnScope.GameFacts(
     // Grouped, rather than spaced like the column's parts: a 3DS game's details have to fit the
     // screen with a long title and path, its save and a row of save buttons.
     Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-        (listOf(factsLine(game, platformName)) + stateLines(game)).forEach {
+        (listOf(factsLine(game, platformName, year)) + stateLines(game)).forEach {
             Text(it, style = style, color = LoomColors.TextMuted, maxLines = lineLimit, overflow = TextOverflow.Ellipsis)
         }
     }

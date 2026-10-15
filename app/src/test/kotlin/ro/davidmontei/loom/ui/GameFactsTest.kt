@@ -3,12 +3,16 @@ package ro.davidmontei.loom.ui
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import ro.davidmontei.loom.data.db.GameRow
+import ro.davidmontei.loom.data.db.RomDetailsEntity
 import ro.davidmontei.loom.storage.engine.JobPhase
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.ui.library.InstallState
+import ro.davidmontei.loom.ui.library.companiesLine
 import ro.davidmontei.loom.ui.library.factsLine
+import ro.davidmontei.loom.ui.library.releaseLine
 import ro.davidmontei.loom.ui.library.stateBadgeText
 import ro.davidmontei.loom.ui.library.stateLines
+import ro.davidmontei.loom.ui.library.toDetails
 import ro.davidmontei.loom.ui.library.toItem
 
 /** What a game's details say of it: the same words in the details, beside the games and on the second screen. */
@@ -30,6 +34,27 @@ class GameFactsTest {
         val installed = row(installPath = "psx/Final Fantasy VII (USA).chd").toItem()
         assertThat(stateLines(installed)).containsExactly("On this device at psx/Final Fantasy VII (USA).chd")
         assertThat(stateBadgeText(installed)).isEqualTo("On device")
+    }
+
+    /**
+     * What RomM says of the game, in the words the panels show it: the year and genres in a line, the
+     * companies in another, a company's comma kept as its own. The details give only the year, after the platform.
+     */
+    @Test fun rommsDetailsReadAsTheirLines() {
+        val details = RomDetailsEntity(1, "A summary.", 1997, "Role-playing (RPG)\nAdventure", "Square Co., Ltd.\nSony").toDetails()
+        assertThat(details.genres).containsExactly("Role-playing (RPG)", "Adventure").inOrder()
+        assertThat(details.companies).containsExactly("Square Co., Ltd.", "Sony").inOrder()
+        assertThat(releaseLine(details)).isEqualTo("1997 · Role-playing (RPG), Adventure")
+        assertThat(companiesLine(details)).isEqualTo("Square Co., Ltd., Sony")
+        assertThat(factsLine(row().toItem(), "PlayStation", details.releaseYear))
+            .isEqualTo("PlayStation · 1997 · ${formatBytes(1_500_000)} · USA, Europe")
+
+        val yearOnly = RomDetailsEntity(1, null, 1997, "", "").toDetails()
+        assertThat(yearOnly.genres).isEmpty()
+        assertThat(releaseLine(yearOnly)).isEqualTo("1997")
+        assertThat(companiesLine(yearOnly)).isNull()
+        assertThat(releaseLine(yearOnly.copy(releaseYear = null))).isNull()
+        assertThat(releaseLine(yearOnly.copy(releaseYear = null, genres = listOf("Puzzle")))).isEqualTo("Puzzle")
     }
 
     /** Moved into place, a game's download is complete: what it is doing then is "Finishing…", not "100%". */

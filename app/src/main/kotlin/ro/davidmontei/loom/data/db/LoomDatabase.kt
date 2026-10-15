@@ -10,6 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PlatformEntity::class,
         RomEntity::class,
         RomFileEntity::class,
+        RomDetailsEntity::class,
         InstallEntity::class,
         DownloadJobEntity::class,
         DownloadPartEntity::class,
@@ -19,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SaveKeyEntity::class,
         SyncedFolderEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class LoomDatabase : RoomDatabase() {
@@ -124,5 +125,20 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
         db.execSQL("DROP TABLE `switch_titles`")
         db.execSQL("ALTER TABLE `save_conflicts` ADD COLUMN `detail` TEXT")
         db.execSQL("ALTER TABLE `save_conflicts` ADD COLUMN `unit_path` TEXT")
+    }
+}
+
+/**
+ * Version 8: what RomM says of each ROM beyond its files (a summary, the release year, genres and
+ * companies), for the panels that show the focused game. The table starts empty; the first sync after
+ * the upgrade is a full one that fills it (`CatalogSyncer.CATALOG_FIELDS`).
+ */
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `rom_details` (`rom_id` INTEGER NOT NULL, `summary` TEXT, `release_year` INTEGER, " +
+                "`genres` TEXT NOT NULL, `companies` TEXT NOT NULL, PRIMARY KEY(`rom_id`), " +
+                "FOREIGN KEY(`rom_id`) REFERENCES `roms`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        )
     }
 }

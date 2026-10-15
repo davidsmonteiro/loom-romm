@@ -221,6 +221,51 @@ class MigrationTest {
         }
     }
 
+    /**
+     * Version 7 (before RomM's details) keeps its catalog and installs, and gains a table for what
+     * RomM says of each game, empty until the next (full) sync. A game RomM drops takes its details with it.
+     */
+    @Test fun version7GainsRomDetailsKeepingTheCatalog() = runBlocking<Unit> {
+        val file = context.getDatabasePath(DB).apply { parentFile!!.mkdirs(); delete() }
+        SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
+            createFromSchema(db, version = 7)
+            db.execSQL("INSERT INTO platforms VALUES (1, 'snes', 'snes', 'SNES', 'Super Nintendo', 2, 't')")
+            for ((id, title) in listOf(7 to "Chrono Trigger", 8 to "EarthBound")) {
+                db.execSQL(
+                    "INSERT INTO roms (id, platform_id, platform_slug, platform_fs_slug, title, search_key, sort_key, fs_name, " +
+                        "fs_name_no_ext, fs_extension, size_bytes, has_simple_single_file, has_nested_single_file, has_multiple_files, " +
+                        "cover_small, cover_large, regions, updated_at, missing_from_fs, removed_on_server, title_id, save_target, " +
+                        "save_target_layout) VALUES ($id, 1, 'snes', 'snes', '$title', '${title.lowercase()}', '${title.lowercase()}', " +
+                        "'$title.sfc', '$title', 'sfc', 100, 1, 0, 0, NULL, NULL, 'USA', 't', 0, 0, NULL, NULL, NULL)",
+                )
+            }
+            db.execSQL(
+                "INSERT INTO installs VALUES (7, '6365-3230', '/storage/6365-3230/ROMs', 'snes/Chrono Trigger.sfc', " +
+                    "'snes/chrono trigger.sfc', 1, 'FILE', 100, 'SHA1', 'LOOM', NULL, 1)",
+            )
+        }
+
+        val room = DataModule.database(context)
+        try {
+            val catalog = room.catalogDao()
+            assertThat(catalog.rom(7)!!.title).isEqualTo("Chrono Trigger")
+            assertThat(catalog.install(7)!!.relPath).isEqualTo("snes/Chrono Trigger.sfc")
+            assertThat(catalog.observeDetails(7).first()).isNull() // until the next sync
+
+            val roms = listOf(catalog.rom(7)!!, catalog.rom(8)!!)
+            val chrono = RomDetailsEntity(7, "Crono travels through time.", 1995, "Role-playing (RPG)\nAdventure", "Square Co., Ltd.\nNintendo")
+            catalog.writePage(roms, emptyList(), listOf(chrono, RomDetailsEntity(8, null, 1994, "", "")))
+            assertThat(catalog.observeDetails(7).first()).isEqualTo(chrono)
+
+            catalog.applyServerIds(setOf(7)) // EarthBound gone from RomM, and not installed
+            assertThat(catalog.rom(8)).isNull()
+            assertThat(catalog.observeDetails(8).first()).isNull()
+            assertThat(catalog.observeDetails(7).first()).isEqualTo(chrono)
+        } finally {
+            room.close()
+        }
+    }
+
     /** Creates the tables, indices and Room's identity row of an exported schema version. */
     private fun createFromSchema(db: SQLiteDatabase, version: Int) {
         val name = "ro.davidmontei.loom.data.db.LoomDatabase/$version.json"

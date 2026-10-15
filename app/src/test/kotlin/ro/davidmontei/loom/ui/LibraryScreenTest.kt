@@ -59,6 +59,7 @@ import ro.davidmontei.loom.ui.library.LibraryContent
 import ro.davidmontei.loom.ui.library.LibraryFilter
 import ro.davidmontei.loom.ui.library.LibraryHeader
 import ro.davidmontei.loom.ui.library.LibraryUiState
+import ro.davidmontei.loom.ui.library.RomDetails
 import ro.davidmontei.loom.ui.saves.SaveFolderOption
 import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 import ro.davidmontei.loom.ui.second.CompanionContent
@@ -78,6 +79,9 @@ class LibraryScreenTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
 
     private val calls = mutableListOf<String>()
+
+    /** The games whose details the screen asked for, in order. */
+    private val focused = mutableListOf<Int>()
     private val actions = object : LibraryActions {
         override fun selectPlatform(id: Int) { calls += "select:$id" }
         override fun cyclePlatform(step: Int) { calls += "cycle:$step" }
@@ -105,6 +109,7 @@ class LibraryScreenTest {
         override fun askSyncedFolder(game: GameItem) { calls += "askSyncedFolder:${game.id}" }
         override fun chooseSaveFolder(id: String) { calls += "saveFolder:$id" }
         override fun dismissSaveFolderQuestion() { calls += "dismissSaveFolder" }
+        override fun focusGame(id: Int) { focused += id }
     }
 
     private fun platform(id: Int, name: String, roms: Int, installed: Int, bytes: Long) =
@@ -703,6 +708,53 @@ class LibraryScreenTest {
         shown = false
         rule.waitForIdle()
         assertThat(companion.content.value).isEqualTo(CompanionContent.Idle)
+    }
+
+    // --- what RomM says of the game: in the panels, and the year in the details ---
+
+    private val chronoTrigger = RomDetails(1, "Crono, a boy from 1000 AD, travels through time to save the world.", 1995,
+        listOf("Role-playing (RPG)", "Adventure"), listOf("Square", "Nintendo"))
+
+    /** What RomM says of the focused game is asked for as focus moves, and goes to the bottom screen with that game only. */
+    @Test fun theFocusedGamesDetailsGoWithItToTheBottomScreen() {
+        val companion = CompanionHolder()
+        fun content() = companion.content.value as CompanionContent.Game
+        show(companion)
+        assertThat(focused).containsExactly(1)
+        update { it.copy(focusedDetails = chronoTrigger) }
+        assertThat(content().details).isEqualTo(chronoTrigger)
+        press(Key.DirectionRight)
+        assertThat(focused).containsExactly(1, 2).inOrder()
+        assertThat(content().game.title).isEqualTo("EarthBound")
+        assertThat(content().details).isNull() // Chrono Trigger's are never shown as EarthBound's
+        press(Key.DirectionUp) // to the search box: the game, and what was asked for, stay
+        assertThat(focused).containsExactly(1, 2).inOrder()
+    }
+
+    /** The details say only the year, in their first line: the summary, genres and companies are the panels'. */
+    @Test fun theDetailsNameTheYearTheGameCameOut() {
+        state = state.copy(focusedDetails = chronoTrigger)
+        show()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Super Nintendo · 1995 · ${formatBytes(1_500_000)} · USA").assertExists()
+        rule.onNodeWithText(chronoTrigger.summary!!).assertDoesNotExist()
+        rule.onNodeWithText("Square, Nintendo").assertDoesNotExist()
+        back()
+        press(listOf(Key.DirectionRight, Key.DirectionCenter)) // EarthBound's say no year: RomM's is Chrono Trigger's
+        rule.onNodeWithText("Super Nintendo · ${formatBytes(3_000_000)} · USA").assertExists()
+    }
+
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun theDetailsBesideSayWhatRommSaysOfTheGame() {
+        state = state.copy(focusedDetails = chronoTrigger)
+        show()
+        beside("1995 · Role-playing (RPG), Adventure").assertExists()
+        beside("Square, Nintendo").assertExists()
+        beside(chronoTrigger.summary!!).assertExists()
+        beside("Super Nintendo · ${formatBytes(1_500_000)} · USA").assertExists() // the year isn't said twice
+        press(Key.DirectionRight)
+        beside("EarthBound").assertExists()
+        beside("Square, Nintendo").assertDoesNotExist()
     }
 
     /** Found by audit: a sync error was cut to one line in the header, and nothing there led to pairing again. */

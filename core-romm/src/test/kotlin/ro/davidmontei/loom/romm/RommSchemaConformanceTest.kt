@@ -39,6 +39,7 @@ import ro.davidmontei.loom.romm.dto.InstallRequestDto
 import ro.davidmontei.loom.romm.dto.PlatformDto
 import ro.davidmontei.loom.romm.dto.RomDto
 import ro.davidmontei.loom.romm.dto.RomFileDto
+import ro.davidmontei.loom.romm.dto.RomMetadataDto
 import ro.davidmontei.loom.romm.dto.RomPageDto
 import ro.davidmontei.loom.romm.dto.SaveDeviceRequest
 import ro.davidmontei.loom.romm.dto.SaveDownloadedRequest
@@ -227,6 +228,7 @@ class RommSchemaConformanceTest {
             RomDto.serializer() to "SimpleRomSchema",
             RomDto.serializer() to "DetailedRomSchema",
             RomFileDto.serializer() to "RomFileSchema",
+            RomMetadataDto.serializer() to "RomMetadataSchema",
             ArchiveMemberDto.serializer() to "RomArchiveMember",
             RomPageDto.serializer() to "CustomLimitOffsetPage_SimpleRomSchema_",
             DeviceAuthInitResponse.serializer() to "DeviceAuthInitResponse",

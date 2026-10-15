@@ -22,6 +22,7 @@ import ro.davidmontei.loom.data.db.MIGRATION_3_4
 import ro.davidmontei.loom.data.db.MIGRATION_4_5
 import ro.davidmontei.loom.data.db.MIGRATION_5_6
 import ro.davidmontei.loom.data.db.MIGRATION_6_7
+import ro.davidmontei.loom.data.db.MIGRATION_7_8
 import ro.davidmontei.loom.data.download.StorageVolumes
 import ro.davidmontei.loom.data.install.InstallManager
 import ro.davidmontei.loom.data.mapping.MappingRepository
@@ -41,7 +42,8 @@ object DataModule {
     @Provides @Singleton
     fun database(@ApplicationContext context: Context): LoomDatabase =
         Room.databaseBuilder(context, LoomDatabase::class.java, "loom.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build()
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+            .build()
 
     @Provides fun catalogDao(db: LoomDatabase): CatalogDao = db.catalogDao()
 

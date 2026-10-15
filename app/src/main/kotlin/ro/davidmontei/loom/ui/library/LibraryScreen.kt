@@ -114,6 +114,8 @@ data class LibraryUiState(
     val message: String? = null,
     val folderQuestion: FolderQuestion? = null,
     val saveFolderQuestion: SaveFolderQuestion? = null,
+    /** What RomM says of the game last asked for with [LibraryActions.focusGame], once read; null when it says nothing. */
+    val focusedDetails: RomDetails? = null,
 )
 
 interface LibraryActions {
@@ -150,6 +152,8 @@ interface LibraryActions {
     /** The answer to [LibraryUiState.saveFolderQuestion]: a [SaveFolderOption.id]. */
     fun chooseSaveFolder(id: String)
     fun dismissSaveFolderQuestion()
+    /** The game the panels show (or whose details are open) is game [id]: what RomM says of it is read ([LibraryUiState.focusedDetails]). */
+    fun focusGame(id: Int) {}
 }
 
 @Composable
@@ -169,6 +173,7 @@ fun LibraryScreen(
     val coverBase by vm.coverBase.collectAsStateWithLifecycle()
     val folderQuestion by vm.folderQuestion.collectAsStateWithLifecycle()
     val saveFolderQuestion by vm.saveFolderQuestion.collectAsStateWithLifecycle()
+    val focusedDetails by vm.focusedDetails.collectAsStateWithLifecycle()
     var message by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { vm.messages.collect { message = it; delay(3500); message = null } }
 
@@ -198,10 +203,13 @@ fun LibraryScreen(
             override fun askSyncedFolder(game: GameItem) { vm.askSyncedFolder(game) }
             override fun chooseSaveFolder(id: String) { vm.chooseSaveFolder(id) }
             override fun dismissSaveFolderQuestion() = vm.dismissSaveFolderQuestion()
+            override fun focusGame(id: Int) = vm.focus(id)
         }
     }
     LibraryContent(
-        LibraryUiState(platforms, selected, games, filter, query, grid, header, coverBase, message, folderQuestion, saveFolderQuestion), actions,
+        LibraryUiState(platforms, selected, games, filter, query, grid, header, coverBase, message, folderQuestion, saveFolderQuestion,
+            focusedDetails),
+        actions,
     )
 }
 
@@ -247,8 +255,14 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
     // last focused while focus is elsewhere (the search box, a dialog), as it is now: its download moves on
     // as it shows. They are to read only, as A still opens the details to act on the game.
     val shown = state.games.firstOrNull { it.id == (focusedId ?: lastGameId) }
+    // What RomM says of it, read once it is shown; while its details are open, of the game they're about
+    // (a tap opens them on a game that isn't focused). Only ever shown with the game it's about.
+    val aboutId = detailsFor?.id ?: shown?.id
+    LaunchedEffect(aboutId) { aboutId?.let(actions::focusGame) }
+    val shownDetails = state.focusedDetails?.takeIf { it.romId == shown?.id }
     // A second screen, where there is one, shows the same game: the details beside then give way to it.
-    PublishCompanion(shown?.let { CompanionContent.Game(it, state.selected?.platform?.displayName, state.coverBase) } ?: CompanionContent.Idle)
+    PublishCompanion(shown?.let { CompanionContent.Game(it, state.selected?.platform?.displayName, state.coverBase, shownDetails) }
+        ?: CompanionContent.Idle)
     val window = LocalWindowInfo.current.containerDpSize.width
     val besideWidth = if (layout.width == WidthClass.EXPANDED && !secondScreenShowing()) (window * 0.32f).coerceIn(280.dp, 420.dp) else 0.dp
     // The three filter chips need about the room the Thor's top screen gives the games, 558 dp, to leave
@@ -337,7 +351,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
                         Modifier.width(besideWidth).fillMaxHeight()
                             .background(LoomColors.Surface, RoundedCornerShape(16.dp)).padding(Space.l).testTag("details-beside"),
                     ) {
-                        shown?.let { GamePanel(it, state.selected?.platform?.displayName, state.coverBase, Modifier.fillMaxSize()) }
+                        shown?.let { GamePanel(it, state.selected?.platform?.displayName, state.coverBase, shownDetails, Modifier.fillMaxSize()) }
                     }
                 }
             }
@@ -347,6 +361,7 @@ fun LibraryContent(state: LibraryUiState, actions: LibraryActions) {
             GameDialog(
                 game = state.games.firstOrNull { it.id == game.id } ?: game,
                 platform = state.selected,
+                year = state.focusedDetails?.takeIf { it.romId == game.id }?.releaseYear,
                 onDismiss = { detailsFor = null },
                 onDownload = { actions.download(it); detailsFor = null },
                 onOffload = { confirmOffload = it; detailsFor = null },
@@ -671,6 +686,8 @@ private fun StateOverlay(game: GameItem, modifier: Modifier) {
 private fun GameDialog(
     game: GameItem,
     platform: PlatformSummary?,
+    /** The year it came out, for the first line, when RomM says. */
+    year: Int?,
     onDismiss: () -> Unit,
     onDownload: (GameItem) -> Unit,
     onOffload: (GameItem) -> Unit,
@@ -708,7 +725,7 @@ private fun GameDialog(
         body = {
             // A line more for the save on a narrow screen, so the reason a folder is asked for is there in full.
             // Without save buttons below it, a reason has room in full: what to set in melonDS or PPSSPP.
-            GameFacts(game, platform?.platform?.displayName, saveLines = if (saveActions.isEmpty()) 4 else if (compact) 3 else 2) {
+            GameFacts(game, platform?.platform?.displayName, year, saveLines = if (saveActions.isEmpty()) 4 else if (compact) 3 else 2) {
                 // A line kept for it while the save is looked at, so its words coming and going move nothing.
                 if (compact && looksAtSave) {
                     Text(lookLine(game.save?.look), style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = 2,

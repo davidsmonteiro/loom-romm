@@ -113,14 +113,30 @@ interface CatalogDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFiles(files: List<RomFileEntity>)
 
-    /** Writes one page of the server's catalog: ROM rows replaced, their file lists rewritten. */
+    @Query("DELETE FROM rom_details WHERE rom_id IN (:romIds)")
+    suspend fun deleteDetailsOf(romIds: List<Int>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDetails(details: List<RomDetailsEntity>)
+
+    /**
+     * Writes one page of the server's catalog: ROM rows replaced, their file lists and details
+     * rewritten. A ROM of the page without [details] has none from then on: RomM no longer says any.
+     */
     @Transaction
-    suspend fun writePage(roms: List<RomEntity>, files: List<RomFileEntity>) {
+    suspend fun writePage(roms: List<RomEntity>, files: List<RomFileEntity>, details: List<RomDetailsEntity> = emptyList()) {
         if (roms.isEmpty()) return
         upsertRoms(roms)
-        deleteFilesOf(roms.map { it.id })
+        val ids = roms.map { it.id }
+        deleteFilesOf(ids)
         insertFiles(files)
+        deleteDetailsOf(ids)
+        insertDetails(details)
     }
+
+    /** What RomM says of ROM [romId] beyond its files, as it changes; null when it says nothing. */
+    @Query("SELECT * FROM rom_details WHERE rom_id = :romId")
+    fun observeDetails(romId: Int): Flow<RomDetailsEntity?>
 
     @Query("SELECT id FROM roms") suspend fun romIds(): List<Int>
 

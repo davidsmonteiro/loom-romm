@@ -3,6 +3,7 @@ package ro.davidmontei.loom.ui.second
 import okhttp3.HttpUrl
 import ro.davidmontei.loom.romm.pairing.DeviceAuthSession
 import ro.davidmontei.loom.ui.library.GameItem
+import ro.davidmontei.loom.ui.library.RomDetails
 import ro.davidmontei.loom.ui.queue.ConflictItem
 import ro.davidmontei.loom.ui.queue.QueueItem
 
@@ -15,8 +16,8 @@ sealed interface CompanionContent {
     /** Nothing to show: the Loom mark. */
     data object Idle : CompanionContent
 
-    /** The library's focused game, or the one last focused, as it is now. */
-    data class Game(val game: GameItem, val platformName: String?, val coverBase: HttpUrl?) : CompanionContent
+    /** The library's focused game, or the one last focused, as it is now, with what RomM says of it when it says something. */
+    data class Game(val game: GameItem, val platformName: String?, val coverBase: HttpUrl?, val details: RomDetails? = null) : CompanionContent
 
     /** The queue's save conflict: its two sides beside each other, which its row has room for on one line only. */
     data class Conflict(val item: ConflictItem) : CompanionContent

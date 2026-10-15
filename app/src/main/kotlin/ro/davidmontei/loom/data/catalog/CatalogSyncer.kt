@@ -3,6 +3,7 @@ package ro.davidmontei.loom.data.catalog
 import kotlinx.serialization.builtins.ListSerializer
 import ro.davidmontei.loom.data.db.CatalogDao
 import ro.davidmontei.loom.data.db.PlatformEntity
+import ro.davidmontei.loom.data.db.RomDetailsEntity
 import ro.davidmontei.loom.data.db.RomEntity
 import ro.davidmontei.loom.data.db.RomFileEntity
 import ro.davidmontei.loom.data.settings.SettingsStore
@@ -15,6 +16,7 @@ import ro.davidmontei.loom.romm.dto.RomDto
 import ro.davidmontei.loom.romm.pageRoms
 import ro.davidmontei.loom.romm.rommCall
 import java.text.Normalizer
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -61,7 +63,7 @@ class CatalogSyncer(
         var written = 0
         api.pageRoms(updatedAfter = updatedAfter).collect { page ->
             val roms = page.page.items
-            dao.writePage(roms.map { it.toEntity() }, roms.flatMap { it.toFileEntities() })
+            dao.writePage(roms.map { it.toEntity() }, roms.flatMap { it.toFileEntities() }, roms.mapNotNull { it.toDetails() })
             written += roms.size
             roms.forEach { rom -> parseInstant(rom.updatedAt)?.let { if (newest == null || it > newest) newest = it } }
             onProgress(SyncProgress(page.fetched, page.total))
@@ -78,9 +80,18 @@ class CatalogSyncer(
     companion object {
         /**
          * The ROM fields a full sync writes. Raised whenever ROM rows gain a field (2: title id and
-         * save target), so the first sync after the upgrade is a full one that fills it everywhere.
+         * save target; 3: RomM's summary, release year, genres and companies), so the first sync after
+         * the upgrade is a full one that fills it everywhere. LoomApp queues that sync when Loom first
+         * opens after the upgrade.
          */
-        const val CATALOG_FIELDS = 2
+        const val CATALOG_FIELDS = 3
+
+        /** The most of a summary kept: a panel shows a few lines of it, and 20,000 games' summaries add up. */
+        const val SUMMARY_LENGTH = 1_000
+
+        /** The most genres and companies kept: what a line in a panel has room for. */
+        const val GENRES = 3
+        const val COMPANIES = 2
 
         private val WIRE = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSSxxx")
 
@@ -133,6 +144,38 @@ internal fun RomDto.toEntity(): RomEntity {
         saveTarget = saveTarget?.takeIf { it.isNotBlank() },
         saveTargetLayout = saveTargetLayout?.takeIf { it.isNotBlank() },
     )
+}
+
+/**
+ * What RomM says of the ROM beyond its files, as the panels show it: its summary on one line (they
+ * have no room for paragraphs) and cut at a word near [CatalogSyncer.SUMMARY_LENGTH] characters, the
+ * year of its first release in UTC, and its first few genres and companies. Null when it says none of it.
+ */
+internal fun RomDto.toDetails(): RomDetailsEntity? {
+    val about = summary?.let(::shortSummary)
+    val year = metadatum?.firstReleaseDate?.let { Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).year }
+    val genres = names(metadatum?.genres, CatalogSyncer.GENRES)
+    val companies = names(metadatum?.companies, CatalogSyncer.COMPANIES)
+    if (about == null && year == null && genres.isEmpty() && companies.isEmpty()) return null
+    return RomDetailsEntity(id, about, year, genres.joinToString("\n"), companies.joinToString("\n"))
+}
+
+private val SPACES = Regex("\\s+")
+
+/** [names] on one line each, blanks and repeats left out, the first [most] of them. */
+private fun names(names: List<String>?, most: Int): List<String> =
+    names.orEmpty().map { it.replace(SPACES, " ").trim() }.filter { it.isNotEmpty() }.distinct().take(most)
+
+/** [text] on one line, cut at the last word that fits [CatalogSyncer.SUMMARY_LENGTH] characters with an ellipsis; null when blank. */
+internal fun shortSummary(text: String): String? {
+    val plain = text.replace(SPACES, " ").trim()
+    if (plain.isEmpty()) return null
+    if (plain.length <= CatalogSyncer.SUMMARY_LENGTH) return plain
+    val room = plain.substring(0, CatalogSyncer.SUMMARY_LENGTH) // the ellipsis takes the place of the space before the next word
+    // At a space, unless the summary has none in its second half (a long URL): then mid-word, never mid-character.
+    val cut = room.substringBeforeLast(' ', "").takeIf { it.length >= CatalogSyncer.SUMMARY_LENGTH / 2 }
+        ?: room.dropLast(1).let { if (it.last().isHighSurrogate()) it.dropLast(1) else it }
+    return cut.trimEnd { it.isWhitespace() || it in ",;:.-–—" } + "…"
 }
 
 internal fun RomDto.toFileEntities(): List<RomFileEntity> = files.map { f ->

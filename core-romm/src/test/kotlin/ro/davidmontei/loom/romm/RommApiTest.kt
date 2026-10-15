@@ -16,6 +16,7 @@ import ro.davidmontei.loom.romm.RommFixtures.rom
 import ro.davidmontei.loom.romm.RommFixtures.romFile
 import ro.davidmontei.loom.romm.api.RommApi
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 
 class RommApiTest {
@@ -112,6 +113,37 @@ class RommApiTest {
         val detail = rommCall { api.rom(7) }
         assertThat(detail.titleId).isNull()
         assertThat(detail.saveTargetLayout).isNull()
+    }
+
+    /** A page of ROMs carries what the details panels show: the summary, and the year, genres and companies. */
+    @Test fun aRomsPageCarriesSummaryAndMetadata() = runTest {
+        val matched = rom(1, summary = "Crono travels through time.", genres = listOf("Role-playing (RPG)", "Adventure"),
+            companies = listOf("Square Co., Ltd.", "Nintendo"), firstReleaseDate = 794_880_000_000)
+        val unmatched = rom(2, summary = null, genres = emptyList(), companies = emptyList(), firstReleaseDate = null)
+        server.enqueue(json(page(listOf(matched, unmatched), total = 2, limit = 250, offset = 0).toString()))
+        val (first, second) = rommCall { api.roms(offset = 0, limit = 250) }.items
+        assertThat(first.summary).isEqualTo("Crono travels through time.")
+        assertThat(first.metadatum!!.genres).containsExactly("Role-playing (RPG)", "Adventure").inOrder()
+        assertThat(first.metadatum!!.companies).containsExactly("Square Co., Ltd.", "Nintendo").inOrder()
+        assertThat(first.metadatum!!.firstReleaseDate).isEqualTo(794_880_000_000)
+        assertThat(second.summary).isNull()
+        assertThat(second.metadatum!!.genres).isEmpty()
+        assertThat(second.metadatum!!.firstReleaseDate).isNull()
+    }
+
+    /** A server that leaves the metadata out, or sends its lists as null, still reads: there's just nothing to show. */
+    @Test fun romsWithoutMetadataStillParse() = runTest {
+        server.enqueue(json(JsonObject(rom(7) - setOf("summary", "metadatum")).toString()))
+        val bare = rommCall { api.rom(7) }
+        assertThat(bare.summary).isNull()
+        assertThat(bare.metadatum).isNull()
+
+        val nulls = JsonObject(rom(8) + ("metadatum" to JsonObject(mapOf("genres" to JsonNull, "companies" to JsonNull))))
+        server.enqueue(json(nulls.toString()))
+        val metadatum = rommCall { api.rom(8) }.metadatum!!
+        assertThat(metadatum.genres).isEmpty()
+        assertThat(metadatum.companies).isEmpty()
+        assertThat(metadatum.firstReleaseDate).isNull()
     }
 
     @Test fun romIdentifiersParse() = runTest {

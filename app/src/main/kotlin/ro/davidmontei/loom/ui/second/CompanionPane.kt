@@ -13,14 +13,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import okhttp3.HttpUrl
 import ro.davidmontei.loom.ui.components.LoomProgressBar
@@ -31,6 +35,9 @@ import ro.davidmontei.loom.ui.components.StatusBadge
 import ro.davidmontei.loom.ui.library.Cover
 import ro.davidmontei.loom.ui.library.GameFacts
 import ro.davidmontei.loom.ui.library.GameItem
+import ro.davidmontei.loom.ui.library.RomDetails
+import ro.davidmontei.loom.ui.library.companiesLine
+import ro.davidmontei.loom.ui.library.releaseLine
 import ro.davidmontei.loom.ui.library.StateBadge
 import ro.davidmontei.loom.ui.onboarding.Countdown
 import ro.davidmontei.loom.ui.onboarding.pairingCodeStyle
@@ -46,15 +53,19 @@ import ro.davidmontei.loom.ui.theme.tabular
 
 /**
  * The focused game, as a wide window shows it beside the games and a second screen on its own: its
- * cover, its title, and what its details say. Nothing in it can be pressed or focused: the pad stays
- * with the games, and A opens the details to act on the game.
+ * cover, its title, what its details say, then what RomM says of it ([details]): when it came out,
+ * what kind of game it is, who made it and what it's about. Nothing in it can be pressed or focused:
+ * the pad stays with the games, and A opens the details to act on the game.
  *
  * Wider than tall (the Thor's bottom screen), the cover is beside the words; taller, above them,
  * taking the room they leave. Where that leaves too little (a phone on its side), a small cover sits
- * beside the title and the rest takes fewer lines. Either way the words fit.
+ * beside the title and the rest takes fewer lines. Either way the words fit: what RomM says takes the
+ * room left, as much of it as fits.
  */
 @Composable
-fun GamePanel(game: GameItem, platformName: String?, coverBase: HttpUrl?, modifier: Modifier = Modifier) {
+fun GamePanel(game: GameItem, platformName: String?, coverBase: HttpUrl?, details: RomDetails?, modifier: Modifier = Modifier) {
+    // Another game's, as the focus moves on and its own are still being read, is never shown.
+    val about = details?.takeIf { it.romId == game.id }
     BoxWithConstraints(modifier.testTag("game-panel")) {
         when {
             maxWidth > maxHeight -> {
@@ -64,14 +75,17 @@ fun GamePanel(game: GameItem, platformName: String?, coverBase: HttpUrl?, modifi
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.s)) {
                         Title(game)
                         PanelFacts(game, platformName)
+                        about?.let { AboutTheGame(it, Modifier.weight(1f, fill = false)) }
                     }
                 }
             }
+            // The cover takes what the words leave, so the summary's few lines come first.
             maxHeight >= TALL_ENOUGH_FOR_A_COVER_ABOVE -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Space.s)) {
                 PanelCover(game, coverBase, Modifier.weight(1f, fill = false).padding(bottom = Space.s).align(Alignment.CenterHorizontally)
                     .aspectRatio(3f / 4f, matchHeightConstraintsFirst = true))
                 Title(game)
                 PanelFacts(game, platformName)
+                about?.let { AboutTheGame(it, summaryLines = SUMMARY_LINES_UNDER_A_COVER) }
             }
             else -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Space.s)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
@@ -79,6 +93,7 @@ fun GamePanel(game: GameItem, platformName: String?, coverBase: HttpUrl?, modifi
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.s)) { Title(game) }
                 }
                 PanelFacts(game, platformName, short = true)
+                about?.let { AboutTheGame(it, Modifier.weight(1f, fill = false)) }
             }
         }
     }
@@ -86,6 +101,40 @@ fun GamePanel(game: GameItem, platformName: String?, coverBase: HttpUrl?, modifi
 
 /** Below this a cover above the words would be too small to make out. */
 private val TALL_ENOUGH_FOR_A_COVER_ABOVE = 460.dp
+
+/** Under a cover that takes the room the words leave, the summary keeps to a few lines. */
+private const val SUMMARY_LINES_UNDER_A_COVER = 4
+
+/**
+ * What RomM says of the game, a line at a time while they fit the room it's given: when it came out
+ * and what kind of game it is, then who made it (two lines each at most), then as much of the summary
+ * as the rest holds, at most [summaryLines], ending in an ellipsis where it's cut. A line with no room
+ * left is left out, with what follows it, rather than cut through.
+ */
+@Composable
+private fun AboutTheGame(details: RomDetails, modifier: Modifier = Modifier, summaryLines: Int = Int.MAX_VALUE) {
+    val style = LocalTextStyle.current.merge(MaterialTheme.typography.bodyMedium)
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    BoxWithConstraints(modifier.padding(top = Space.xs).testTag("about-the-game")) {
+        val gap = Space.xs
+        val lineHeight = with(density) { style.lineHeight.toDp() }
+        val width = constraints.maxWidth
+        var room = maxHeight
+        val lines = listOfNotNull(releaseLine(details), companiesLine(details)).filter { text ->
+            val height = with(density) { measurer.measure(text, style, maxLines = 2, constraints = Constraints(maxWidth = width)).size.height.toDp() }
+            (height <= room).also { fits -> room = if (fits) room - height - gap else 0.dp }
+        }
+        val summary = details.summary?.takeIf { room >= lineHeight }
+        Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+            lines.forEach { Text(it, style = style, color = LoomColors.TextMuted, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+            summary?.let {
+                Text(it, style = style, color = LoomColors.TextMuted, maxLines = minOf(summaryLines, (room / lineHeight).toInt()),
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("summary"))
+            }
+        }
+    }
+}
 
 @Composable
 private fun PanelCover(game: GameItem, coverBase: HttpUrl?, modifier: Modifier) {

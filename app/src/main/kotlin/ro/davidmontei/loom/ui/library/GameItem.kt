@@ -1,6 +1,7 @@
 package ro.davidmontei.loom.ui.library
 
 import ro.davidmontei.loom.data.db.GameRow
+import ro.davidmontei.loom.data.db.RomDetailsEntity
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.db.SaveUnitEntity
 import ro.davidmontei.loom.data.download.waitWording
@@ -43,6 +44,21 @@ data class GameItem(
     /** Waiting in the queue for its platform's folder to be chosen there. */
     val needsFolder: Boolean = false,
 )
+
+/**
+ * What RomM says of game [romId] beyond its files, as the panels showing the focused game show it:
+ * what it is about, cut short, the year it came out, and a few of its genres and companies.
+ */
+data class RomDetails(
+    val romId: Int,
+    val summary: String?,
+    val releaseYear: Int?,
+    val genres: List<String>,
+    val companies: List<String>,
+)
+
+fun RomDetailsEntity.toDetails() = RomDetails(romId, summary, releaseYear, genres.lines().filter { it.isNotEmpty() },
+    companies.lines().filter { it.isNotEmpty() })
 
 /** Where an installed game's save stands, as its details show it. */
 data class GameSave(

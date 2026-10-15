@@ -15,6 +15,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import ro.davidmontei.loom.data.settings.Settings
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
 import ro.davidmontei.loom.net.NotPairedException
@@ -91,6 +92,19 @@ class CatalogSyncScheduler(private val workManager: WorkManager) {
             if (full) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
             request,
         )
+    }
+
+    /**
+     * The first time Loom opens after an upgrade that stores more of each ROM than the catalog holds
+     * ([Settings.catalogFields] behind [CatalogSyncer.CATALOG_FIELDS]): a sync, which the syncer makes a
+     * full one, so every game gets what's new without the owner asking. Until it has run, every start
+     * asks again; one already queued or running is kept. Not before setup is done, nor while signed
+     * out ([paired] false), where it could only fail. True if it queued one.
+     */
+    fun syncAfterUpgrade(settings: Settings, paired: Boolean): Boolean {
+        if (!settings.onboardingComplete || !paired || settings.catalogFields >= CatalogSyncer.CATALOG_FIELDS) return false
+        enqueue(full = false)
+        return true
     }
 
     val status: Flow<CatalogSyncStatus> =
