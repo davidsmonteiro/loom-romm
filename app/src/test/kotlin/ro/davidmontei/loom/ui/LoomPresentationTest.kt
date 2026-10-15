@@ -25,6 +25,7 @@ import org.robolectric.shadows.ShadowDisplayManager
 import org.robolectric.util.ReflectionHelpers
 import ro.davidmontei.loom.R
 import ro.davidmontei.loom.ui.second.LoomPresentation
+import ro.davidmontei.loom.ui.second.PresentationWindow
 import java.lang.reflect.Proxy
 
 /** The window the second screen is drawn in: one the pad never reaches, laid out for its own screen. */
@@ -110,6 +111,30 @@ class LoomPresentationTest {
         assertThrows(WindowManager.InvalidDisplayException::class.java) { panel.show() }
         idle()
         assertThat(displayListeners()).isEqualTo(before)
+    }
+
+    /**
+     * What the controller hears of the panel: only the system taking it away (its screen gone) is news.
+     * Loom's own dismiss isn't, nor is an earlier panel's dismissal, which arrives later, once the
+     * panel is dismissed and shown again in one go (the setting switched off and on).
+     */
+    @Test fun onlyTheSystemTakingThePanelAwayIsReported() {
+        var gone = 0
+        val window = PresentationWindow(activity) { Text("Chrono Trigger") }
+        val bottom = bottomScreen()
+        assertThat(window.show(bottom) { gone++ }).isTrue()
+        idle()
+        window.dismiss()
+        idle()
+        assertThat(gone).isEqualTo(0)
+        assertThat(window.show(bottom) { gone++ }).isTrue()
+        window.dismiss()
+        assertThat(window.show(bottom) { gone++ }).isTrue()
+        idle()
+        assertThat(gone).isEqualTo(0)
+        ShadowDisplayManager.removeDisplay(bottom.displayId)
+        idle()
+        assertThat(gone).isEqualTo(1)
     }
 
     /** A tap on the panel does nothing there, but it is someone using Loom: it lights the panel again. */

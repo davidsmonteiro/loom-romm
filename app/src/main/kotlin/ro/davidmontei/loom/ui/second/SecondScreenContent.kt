@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import ro.davidmontei.loom.R
 import ro.davidmontei.loom.ui.components.Space
@@ -56,6 +57,13 @@ fun SecondScreenContent(content: CompanionContent, strip: QueueStrip? = null, in
         }
     }
     if (lit) Lit(content, strip) else Box(Modifier.fillMaxSize().background(Color.Black).testTag("second-screen-dark"))
+}
+
+/** The second screen as [holder] has it: what the screens publish, the queue's strip, and the input that keeps it lit. */
+@Composable
+fun SecondScreenPanel(holder: CompanionHolder) {
+    SecondScreenContent(holder.content.collectAsStateWithLifecycle().value, holder.strip.collectAsStateWithLifecycle().value,
+        holder.inputs.collectAsStateWithLifecycle().value)
 }
 
 @Composable

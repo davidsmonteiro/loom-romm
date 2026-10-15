@@ -45,8 +45,8 @@ import ro.davidmontei.loom.ui.queue.queueItems
 import ro.davidmontei.loom.ui.second.CompanionHolder
 import ro.davidmontei.loom.ui.second.LocalCompanion
 import ro.davidmontei.loom.ui.second.PresentationWindow
-import ro.davidmontei.loom.ui.second.SecondScreenContent
 import ro.davidmontei.loom.ui.second.SecondScreenController
+import ro.davidmontei.loom.ui.second.SecondScreenPanel
 import ro.davidmontei.loom.ui.second.queueStrip
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.LoomTheme
@@ -100,8 +100,7 @@ class MainActivity : ComponentActivity() {
         // Handed state only: a ViewModel asked for on the second screen would be another copy of this one's.
         val holder = app.companion
         secondScreen = SecondScreenController(this, holder, app.secondScreen, PresentationWindow(this, onTouch = holder::poke) {
-            SecondScreenContent(holder.content.collectAsStateWithLifecycle().value, holder.strip.collectAsStateWithLifecycle().value,
-                holder.inputs.collectAsStateWithLifecycle().value)
+            SecondScreenPanel(holder)
         })
         lifecycle.addObserver(secondScreen)
         setContent {

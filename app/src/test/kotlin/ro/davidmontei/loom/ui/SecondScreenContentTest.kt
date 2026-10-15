@@ -30,9 +30,11 @@ import ro.davidmontei.loom.ui.library.GameSave
 import ro.davidmontei.loom.ui.library.InstallState
 import ro.davidmontei.loom.ui.queue.transferLine
 import ro.davidmontei.loom.ui.second.CompanionContent
+import ro.davidmontei.loom.ui.second.CompanionHolder
 import ro.davidmontei.loom.ui.second.DIM_AFTER
 import ro.davidmontei.loom.ui.second.QueueStrip
 import ro.davidmontei.loom.ui.second.SecondScreenContent
+import ro.davidmontei.loom.ui.second.SecondScreenPanel
 
 /**
  * The second screen as the Thor's bottom one shows it beside Loom: 538×444 dp, what Compose measures
@@ -213,6 +215,22 @@ class SecondScreenContentTest {
         dark.assertDoesNotExist()
         waitFor(2_000)
         dark.assertExists()
+    }
+
+    /**
+     * The panel as the activity draws it, from what it hands the second screen: a button or a touch
+     * reaching Loom (the activity tells the holder of each) lights it again.
+     */
+    @Test fun inputReachingLoomLightsThePanelAgain() {
+        val holder = CompanionHolder()
+        holder.publish(this, CompanionContent.Game(tallest, "Nintendo 3DS", null))
+        rule.setContent { LoomTestTheme { SecondScreenPanel(holder) } }
+        waitFor(DIM_AFTER.inWholeMilliseconds + 1_000)
+        dark.assertExists()
+        holder.poke()
+        rule.waitForIdle()
+        rule.onNodeWithTag("game-panel").assertExists()
+        dark.assertDoesNotExist()
     }
 
     /** A download moving on changes what the screen shows, but nobody is looking: it goes dark all the same. */
