@@ -124,6 +124,18 @@ class SecondScreenContentTest {
         rule.onNodeWithText("Retrying won't help until this is fixed.").assertExists()
     }
 
+    /** Pairing's code, larger than the top screen has room for, with the code and how long it lasts under it. */
+    @Test fun thePairingCodeFitsTheBottomScreen() {
+        show(CompanionContent.Pairing(OnboardingScreenTest.session, System.currentTimeMillis()))
+        rule.assertFitsIn("second-screen")
+        rule.onNodeWithText("ABCD-2345").assertExists()
+        rule.onNodeWithText("Waiting for approval · code expires in 10:00").assertExists()
+        val qr = rule.onNodeWithContentDescription("QR code", substring = true).fetchSemanticsNode().boundsInRoot
+        assertThat(qr.bottom).isAtMost(rule.onNodeWithTag("second-screen").fetchSemanticsNode().boundsInRoot.bottom)
+        assertThat(with(rule.density) { qr.height.toDp().value }).isAtLeast(232f + 28f + 30f) // the top screen's, and more
+        rule.saveScreenshot("second-screen-pairing")
+    }
+
     /** It takes no input: the pad stays with Loom on the other screen. */
     @Test fun nothingOnTheBottomScreenTakesFocus() {
         show(CompanionContent.Game(tallest, "Nintendo 3DS", null))

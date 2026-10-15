@@ -21,6 +21,9 @@ import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import ro.davidmontei.loom.ui.theme.LoomColors
 
+/** The light margin [QrCode] draws around the code, on both sides together: it takes [size] plus this. */
+val QR_MARGINS = 28.dp
+
 /** A QR code drawn module by module: dark on off-white, which every phone camera reads. */
 @Composable
 fun QrCode(content: String, modifier: Modifier = Modifier, size: Dp = 240.dp) {
@@ -32,7 +35,7 @@ fun QrCode(content: String, modifier: Modifier = Modifier, size: Dp = 240.dp) {
         modifier
             .semantics { contentDescription = "QR code for $content" }
             .background(LoomColors.Text, RoundedCornerShape(12.dp))
-            .padding(14.dp),
+            .padding(QR_MARGINS / 2),
     ) {
         Canvas(Modifier.size(size)) {
             val cell = this.size.width / matrix.width

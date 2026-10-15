@@ -24,12 +24,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import okhttp3.HttpUrl
 import ro.davidmontei.loom.ui.components.LoomProgressBar
+import ro.davidmontei.loom.ui.components.QR_MARGINS
+import ro.davidmontei.loom.ui.components.QrCode
 import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.StatusBadge
 import ro.davidmontei.loom.ui.library.Cover
 import ro.davidmontei.loom.ui.library.GameFacts
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.library.StateBadge
+import ro.davidmontei.loom.ui.onboarding.Countdown
+import ro.davidmontei.loom.ui.onboarding.pairingCodeStyle
 import ro.davidmontei.loom.ui.queue.ConflictItem
 import ro.davidmontei.loom.ui.queue.JobBadge
 import ro.davidmontei.loom.ui.queue.QueueItem
@@ -165,3 +169,22 @@ fun QueueStripRow(strip: QueueStrip, modifier: Modifier = Modifier) {
         }
     }
 }
+
+/**
+ * Pairing's code to scan with a phone, as large as the screen leaves room for, with the code under it
+ * and how long it lasts. The step on top keeps the words and where to type the code without a camera.
+ */
+@Composable
+fun PairingPanel(pairing: CompanionContent.Pairing, modifier: Modifier = Modifier) {
+    BoxWithConstraints(modifier.testTag("pairing-panel"), contentAlignment = Alignment.Center) {
+        val qr = (minOf(maxWidth, maxHeight - UNDER_THE_QR) - QR_MARGINS).coerceAtLeast(0.dp)
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Space.m)) {
+            QrCode(pairing.session.verificationUrlComplete.toString(), size = qr)
+            Text(pairing.session.displayCode, style = pairingCodeStyle(), color = LoomColors.Accent, maxLines = 1)
+            Countdown(pairing.startedAt, pairing.session.expiresInSeconds)
+        }
+    }
+}
+
+/** What goes under the QR code: the code's line and the countdown's, and the space above each. */
+private val UNDER_THE_QR = 88.dp

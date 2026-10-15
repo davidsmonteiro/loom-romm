@@ -1,6 +1,7 @@
 package ro.davidmontei.loom.ui.second
 
 import okhttp3.HttpUrl
+import ro.davidmontei.loom.romm.pairing.DeviceAuthSession
 import ro.davidmontei.loom.ui.library.GameItem
 import ro.davidmontei.loom.ui.queue.ConflictItem
 import ro.davidmontei.loom.ui.queue.QueueItem
@@ -22,6 +23,9 @@ sealed interface CompanionContent {
 
     /** The queue's download, large. */
     data class Job(val item: QueueItem) : CompanionContent
+
+    /** Pairing's code to scan with a phone, large, with the code to type and how long it lasts from [startedAt]. */
+    data class Pairing(val session: DeviceAuthSession, val startedAt: Long) : CompanionContent
 }
 
 /**

@@ -42,6 +42,7 @@ fun SecondScreenContent(content: CompanionContent, strip: QueueStrip? = null) {
             }
             is CompanionContent.Conflict -> ConflictPanel(content.item, Modifier.fillMaxSize())
             is CompanionContent.Job -> JobPanel(content.item, Modifier.fillMaxSize())
+            is CompanionContent.Pairing -> PairingPanel(content, Modifier.fillMaxSize())
         }
     }
 }

@@ -43,6 +43,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -64,10 +65,14 @@ import ro.davidmontei.loom.ui.components.LoomButton
 import ro.davidmontei.loom.ui.components.LoomChip
 import ro.davidmontei.loom.ui.components.LoomProgressBar
 import ro.davidmontei.loom.ui.components.LoomTextField
+import ro.davidmontei.loom.ui.components.QR_MARGINS
 import ro.davidmontei.loom.ui.components.QrCode
 import ro.davidmontei.loom.ui.components.ScreenScaffold
 import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.layout.rememberLoomLayout
+import ro.davidmontei.loom.ui.second.CompanionContent
+import ro.davidmontei.loom.ui.second.PublishCompanion
+import ro.davidmontei.loom.ui.second.secondScreenShowing
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 import java.io.File
@@ -130,6 +135,9 @@ fun OnboardingContent(state: OnboardingState, actions: OnboardingActions) {
     // step: B leaves it, and Loom keeps the token it has. A new token that works leaves it too.
     BackHandler { if (state.pairAgain) actions.finish() else previous?.let(actions::go) }
     if (state.pairAgain) LaunchedEffect(state.pairedAs) { if (state.pairedAs != null) actions.finish() }
+    // A code to scan goes on the second screen, where it can be large; it goes once it's used, expired or put aside.
+    val toScan = state.session.takeIf { state.step == OnboardingStep.PAIR && state.pairMode == PairMode.DEVICE_CODE && state.pairedAs == null }
+    PublishCompanion(toScan?.let { CompanionContent.Pairing(it, state.sessionStartedAt) } ?: CompanionContent.Idle)
 
     val stepNumber = state.step.ordinal
     ScreenScaffold(title = if (state.pairAgain) "Pair again" else "Set up Loom", hints = hints, actions = {
@@ -282,10 +290,11 @@ private fun Pair(state: OnboardingState, actions: OnboardingActions, first: Focu
     // The QR code sits beside the whole step rather than under it: nothing below the chips takes focus, so on a
     // gamepad anything pushed off the bottom of the screen could never be scrolled to. A narrow screen has no
     // room beside the step: a tall one (a phone) has room under it, and a short one (the Thor's bottom screen)
-    // has a smaller code beside the words about it.
+    // has a smaller code beside the words about it. With a second screen showing, it is drawn there instead, larger.
     val layout = rememberLoomLayout()
-    val qrUnder = layout.compact && layout.tallEnough
-    val qrBesideCode = layout.compact && !layout.tallEnough
+    val qrHere = !secondScreenShowing()
+    val qrUnder = qrHere && layout.compact && layout.tallEnough
+    val qrBesideCode = qrHere && layout.compact && !layout.tallEnough
     Row(horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.m)) {
             Title("Pair with RomM")
@@ -307,7 +316,7 @@ private fun Pair(state: OnboardingState, actions: OnboardingActions, first: Focu
                         QrCode(session.verificationUrlComplete.toString(), size = SHORT_SCREEN_QR)
                     }
                 } else {
-                    SessionCode(session, state.sessionStartedAt)
+                    SessionCode(session, state.sessionStartedAt, qrHere)
                 }
                 PairMode.PAIR_CODE -> {
                     Text("In RomM's web UI, open your profile → API tokens, create a token for Loom and choose “Pair device”. Type the 8-character code it shows (it lasts 60 seconds).",
@@ -332,27 +341,34 @@ private fun Pair(state: OnboardingState, actions: OnboardingActions, first: Focu
                 }
             }
         }
-        if (session != null && !layout.compact) QrCode(session.verificationUrlComplete.toString(), size = 232.dp)
+        if (session != null && qrHere && !layout.compact) QrCode(session.verificationUrlComplete.toString(), size = 232.dp)
     }
 }
 
 /** The QR code beside the code on a short, narrow screen: the Thor's bottom one. */
 private val SHORT_SCREEN_QR = 152.dp
 
-/** The light margin [QrCode] draws around the code, on both sides. */
-private val QR_MARGINS = 28.dp
-
-/** The code to approve Loom with, where to enter it without the QR code, and how long it lasts. */
+/**
+ * The code to approve Loom with, where to enter it without the QR code, and how long it lasts.
+ * [qrHere]: false when the QR code is on the second screen.
+ */
 @Composable
-private fun SessionCode(session: DeviceAuthSession, startedAt: Long) {
-    Text("Scan with your phone, sign in to RomM if asked, and approve Loom.", style = MaterialTheme.typography.bodyLarge)
-    Text(session.displayCode, style = MaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace, letterSpacing = 4.sp), color = LoomColors.Accent)
+private fun SessionCode(session: DeviceAuthSession, startedAt: Long, qrHere: Boolean = true) {
+    Text(if (qrHere) "Scan with your phone, sign in to RomM if asked, and approve Loom."
+        else "Scan the QR code on the other screen with your phone, sign in to RomM if asked, and approve Loom.",
+        style = MaterialTheme.typography.bodyLarge)
+    Text(session.displayCode, style = pairingCodeStyle(), color = LoomColors.Accent)
     Text("Or open ${session.verificationUrl} and enter the code.", style = MaterialTheme.typography.bodyMedium, color = LoomColors.TextMuted)
     Countdown(startedAt, session.expiresInSeconds)
 }
 
+/** How a pairing code is written: large, its characters apart, so it reads at a glance. */
 @Composable
-private fun Countdown(startedAt: Long, seconds: Int) {
+internal fun pairingCodeStyle(): TextStyle = MaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace, letterSpacing = 4.sp)
+
+/** How long the pairing code started at [startedAt] has left of its [seconds], to the second. */
+@Composable
+internal fun Countdown(startedAt: Long, seconds: Int) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(startedAt) { while (true) { now = System.currentTimeMillis(); delay(1000) } }
     val left = (seconds - (now - startedAt) / 1000).coerceAtLeast(0)

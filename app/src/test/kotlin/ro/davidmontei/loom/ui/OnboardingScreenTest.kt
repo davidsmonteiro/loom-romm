@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.NotificationManager
 import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -14,6 +15,7 @@ import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -21,16 +23,22 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import ro.davidmontei.loom.romm.dto.DeviceAuthInitResponse
+import ro.davidmontei.loom.romm.pairing.DeviceAuthSession
 import ro.davidmontei.loom.ui.onboarding.OnboardingActions
 import ro.davidmontei.loom.ui.onboarding.OnboardingContent
 import ro.davidmontei.loom.ui.onboarding.OnboardingState
 import ro.davidmontei.loom.ui.onboarding.OnboardingStep
 import ro.davidmontei.loom.ui.onboarding.PairMode
+import ro.davidmontei.loom.ui.second.CompanionContent
+import ro.davidmontei.loom.ui.second.CompanionHolder
+import ro.davidmontei.loom.ui.second.LocalCompanion
 import java.io.File
 
 /** Drives the onboarding steps with the pad only, as on the Thor. */
@@ -59,9 +67,10 @@ class OnboardingScreenTest {
         override fun finish() { calls += "finish" }
     }
 
-    private fun show(initial: OnboardingState) {
+    /** [companion]: what the activity hands the screens for a second screen; none by default, as on a phone. */
+    private fun show(initial: OnboardingState, companion: CompanionHolder? = null) {
         state = initial
-        rule.setContent { LoomTestTheme { OnboardingContent(state, actions) } }
+        rule.setContent { CompositionLocalProvider(LocalCompanion provides companion) { LoomTestTheme { OnboardingContent(state, actions) } } }
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
     }
 
@@ -206,5 +215,68 @@ class OnboardingScreenTest {
         rule.onNode(hasSetTextAction()).assertIsFocused()
         update { it.copy(probing = false, serverError = "Couldn't reach RomM") }
         rule.onNode(hasSetTextAction()).assertIsFocused()
+    }
+
+    // --- the second screen: the QR code to scan is drawn there, larger ---
+
+    companion object {
+        /** A code to approve on a phone, as RomM hands it out. */
+        val session = DeviceAuthSession(
+            "https://romm.example.com/".toHttpUrl(), "ABCD2345", "https://romm.example.com/pair/device".toHttpUrl(),
+            "https://romm.example.com/pair/device?user_code=ABCD2345".toHttpUrl(), 600,
+            DeviceAuthInitResponse("dev-code", "ABCD2345", "/pair/device", "/pair/device?user_code=ABCD2345", expiresIn = 600, interval = 5),
+        )
+    }
+
+    /** The Pair step with [session] to scan, and a second screen showing what's published when [presenting]. */
+    private fun showThePairingCode(presenting: Boolean): CompanionHolder {
+        val companion = CompanionHolder().apply { setPresenting(presenting) }
+        show(OnboardingState(step = OnboardingStep.PAIR, session = session, sessionStartedAt = System.currentTimeMillis()), companion)
+        return companion
+    }
+
+    private val qrCode get() = rule.onNodeWithContentDescription("QR code", substring = true)
+
+    @Test fun withABottomScreenTheQrCodeIsDrawnThere() = theQrCodeIsDrawnOnTheSecondScreen()
+
+    /** A phone with a monitor showing the second screen: the code would otherwise be under the step. */
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun aPhonesSecondScreenTakesTheQrCodeFromUnderTheStep() = theQrCodeIsDrawnOnTheSecondScreen()
+
+    /** A short, narrow window: the code would otherwise be beside the words about it. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun aShortNarrowWindowsSecondScreenTakesTheQrCodeFromBesideIt() = theQrCodeIsDrawnOnTheSecondScreen()
+
+    private fun theQrCodeIsDrawnOnTheSecondScreen() {
+        val companion = showThePairingCode(presenting = true)
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Pairing(session, state.sessionStartedAt))
+        qrCode.assertDoesNotExist()
+        rule.onNodeWithText("Scan the QR code on the other screen with your phone, sign in to RomM if asked, and approve Loom.").assertExists()
+        rule.onNodeWithText("ABCD-2345").assertExists() // still here, to type in where there's no camera
+        rule.onNodeWithText("Scan a code").assertIsFocused()
+    }
+
+    @Test fun withoutOneItStaysBesideTheSteps() {
+        val companion = showThePairingCode(presenting = false)
+        qrCode.assertExists()
+        rule.onNodeWithText("Scan with your phone, sign in to RomM if asked, and approve Loom.").assertExists()
+        rule.runOnIdle { companion.setPresenting(true) } // "Use the second screen" turned on
+        rule.waitForIdle()
+        qrCode.assertDoesNotExist()
+    }
+
+    /** Once the code is used, expired or put aside for another way to pair, the second screen lets it go. */
+    @Test fun theSecondScreenLetsTheCodeGoOnceItsDoneWith() {
+        val companion = showThePairingCode(presenting = true)
+        press(Key.DirectionRight)
+        press(Key.DirectionCenter) // Enter a pair code
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Idle)
+        update { it.copy(pairMode = PairMode.DEVICE_CODE) }
+        assertThat(companion.content.value).isInstanceOf(CompanionContent.Pairing::class.java)
+        update { it.copy(session = null, pairError = "The code expired before it was approved. Start again for a new one.") }
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Idle)
+        update { it.copy(session = session, sessionStartedAt = System.currentTimeMillis()) }
+        update { it.copy(session = null, pairedAs = "david") }
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Idle)
     }
 }
