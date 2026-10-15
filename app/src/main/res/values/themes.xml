@@ -6,4 +6,10 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+
+    <!-- The second screen's window: black, edge to edge, never a floating dialog. -->
+    <style name="Theme.Loom.SecondScreen" parent="android:Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowIsFloating">false</item>
+    </style>
 </resources>

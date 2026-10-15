@@ -57,6 +57,7 @@ import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
@@ -101,6 +102,7 @@ import ro.davidmontei.loom.ui.components.ago
 import ro.davidmontei.loom.ui.components.dateTime
 import ro.davidmontei.loom.ui.components.gameCount
 import ro.davidmontei.loom.ui.components.padScroll
+import ro.davidmontei.loom.ui.layout.rememberLoomLayout
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 
@@ -138,6 +140,8 @@ interface SettingsActions {
     /** PPSSPP's memory stick; null goes back to the ROMs folder's saves/PPSSPP. */
     fun setPpssppFolder(dir: java.io.File?)
     fun setSwap(swap: Boolean)
+    /** Whether a second screen (the Thor's bottom one) shows what the pad is on. */
+    fun setSecondScreen(on: Boolean)
     fun openBatterySettings()
     fun licenseText(): String
     fun fontLicense(): String
@@ -177,6 +181,7 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
             override fun setMelonDsFolder(dir: java.io.File?) { vm.setMelonDsFolder(dir) }
             override fun setPpssppFolder(dir: java.io.File?) { vm.setPpssppFolder(dir) }
             override fun setSwap(swap: Boolean) { vm.setSwap(swap) }
+            override fun setSecondScreen(on: Boolean) { vm.setSecondScreen(on) }
             override fun openBatterySettings() {
                 runCatching {
                     context.startActivity(Intent(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri()))
@@ -191,11 +196,23 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
 
 private val settingsHints = listOf(ButtonHint("A", "Select"), ButtonHint("B", "Back"))
 
+/**
+ * The narrowest window Settings shows its list and a section side by side in: there the section has
+ * 480 dp beside the list, as much as on its own on the Thor's bottom screen. Narrower, as on that
+ * screen, a section opens on its own; at 600 dp one beside the list had 282 dp and its rows squeezed.
+ */
+private val TWO_PANES_FROM = 800.dp
+
 @Composable
 fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: String? = null) {
     // Saveable: "Pair again" opens pairing on top, and Settings comes back from saved state.
     var section by rememberSaveable { mutableStateOf(SettingsSection.SERVER) }
     var backFromPairing by rememberSaveable { mutableStateOf(false) }
+    // A window under TWO_PANES_FROM shows the list, then the section it opens on its own: whether one is open.
+    // On a wider one, whether focus is in the section rather than the list, so a move to a narrow screen
+    // (Loom moved to the Thor's bottom screen, which keeps the activity) shows the pane focus is in.
+    val onePane = LocalWindowInfo.current.containerDpSize.width < TWO_PANES_FROM
+    var open by rememberSaveable { mutableStateOf(false) }
     val sectionActions = remember(actions) {
         object : SettingsActions by actions {
             override fun repair() { backFromPairing = true; actions.repair() }
@@ -206,56 +223,83 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
     // Moving right from the section list lands on the section's first control, not the nearest one.
     val contentFirst = remember { FocusRequester() }
     val first = Modifier.focusRequester(contentFirst)
-    InitialFocus(firstSection, unless = { backFromPairing })
+    InitialFocus(firstSection, unless = { backFromPairing || (onePane && open) })
     // A on a section opens it: focus moves to its first control once it is shown.
     var opened by remember { mutableIntStateOf(0) }
     LaunchedEffect(opened) { if (opened > 0) runCatching { contentFirst.requestFocus() } }
     // B inside a section undoes that A, back to the section in the list (as Left does); from there it leaves Settings.
     var contentHasFocus by remember { mutableStateOf(false) }
-    BackHandler(enabled = contentHasFocus) { runCatching { sectionFocus.getValue(section).requestFocus() } }
+    BackHandler(enabled = contentHasFocus && !onePane) { runCatching { sectionFocus.getValue(section).requestFocus() } }
+    // On a narrow screen B closes the section, back to it in the list once the list is shown again.
+    var closed by remember { mutableIntStateOf(0) }
+    BackHandler(enabled = onePane && open) { open = false; closed++ }
+    LaunchedEffect(closed) {
+        if (closed > 0) {
+            delay(50) // as InitialFocus: the list has to compose its rows first
+            runCatching { sectionFocus.getValue(section).requestFocus() }
+        }
+    }
+    // A section open on its own when Settings is shown (back from somewhere else) starts on its first control.
+    // Not when a move to a narrow screen leaves it on its own: focus is already where the user was.
+    InitialFocus(contentFirst, unless = { backFromPairing || !(onePane && open) })
 
-    ScreenScaffold(title = "Settings", hints = settingsHints) {
-        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
-            LazyColumn(
-                // Coming back from a section (Left) lands on that section, not whichever is level with the control left behind.
-                Modifier.width(230.dp).fillMaxHeight()
-                    .focusProperties { onEnter = { runCatching { sectionFocus.getValue(section).requestFocus() } } }
-                    .testTag("settings-sections"),
-                contentPadding = PaddingValues(8.dp),
-                // Eight sections fit the Thor's screen only this close together.
-                verticalArrangement = Arrangement.spacedBy(Space.xs),
-            ) {
-                items(SettingsSection.entries) { s ->
-                    LoomRow(
-                        title = s.title, selected = s == section, dense = true, onClick = { section = s; opened++ },
-                        modifier = (if (s == SettingsSection.SERVER) Modifier.focusRequester(firstSection) else Modifier)
-                            .focusRequester(sectionFocus.getValue(s)).testTag("section-${s.name}"),
-                    )
-                }
+    val sectionList: @Composable (Modifier) -> Unit = { modifier ->
+        LazyColumn(
+            // Coming back from a section (Left) lands on that section, not whichever is level with the control left behind.
+            modifier.focusProperties { onEnter = { runCatching { sectionFocus.getValue(section).requestFocus() } } }
+                .onFocusChanged { if (it.hasFocus && !onePane) open = false }
+                .testTag("settings-sections"),
+            contentPadding = PaddingValues(8.dp),
+            // Eight sections fit the Thor's screen only this close together.
+            verticalArrangement = Arrangement.spacedBy(Space.xs),
+        ) {
+            items(SettingsSection.entries) { s ->
+                LoomRow(
+                    title = s.title, selected = s == section, dense = true, onClick = { section = s; open = true; opened++ },
+                    modifier = (if (s == SettingsSection.SERVER) Modifier.focusRequester(firstSection) else Modifier)
+                        .focusRequester(sectionFocus.getValue(s)).testTag("section-${s.name}"),
+                )
             }
-            Column(
-                // Only a move (Right) is redirected: focus given back to a control after a dialog closes stays on it.
-                Modifier.weight(1f).fillMaxHeight()
-                    .onFocusChanged { contentHasFocus = it.hasFocus }
-                    .focusProperties { onEnter = { if (requestedFocusDirection != FocusDirection.Enter) runCatching { contentFirst.requestFocus() } } }
-                    .verticalScroll(rememberScrollState()).padding(8.dp).testTag("settings-content"),
-                verticalArrangement = Arrangement.spacedBy(Space.m),
-            ) {
-                message?.let { Text(it, color = LoomColors.Accent, style = MaterialTheme.typography.bodyMedium) }
-                when (section) {
-                    SettingsSection.SERVER -> ServerSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
-                    SettingsSection.LIBRARY -> LibrarySyncSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
-                    SettingsSection.STORAGE -> StorageSection(state, actions, first)
-                    SettingsSection.MAPPING -> MappingSection(state, actions, first)
-                    SettingsSection.DOWNLOADS -> DownloadsSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
-                    SettingsSection.SAVES -> SaveSyncSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
-                    SettingsSection.CONTROLS -> Box(first) {
+        }
+    }
+    val sectionContent: @Composable (Modifier) -> Unit = { modifier ->
+        Column(
+            // Only a move (Right) is redirected: focus given back to a control after a dialog closes stays on it.
+            modifier
+                .onFocusChanged { contentHasFocus = it.hasFocus; if (it.hasFocus && !onePane) open = true }
+                .focusProperties { onEnter = { if (requestedFocusDirection != FocusDirection.Enter) runCatching { contentFirst.requestFocus() } } }
+                .verticalScroll(rememberScrollState()).padding(8.dp).testTag("settings-content"),
+            verticalArrangement = Arrangement.spacedBy(Space.m),
+        ) {
+            message?.let { Text(it, color = LoomColors.Accent, style = MaterialTheme.typography.bodyMedium) }
+            when (section) {
+                SettingsSection.SERVER -> ServerSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
+                SettingsSection.LIBRARY -> LibrarySyncSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
+                SettingsSection.STORAGE -> StorageSection(state, actions, first)
+                SettingsSection.MAPPING -> MappingSection(state, actions, first)
+                SettingsSection.DOWNLOADS -> DownloadsSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
+                SettingsSection.SAVES -> SaveSyncSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
+                SettingsSection.CONTROLS -> {
+                    Box(first) {
                         LoomSwitchRow("Swap A and B", state.settings?.swapConfirmBack == true, actions::setSwap,
                             subtitle = "For Nintendo-style pads: confirm with the right face button and go back with the bottom one.")
                     }
-                    SettingsSection.ABOUT -> AboutSection(state, actions, first)
+                    LoomSwitchRow("Use the second screen", state.settings?.secondScreen != false, actions::setSecondScreen,
+                        subtitle = "With two screens, as on the Thor, the other one shows the game you're on, or the download or save " +
+                            "conflict in the queue. It only shows: the pad stays here. Off, an app open on the other screen " +
+                            "stays in view while Loom is in front.", subtitleLines = 5)
                 }
+                SettingsSection.ABOUT -> AboutSection(state, actions, first)
             }
+        }
+    }
+
+    ScreenScaffold(title = if (onePane && open) "Settings · ${section.title}" else "Settings", hints = settingsHints) {
+        // Each pane drawn from one place in either layout: one that stays shown across a change of layout
+        // keeps its controls, and focus on them.
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
+            if (!onePane || !open) sectionList(if (onePane) Modifier.fillMaxSize() else Modifier.width(230.dp).fillMaxHeight())
+            if (!onePane || open) sectionContent(if (onePane) Modifier.fillMaxSize() else Modifier.weight(1f).fillMaxHeight())
         }
     }
 }
@@ -399,7 +443,8 @@ private fun LibrarySyncSection(
         SectionHeader("Automatic refresh")
         Text("Loom checks RomM for new, changed and removed games in the background, while online and the battery isn't low.",
             color = LoomColors.TextMuted, style = MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+        // On one line on the Thor; a phone's narrower screen wraps them.
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalArrangement = Arrangement.spacedBy(Space.s)) {
             CatalogRefresh.entries.forEach { r ->
                 // Focus arrives on the current choice, so a second A changes nothing.
                 LoomChip(r.label, r == refresh, { actions.setCatalogRefresh(r) }, if (r == refresh) first.focusRequester(currentChip) else Modifier)
@@ -554,7 +599,8 @@ private fun MappingEditor(row: MappingRow, actions: SettingsActions, onClose: ()
         onDismiss = onClose,
         maxWidth = Dp.Unspecified,
         body = {
-            Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
+            // A little closer on a narrow screen, where the field's label and hint take more lines.
+            Column(verticalArrangement = Arrangement.spacedBy(if (rememberLoomLayout().compact) Space.s else Space.m)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.xl)) {
                     LoomTextField(folder, { folder = it.trim() }, "Folder in your ROMs folder", isError = folderProblem != null,
                         supporting = folderProblem ?: folderHint(row.platform.platform.displayName, folder, r.usualFolders, onCard, actions.cocoonFolders),

@@ -37,6 +37,20 @@ class ScreenshotTest {
         rule.saveScreenshot("library-list")
     }
 
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun libraryOnTheBottomScreen() {
+        rule.setContent { LoomTestTheme { LibraryContent(library.state, NoopLibraryActions) } }
+        settle()
+        rule.saveScreenshot("library-bottom-screen")
+    }
+
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun libraryOnAPhone() {
+        rule.setContent { LoomTestTheme { LibraryContent(library.state, NoopLibraryActions) } }
+        settle()
+        rule.saveScreenshot("library-phone")
+    }
+
     @Test fun libraryDetailsDialog() {
         rule.setContent { LoomTestTheme { LibraryContent(library.state, NoopLibraryActions) } }
         settle()

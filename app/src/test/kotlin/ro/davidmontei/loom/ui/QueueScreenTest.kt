@@ -1,10 +1,16 @@
 package ro.davidmontei.loom.ui
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsFocused
@@ -15,6 +21,7 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -27,6 +34,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.data.db.RecentInstall
 import ro.davidmontei.loom.data.saves.ConflictChoice
 import ro.davidmontei.loom.data.saves.conflictReason
@@ -46,6 +54,9 @@ import ro.davidmontei.loom.ui.queue.QueueUiState
 import ro.davidmontei.loom.ui.queue.transferLine
 import ro.davidmontei.loom.ui.saves.SaveFolderOption
 import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
+import ro.davidmontei.loom.ui.second.CompanionContent
+import ro.davidmontei.loom.ui.second.CompanionHolder
+import ro.davidmontei.loom.ui.second.LocalCompanion
 
 @OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
@@ -108,9 +119,14 @@ class QueueScreenTest {
 
     private var state by mutableStateOf(sample)
 
-    private fun show(initial: QueueUiState = sample, focusJobId: Long? = null, focusConflictRomId: Int? = null) {
+    /** [companion]: what the activity hands the screens for a second screen; none by default, as on a phone. */
+    private fun show(initial: QueueUiState = sample, focusJobId: Long? = null, focusConflictRomId: Int? = null, companion: CompanionHolder? = null) {
         state = initial
-        rule.setContent { LoomTestTheme { QueueContent(state, actions, focusJobId, focusConflictRomId = focusConflictRomId) } }
+        rule.setContent {
+            CompositionLocalProvider(LocalCompanion provides companion) {
+                LoomTestTheme { QueueContent(state, actions, focusJobId, focusConflictRomId = focusConflictRomId) }
+            }
+        }
         rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
     }
 
@@ -129,6 +145,79 @@ class QueueScreenTest {
     private fun back() {
         rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
         rule.waitForIdle(); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+    }
+
+    // --- the second screen: the Thor's bottom one shows the row the pad is on ---
+
+    @Test fun aFocusedConflictIsPublished() {
+        val companion = CompanionHolder()
+        show(withSaves, companion = companion)
+        rule.onNodeWithTag("conflict-7").assertIsFocused()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(pokemonX))
+        press(Key.DirectionDown) // a save to restore: nothing more to show of it
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Idle)
+        press(Key.DirectionDown) // the download under way
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Job(sample.active[0]))
+        update { it.copy(active = listOf(it.active[0].copy(bytesDone = 1_400_000_000)) + it.active.drop(1)) } // as it moves on
+        assertThat((companion.content.value as CompanionContent.Job).item.bytesDone).isEqualTo(1_400_000_000)
+    }
+
+    @Test fun theConflictStaysWhileItsChoiceIsOpen() {
+        val companion = CompanionHolder()
+        show(withSaves, companion = companion)
+        press(Key.DirectionCenter)
+        button("Skip").assertIsFocused()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(pokemonX))
+        press(Key.DirectionRight); press(Key.DirectionRight) // Keep server: asked again
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Put RomM's save of Pokemon X on the Thor?").assertExists()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(pokemonX))
+    }
+
+    private val sun = pokemonX.copy(romId = 10, title = "Pokemon Sun")
+    private val moon = pokemonX.copy(romId = 11, title = "Pokemon Moon")
+
+    /**
+     * Found by review: the second screen kept the place in the list, not the conflict: one settled
+     * above (a save sync in the background) moved it to the next game's two sides while the top
+     * screen still asked about this one.
+     */
+    @Test fun theConflictStaysWhileItsChoiceIsOpenAndOneAboveIsSettled() {
+        val companion = CompanionHolder()
+        show(sample.copy(conflicts = listOf(pokemonX, sun, moon)), companion = companion)
+        press(Key.DirectionDown)
+        rule.onNodeWithTag("conflict-10").assertIsFocused()
+        press(Key.DirectionCenter)
+        update { it.copy(conflicts = listOf(sun, moon)) }
+        rule.onNodeWithText("Pokemon Sun: which save to keep?").assertExists()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(sun))
+        press(Key.DirectionCenter) // Skip: back on its row
+        rule.onNodeWithTag("conflict-10").assertIsFocused()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(sun))
+    }
+
+    @Test fun theConflictStaysWhileReplacingTheThorsSaveIsAskedAndOneAboveIsSettled() {
+        val companion = CompanionHolder()
+        show(sample.copy(conflicts = listOf(pokemonX, sun, moon)), companion = companion)
+        press(Key.DirectionDown)
+        press(Key.DirectionCenter)
+        press(Key.DirectionRight); press(Key.DirectionRight); press(Key.DirectionCenter) // Keep server: asked again
+        rule.onNodeWithText("Put RomM's save of Pokemon Sun on the Thor?").assertExists()
+        update { it.copy(conflicts = listOf(sun, moon)) }
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Conflict(sun))
+    }
+
+    /** The same for a download being asked about, while one above it finishes. */
+    @Test fun theDownloadStaysWhileCancellingItIsAskedAndOneAboveFinishes() {
+        val companion = CompanionHolder()
+        show(companion = companion)
+        press(Key.DirectionDown)
+        rule.onNodeWithTag("job-2").assertIsFocused()
+        press(Key.ButtonX)
+        rule.onNodeWithText("Cancel downloading Metroid Prime (USA)?").assertExists()
+        update { it.copy(active = it.active.drop(1)) }
+        rule.onNodeWithText("Cancel downloading Metroid Prime (USA)?").assertExists()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Job(sample.active[1]))
     }
 
     @Test fun aPausesResumesAndRetriesByRow() {
@@ -561,6 +650,34 @@ class QueueScreenTest {
         rule.onNodeWithText("Super Mario Bros Wonder: which save to keep?").assertDoesNotExist()
     }
 
+    /**
+     * On the bottom screen the five buttons wrap onto two lines: the pad still reaches every one. Native
+     * graphics measure the words as on the device, so they wrap as there; such a window starts in touch
+     * mode, so the pad's keyboard mode is provided.
+     */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test fun everyConflictAnswerIsReachableWhenTheyWrap() {
+        state = sample.copy(conflicts = listOf(wonder))
+        val pad = object : InputModeManager {
+            override val inputMode get() = InputMode.Keyboard
+            override fun requestInputMode(inputMode: InputMode) = inputMode == InputMode.Keyboard
+        }
+        rule.setContent { CompositionLocalProvider(LocalInputModeManager provides pad) { LoomTestTheme { QueueContent(state, actions) } } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        press(Key.DirectionCenter)
+        val tops = listOf("Skip", "Keep both").map { rule.onNodeWithText(it).fetchSemanticsNode().boundsInRoot.top }
+        assertThat(tops.distinct()).hasSize(2) // two lines of buttons
+        rule.onNodeWithText("Skip").assertIsFocused()
+        val reached = mutableSetOf<String>()
+        for (key in listOf(Key.DirectionRight, Key.DirectionDown, Key.DirectionLeft, Key.DirectionUp, Key.DirectionLeft, Key.DirectionLeft)) {
+            press(key)
+            rule.onAllNodes(isFocused()).fetchSemanticsNodes().single().config.getOrNull(SemanticsProperties.Text)?.let { reached += it.joinToString() }
+        }
+        assertThat(reached).containsAtLeast("Change save folder", "Keep Thor", "Keep server", "Keep both")
+        assertThat(calls).isEmpty() // moving answers nothing
+    }
+
     @Test fun onlyAPickedSaveFolderIsOfferedThere() {
         show(withSaves)
         press(Key.DirectionCenter)
@@ -672,7 +789,9 @@ class QueueScreenTest {
         show(sample.copy(active = sample.active.map { if (it.jobId == 3L) it.copy(fromRomm = true) else it }))
         rule.onNodeWithTag("job-3").assert(hasText("From RomM"))
         rule.onNodeWithTag("job-1").assert(hasText("From RomM").not())
-        assertThat(rule.onNodeWithTag("job-3").getBoundsInRoot().let { it.bottom - it.top }).isEqualTo(rule.onNodeWithTag("job-1").getBoundsInRoot().let { it.bottom - it.top })
+        // As tall as a game picked in the library, to well under a pixel (the Thor's 2.30625 px a dp leaves float noise).
+        assertThat(rule.onNodeWithTag("job-3").getBoundsInRoot().let { it.bottom - it.top }.value)
+            .isWithin(0.01f).of(rule.onNodeWithTag("job-1").getBoundsInRoot().let { it.bottom - it.top }.value)
     }
 
     /** RomM refuses the device: the queue says games sent from it can't come, and where to fix that, even when it's empty. */

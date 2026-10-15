@@ -1,5 +1,6 @@
 package ro.davidmontei.loom.ui.input
 
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.KeyEventType
@@ -50,11 +51,20 @@ object GamepadKeys {
     }
 
     /**
+     * The key AYN's focus modes send each time they change (`input keyevent 60`), to point the
+     * pad at the chosen screen: a right Shift from the virtual keyboard. Nobody pressed it.
+     */
+    private fun isAynFocusShift(event: KeyEvent): Boolean =
+        event.keyCode == KeyEvent.KEYCODE_SHIFT_RIGHT && event.deviceId == KeyCharacterMap.VIRTUAL_KEYBOARD
+
+    /**
      * Remaps [event] and hands it to [deliver]. A pad button Loom handles always counts as used:
      * Android sends a fallback key for one nobody used (B becomes BACK, Y too), so with A and B
      * swapped, confirm on a row with nothing to press went back. Mode (Home) keeps its fallback.
+     * AYN's focus-mode Shift is dropped before anything sees it, so it never counts as input.
      */
     fun dispatch(event: KeyEvent, swapConfirmBack: Boolean, deliver: (KeyEvent) -> Boolean): Boolean {
+        if (isAynFocusShift(event)) return true
         val used = deliver(remapEvent(event, swapConfirmBack))
         return used || event.keyCode == KeyEvent.KEYCODE_BUTTON_A || event.keyCode == KeyEvent.KEYCODE_BUTTON_B ||
             action(event.keyCode) != null

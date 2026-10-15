@@ -1,6 +1,16 @@
 package ro.davidmontei.loom.ui
 
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.WindowInfo
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -128,6 +138,7 @@ class SettingsScreenTest {
         override fun setMelonDsFolder(dir: File?) { calls += "melonds:$dir" }
         override fun setPpssppFolder(dir: File?) { calls += "ppsspp:$dir" }
         override fun setSwap(swap: Boolean) { calls += "swap:$swap" }
+        override fun setSecondScreen(on: Boolean) { calls += "secondScreen:$on" }
         override fun openBatterySettings() { calls += "battery" }
         override fun licenseText() = (1..120).joinToString("\n\n") { "GNU GENERAL PUBLIC LICENSE, paragraph $it" }
         override fun fontLicense() = "SIL OPEN FONT LICENSE"
@@ -167,6 +178,29 @@ class SettingsScreenTest {
         press(Key.DirectionCenter) // opens Controls on its switch
         press(Key.DirectionCenter)
         assertThat(calls).contains("swap:true")
+    }
+
+    /** Under Swap A and B, on until turned off: A turns it off. */
+    @Test fun theSecondScreenSwitchIsInControlsAndOn() {
+        show()
+        goTo(SettingsSection.CONTROLS)
+        rule.onNodeWithText("Controls & screens").assertIsFocused()
+        press(Key.DirectionCenter)
+        press(Key.DirectionDown)
+        rule.onNode(hasText("Use the second screen") and hasClickAction()).assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("secondScreen:false")
+    }
+
+    /**
+     * Found by review: the panel covers an app open on the other screen whenever Loom is in front, and
+     * Loom can't tell it is there. The switch says that turning it off leaves that app in view.
+     */
+    @Test fun theSecondScreenSwitchSaysOffLeavesAnotherAppInView() {
+        show()
+        goTo(SettingsSection.CONTROLS)
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Off, an app open on the other screen stays in view while Loom is in front.", substring = true).assertExists()
     }
 
     /** Found on the Thor: A selected a section but left focus in the list; the next press did nothing new. */
@@ -640,6 +674,148 @@ class SettingsScreenTest {
         rule.onNodeWithTag("section-CONTROLS").assertIsFocused()
         press(Key.DirectionCenter) // the replayed A opens it…
         press(Key.DirectionCenter) // …and the next acts on it
+        assertThat(calls).contains("swap:true")
+    }
+
+    // --- a narrow screen: the list, then one section at a time ---
+
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun onANarrowScreenAOpensTheSectionAlone() {
+        show()
+        rule.onNodeWithTag("section-SERVER").assertIsFocused()
+        rule.onNodeWithTag("settings-content").assertDoesNotExist()
+        goTo(SettingsSection.STORAGE)
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Settings · Storage").assertExists()
+        rule.onNodeWithTag("settings-sections").assertDoesNotExist()
+        rule.onNodeWithText("Change folder").assertIsFocused()
+    }
+
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun bFromASectionReturnsToItInTheList() {
+        show()
+        goTo(SettingsSection.MAPPING)
+        press(Key.DirectionCenter) // Export
+        press(Key.DirectionDown)
+        back()
+        rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+        rule.onNodeWithTag("settings-content").assertDoesNotExist()
+        rule.onNodeWithText("Settings").assertExists()
+        rule.onNodeWithTag("section-MAPPING").assertIsFocused()
+        assertThat(rule.activity.isFinishing).isFalse()
+        press(Key.DirectionCenter) // and A opens it again
+        rule.onNodeWithText("Settings · Platform folders").assertExists()
+    }
+
+    /** Pairing again from a section on a narrow screen comes back to that section, open, on its Pair again. */
+    @Config(qualifiers = PHONE_PORTRAIT)
+    @Test fun pairAgainComesBackToItsSection() {
+        val restore = StateRestorationTester(rule)
+        restore.setContent { LoomTestTheme { SettingsContent(state, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        press(Key.DirectionCenter) // Server & pairing: the address
+        repeat(4) { if (focusedText() != "Pair again") press(if (focusedText() == "Sign out") Key.DirectionLeft else Key.DirectionDown) }
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionCenter); press(Key.DirectionRight); press(Key.DirectionCenter) // confirmed
+        assertThat(calls).contains("repair")
+        restore.emulateSavedInstanceStateRestore()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText("Settings · Server & pairing").assertExists()
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        back()
+        rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+        rule.onNodeWithTag("section-SERVER").assertIsFocused()
+    }
+
+    // --- moving to the other screen: the activity stays, and Settings is laid out again in place ---
+
+    private val topScreen = DpSize(832.dp, 468.dp)
+    private val bottomScreen = DpSize(538.dp, 468.dp)
+
+    /** The size of Loom's window as Settings reads it, which a move to the other screen changes. */
+    private var window by mutableStateOf(topScreen)
+
+    private fun showMovable() {
+        rule.setContent {
+            val density = LocalDensity.current
+            val size = window
+            val info = remember(size) {
+                object : WindowInfo {
+                    override val isWindowFocused = true
+                    override val containerSize get() = with(density) { IntSize(size.width.roundToPx(), size.height.roundToPx()) }
+                    override val containerDpSize get() = size
+                }
+            }
+            CompositionLocalProvider(LocalWindowInfo provides info) {
+                Box(Modifier.size(size)) { LoomTestTheme { SettingsContent(state, actions) } }
+            }
+        }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+    }
+
+    private fun moveTo(size: DpSize) {
+        window = size
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+    }
+
+    /** Found by review: moved to the bottom screen, Settings lost focus, and the first A did nothing. */
+    @Test fun movedToTheBottomScreenTheListKeepsItsSection() {
+        showMovable()
+        goTo(SettingsSection.CONTROLS)
+        moveTo(bottomScreen)
+        rule.onNodeWithTag("section-CONTROLS").assertIsFocused()
+        press(Key.DirectionCenter) // opens it…
+        rule.onNodeWithText("Settings · Controls & screens").assertExists()
+        press(Key.DirectionCenter) // …and the next acts on it
+        assertThat(calls).contains("swap:true")
+    }
+
+    /** Found by review: a section opened on the top screen, then left for the list, opened on its own on the bottom one. */
+    @Test fun movedToTheBottomScreenFromTheListItShowsTheList() {
+        showMovable()
+        goTo(SettingsSection.STORAGE)
+        press(Key.DirectionCenter) // Change folder
+        press(Key.DirectionLeft) // back to Storage in the list
+        press(Key.DirectionDown) // Platform folders
+        moveTo(bottomScreen)
+        rule.onNodeWithText("Settings").assertExists()
+        rule.onNodeWithTag("section-MAPPING").assertIsFocused()
+    }
+
+    @Test fun movedToTheBottomScreenASectionKeepsItsControl() {
+        showMovable()
+        goTo(SettingsSection.CONTROLS)
+        press(Key.DirectionCenter); press(Key.DirectionDown) // Use the second screen
+        moveTo(bottomScreen)
+        rule.onNodeWithText("Settings · Controls & screens").assertExists()
+        rule.onNode(hasText("Use the second screen") and hasClickAction()).assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("secondScreen:false")
+    }
+
+    /** Found by review: moved to the top screen from a section, nothing had focus, and A did nothing. */
+    @Test fun movedToTheTopScreenASectionKeepsItsControl() {
+        window = bottomScreen
+        showMovable()
+        goTo(SettingsSection.STORAGE)
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Change folder").assertIsFocused()
+        moveTo(topScreen)
+        rule.onNodeWithTag("settings-sections").assertExists()
+        rule.onNodeWithText("Change folder").assertIsFocused()
+        back() // B goes back to the section in the list, as anywhere on the top screen
+        rule.onNodeWithTag("section-STORAGE").assertIsFocused()
+        assertThat(rule.activity.isFinishing).isFalse()
+    }
+
+    @Test fun movedToTheTopScreenTheListKeepsItsSection() {
+        window = bottomScreen
+        showMovable()
+        goTo(SettingsSection.CONTROLS)
+        moveTo(topScreen)
+        rule.onNodeWithTag("section-CONTROLS").assertIsFocused()
+        press(Key.DirectionCenter)
+        press(Key.DirectionCenter)
         assertThat(calls).contains("swap:true")
     }
 

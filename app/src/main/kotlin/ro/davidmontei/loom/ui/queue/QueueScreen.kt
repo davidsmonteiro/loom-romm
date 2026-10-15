@@ -57,9 +57,11 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import ro.davidmontei.loom.data.auth.CredentialStore
+import ro.davidmontei.loom.data.db.DownloadJobEntity
 import ro.davidmontei.loom.data.db.RecentInstall
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.download.DownloadRepository
+import ro.davidmontei.loom.data.download.LiveProgress
 import ro.davidmontei.loom.data.download.QueueGame
 import ro.davidmontei.loom.data.download.status
 import ro.davidmontei.loom.data.download.waitWording
@@ -96,6 +98,8 @@ import ro.davidmontei.loom.ui.saves.SaveFolderOption
 import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
 import ro.davidmontei.loom.ui.saves.answer
 import ro.davidmontei.loom.ui.saves.toQuestion
+import ro.davidmontei.loom.ui.second.CompanionContent
+import ro.davidmontei.loom.ui.second.PublishCompanion
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 import javax.inject.Inject
@@ -121,6 +125,8 @@ data class QueueItem(
     val failed get() = phase == JobPhase.FAILED
     /** Moving into place (finishing) can't be stopped half way. */
     val canCancel get() = phase != JobPhase.PROMOTING
+    /** How far it is, while its size is known. */
+    val fraction: Float? get() = if (bytesTotal > 0) bytesDone.toFloat() / bytesTotal else null
 }
 
 data class QueueUiState(
@@ -139,11 +145,13 @@ data class QueueUiState(
 )
 
 /** A row of the queue: a section header, a save to settle or restore, or a job. */
+private fun conflictKey(romId: Int): Any = "conflict-$romId"
+
 private sealed interface QueueRow {
     val key: Any
 
     data class Header(val text: String) : QueueRow { override val key get() = text }
-    data class Conflict(val item: ConflictItem) : QueueRow { override val key get() = "conflict-${item.romId}" }
+    data class Conflict(val item: ConflictItem) : QueueRow { override val key get() = conflictKey(item.romId) }
     data class Restorable(val item: RestorableSave) : QueueRow { override val key get() = "restore-${item.romId}" }
     data class Job(val item: QueueItem) : QueueRow { override val key get() = item.jobId }
 }
@@ -201,33 +209,7 @@ class QueueViewModel @Inject constructor(
     private val jobRows = combine(
         downloads.jobs, downloads.progress, downloads.recentInstalls, folderQuestion, rommNeedsPairing,
     ) { jobs, live, recent, question, needsPairing ->
-        val items = jobs.filter { it.phase != JobPhase.CANCELLING.name }.map { job ->
-            val status = job.status()
-            val p = live[job.id]
-            QueueItem(
-                jobId = job.id,
-                title = job.title,
-                phase = status.phase,
-                label = when (status.phase) {
-                    JobPhase.QUEUED -> "Queued"
-                    JobPhase.WAITING -> waitWording(status.waitReason)
-                    JobPhase.PAUSED -> "Paused"
-                    JobPhase.DOWNLOADING -> "Downloading"
-                    JobPhase.VERIFYING -> "Checking files"
-                    JobPhase.EXTRACTING -> "Unpacking"
-                    JobPhase.PROMOTING -> "Finishing…"
-                    JobPhase.FAILED -> "Failed"
-                    else -> status.phase.name
-                },
-                detail = status.failure?.detail,
-                bytesDone = p?.bytesDone ?: job.bytesDone,
-                bytesTotal = job.bytesTotal,
-                bytesPerSecond = if (status.phase == JobPhase.DOWNLOADING) p?.bytesPerSecond ?: 0 else 0,
-                retryable = status.failure?.retryable ?: true,
-                needsFolder = status.phase == JobPhase.WAITING && status.waitReason == WaitReason.FOLDER,
-                fromRomm = job.installRequestId != null,
-            )
-        }
+        val items = queueItems(jobs, live)
         // Games waiting for their folder first, so the queue opens on what only the owner can settle.
         QueueUiState(items.filterNot { it.failed }.sortedByDescending { it.needsFolder }, items.filter { it.failed }, recent,
             folderQuestion = question, rommNeedsPairing = needsPairing)
@@ -333,6 +315,38 @@ class QueueViewModel @Inject constructor(
     }
 }
 
+/** The queue's jobs as the queue and the second screen show them, with [live] transfer numbers while they download. */
+fun queueItems(jobs: List<DownloadJobEntity>, live: Map<Long, LiveProgress>): List<QueueItem> =
+    jobs.filter { it.phase != JobPhase.CANCELLING.name }.map { queueItem(it, live[it.id]) }
+
+/** One job, with [live] transfer numbers while it downloads. */
+fun queueItem(job: DownloadJobEntity, live: LiveProgress?): QueueItem {
+    val status = job.status()
+    return QueueItem(
+        jobId = job.id,
+        title = job.title,
+        phase = status.phase,
+        label = when (status.phase) {
+            JobPhase.QUEUED -> "Queued"
+            JobPhase.WAITING -> waitWording(status.waitReason)
+            JobPhase.PAUSED -> "Paused"
+            JobPhase.DOWNLOADING -> "Downloading"
+            JobPhase.VERIFYING -> "Checking files"
+            JobPhase.EXTRACTING -> "Unpacking"
+            JobPhase.PROMOTING -> "Finishing…"
+            JobPhase.FAILED -> "Failed"
+            else -> status.phase.name
+        },
+        detail = status.failure?.detail,
+        bytesDone = live?.bytesDone ?: job.bytesDone,
+        bytesTotal = job.bytesTotal,
+        bytesPerSecond = if (status.phase == JobPhase.DOWNLOADING) live?.bytesPerSecond ?: 0 else 0,
+        retryable = status.failure?.retryable ?: true,
+        needsFolder = status.phase == JobPhase.WAITING && status.waitReason == WaitReason.FOLDER,
+        fromRomm = job.installRequestId != null,
+    )
+}
+
 @Composable
 fun QueueScreen(focusJobId: Long?, focusConflictRomId: Int?, onBack: () -> Unit, vm: QueueViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -381,6 +395,7 @@ fun QueueContent(
     // one has left (a job finished or cancelled, a conflict settled), rather than the top of the queue.
     var lastIndex by remember { mutableStateOf<Int?>(null) }
     val entryKey = lastIndex?.let { keys.getOrNull(it.coerceAtMost(keys.lastIndex)) } ?: startKey
+    var lastKey by remember { mutableStateOf<Any?>(null) }
     val entry = remember { FocusRequester() }
     // With nothing to act on, the first row the pad can scroll from: the newest finished game, else the newest synced save.
     val readOnlyFirst: Any? = state.finished.firstOrNull()?.let { "done-${it.romId}-${it.installedAt}" }
@@ -389,12 +404,30 @@ fun QueueContent(
     fun trackFocus(key: Any, focused: Boolean) {
         if (focused) {
             focusedKey = key
+            lastKey = key
             lastIndex = keys.indexOf(key).takeIf { it >= 0 }
         } else if (focusedKey == key) focusedKey = null
     }
     // A focused row that leaves the list takes focus with it; the row now in its place takes over.
     val focusedLeft = focusedKey != null && focusedKey !in keys
     LaunchedEffect(focusedLeft) { if (focusedLeft) runCatching { entry.requestFocus() } }
+
+    // The second screen shows the row focused, else the one a question open on top is about (a conflict's two
+    // sides stay beside each other while its choice is open), else the one last focused, or the one now in
+    // its place. By key: a row above that leaves (a save sync settling another conflict, a download
+    // finishing) moves the rest up, and the place would then name the next one.
+    val dialogKey: Any? = choosing?.let(::conflictKey)
+        ?: replacing?.first?.romId?.let(::conflictKey)
+        ?: state.saveFolderQuestion?.romId?.let(::conflictKey)
+        ?: restoring?.let { QueueRow.Restorable(it).key }
+        ?: confirmCancel?.jobId
+    PublishCompanion(
+        when (val row = rows.firstOrNull { it.key == (focusedKey ?: dialogKey ?: lastKey?.takeIf { it in keys } ?: entryKey) }) {
+            is QueueRow.Conflict -> CompanionContent.Conflict(row.item)
+            is QueueRow.Job -> CompanionContent.Job(row.item)
+            else -> CompanionContent.Idle
+        },
+    )
 
     fun primary(item: QueueItem) = when {
         item.needsFolder -> actions.askFolder(item.jobId)
@@ -589,23 +622,26 @@ private fun JobRow(item: QueueItem, modifier: Modifier, onFocus: (QueueItem, Boo
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.m)) {
             Text(item.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (item.fromRomm) Text("From RomM", style = MaterialTheme.typography.labelMedium, color = LoomColors.TextMuted, maxLines = 1)
-            when {
-                item.failed -> StatusBadge("Failed", color = LoomColors.Error, onColor = LoomColors.OnError)
-                item.phase == JobPhase.PAUSED -> StatusBadge("Paused", color = LoomColors.SurfaceHighest, onColor = LoomColors.Text)
-                else -> StatusBadge(item.label, color = if (item.phase.isActive) LoomColors.Accent else LoomColors.SurfaceHighest,
-                    onColor = if (item.phase.isActive) LoomColors.OnAccent else LoomColors.Text)
-            }
+            JobBadge(item)
         }
         if (!item.failed) {
-            LoomProgressBar(
-                if (item.bytesTotal > 0) item.bytesDone.toFloat() / item.bytesTotal else null,
-                color = if (item.phase.isActive) LoomColors.Accent else LoomColors.TextFaint,
-            )
+            LoomProgressBar(item.fraction, color = if (item.phase.isActive) LoomColors.Accent else LoomColors.TextFaint)
             Text(transferLine(item), style = MaterialTheme.typography.labelMedium.tabular(), color = LoomColors.TextMuted)
         } else {
             Text(item.detail ?: "The download failed.", style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted)
             if (!item.retryable) Text("Retrying won't help until this is fixed.", style = MaterialTheme.typography.labelMedium, color = LoomColors.Error)
         }
+    }
+}
+
+/** Where a job is: what it is doing, failed, or paused. */
+@Composable
+internal fun JobBadge(item: QueueItem) {
+    when {
+        item.failed -> StatusBadge("Failed", color = LoomColors.Error, onColor = LoomColors.OnError)
+        item.phase == JobPhase.PAUSED -> StatusBadge("Paused", color = LoomColors.SurfaceHighest, onColor = LoomColors.Text)
+        else -> StatusBadge(item.label, color = if (item.phase.isActive) LoomColors.Accent else LoomColors.SurfaceHighest,
+            onColor = if (item.phase.isActive) LoomColors.OnAccent else LoomColors.Text)
     }
 }
 

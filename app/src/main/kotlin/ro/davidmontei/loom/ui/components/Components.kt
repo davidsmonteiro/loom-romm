@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -91,6 +92,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import ro.davidmontei.loom.ui.layout.rememberLoomLayout
+import ro.davidmontei.loom.ui.second.PadNotice
+import ro.davidmontei.loom.ui.second.padNoticeShowing
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 
@@ -425,9 +429,18 @@ fun StatusBadge(text: String, modifier: Modifier = Modifier, color: Color = Loom
 /** One button hint in the footer: a round glyph and what it does. */
 data class ButtonHint(val glyph: String, val label: String)
 
+/**
+ * The footer's hints, on one line where they fit: the library's six take about 740 of the 784 dp
+ * the Thor's top screen leaves them. On a narrower screen they wrap rather than squeeze the last one.
+ */
 @Composable
 fun ButtonHints(hints: List<ButtonHint>, modifier: Modifier = Modifier) {
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(Space.xl), verticalAlignment = Alignment.CenterVertically) {
+    FlowRow(
+        modifier.testTag("button-hints"),
+        horizontalArrangement = Arrangement.spacedBy(Space.l),
+        verticalArrangement = Arrangement.spacedBy(Space.s),
+        itemVerticalAlignment = Alignment.CenterVertically,
+    ) {
         hints.forEach { hint ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                 Box(
@@ -441,13 +454,20 @@ fun ButtonHints(hints: List<ButtonHint>, modifier: Modifier = Modifier) {
     }
 }
 
-/** Screen chrome: title bar, content, and a footer of button hints. */
+/**
+ * Screen chrome: title bar, content, and a footer of button hints. [titleContent], when given,
+ * takes the title's place (the library's platform button on a narrow screen), filling what
+ * [actions] leave. A narrow screen has narrower margins, so the hints wrap to two lines at most.
+ * While AYN's Focus Mode has the pad on the other screen, the hints would do nothing: a line
+ * saying so takes their place.
+ */
 @Composable
 fun ScreenScaffold(
     title: String,
     hints: List<ButtonHint>,
     modifier: Modifier = Modifier,
     actions: @Composable RowScope.() -> Unit = {},
+    titleContent: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
@@ -455,16 +475,26 @@ fun ScreenScaffold(
             .fillMaxSize()
             .background(LoomColors.Background)
             .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(horizontal = Space.xl, vertical = Space.m),
+            .padding(horizontal = if (rememberLoomLayout().compact) Space.l else Space.xl, vertical = Space.m),
         verticalArrangement = Arrangement.spacedBy(Space.m),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f), maxLines = 1,
+            if (titleContent != null) titleContent()
+            else Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f), maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
             actions()
         }
         Column(Modifier.weight(1f).fillMaxWidth()) { content() }
-        ButtonHints(hints)
+        val notice = padNoticeShowing()
+        if (notice != null) PadNoticeLine(notice) else ButtonHints(hints)
+    }
+}
+
+/** What AYN's Focus Mode keeps from Loom, in the hints' place and at their height. */
+@Composable
+private fun PadNoticeLine(notice: PadNotice) {
+    Box(Modifier.heightIn(min = 26.dp).testTag("pad-notice"), contentAlignment = Alignment.CenterStart) {
+        Text(notice.text, style = MaterialTheme.typography.labelMedium, color = LoomColors.Accent)
     }
 }
 
@@ -500,7 +530,9 @@ fun DialogHost(content: @Composable () -> Unit) {
  * everything else; focus is trapped inside; B closes it.
  *
  * [maxWidth] can be raised (to [Dp.Unspecified]: the screen's width) for a form that would
- * otherwise not fit the screen's height.
+ * otherwise not fit the screen's height. On a narrow screen every dialog takes its width, with
+ * narrower margins and a smaller title. On any screen its buttons wrap onto another line rather
+ * than squeeze, whenever they don't fit on one.
  */
 @Composable
 fun LoomDialog(
@@ -537,6 +569,7 @@ private fun DialogSurface(
     val first = remember { FocusRequester() }
     BackHandler(onBack = onDismiss)
     InitialFocus(first, delayMs = 0)
+    val compact = rememberLoomLayout().compact
     Box(
         Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
@@ -544,20 +577,25 @@ private fun DialogSurface(
     ) {
         Column(
             modifier
-                .widthIn(max = maxWidth)
-                .padding(Space.xl)
+                .then(if (compact) Modifier.fillMaxWidth() else Modifier.widthIn(max = maxWidth))
+                .padding(if (compact) Space.s else Space.xl)
                 .background(LoomColors.Surface, RoundedCornerShape(16.dp))
                 .border(1.dp, LoomColors.Outline, RoundedCornerShape(16.dp))
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
                 .focusProperties { onExit = { cancelFocusChange() } }
                 .focusGroup()
                 .verticalScroll(rememberScrollState())
-                .padding(Space.xl),
+                .padding(if (compact) Space.l else Space.xl),
             verticalArrangement = Arrangement.spacedBy(Space.l),
         ) {
-            Text(title, style = MaterialTheme.typography.titleLarge)
+            Text(title, style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge)
             body()
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.m, Alignment.End)) { buttons(first) }
+            // One line where they fit, as on the Thor's top screen; wrapped where they don't, at any width.
+            FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Space.m, Alignment.End),
+                verticalArrangement = Arrangement.spacedBy(Space.s),
+            ) { buttons(first) }
         }
     }
 }

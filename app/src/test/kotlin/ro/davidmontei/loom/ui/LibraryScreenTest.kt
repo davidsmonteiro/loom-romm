@@ -11,11 +11,18 @@ import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -34,6 +41,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import ro.davidmontei.loom.data.catalog.CatalogSyncStatus
 import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.PlatformSummary
@@ -53,6 +61,9 @@ import ro.davidmontei.loom.ui.library.LibraryHeader
 import ro.davidmontei.loom.ui.library.LibraryUiState
 import ro.davidmontei.loom.ui.saves.SaveFolderOption
 import ro.davidmontei.loom.ui.saves.SaveFolderQuestion
+import ro.davidmontei.loom.ui.second.CompanionContent
+import ro.davidmontei.loom.ui.second.CompanionHolder
+import ro.davidmontei.loom.ui.second.LocalCompanion
 
 @OptIn(ExperimentalTestApi::class)
 /**
@@ -125,8 +136,9 @@ class LibraryScreenTest {
             LibraryHeader(CatalogSyncStatus(false), System.currentTimeMillis() - 5 * 60_000, 2), coverBase = null),
     )
 
-    private fun show() {
-        rule.setContent { LoomTestTheme { LibraryContent(state, actions) } }
+    /** [companion]: what the activity hands the screens for a second screen; none by default, as on a phone. */
+    private fun show(companion: CompanionHolder? = null) {
+        rule.setContent { CompositionLocalProvider(LocalCompanion provides companion) { LoomTestTheme { LibraryContent(state, actions) } } }
         rule.mainClock.advanceTimeBy(200)
         rule.waitForIdle()
     }
@@ -495,6 +507,204 @@ class LibraryScreenTest {
         rule.onNodeWithTag("game-101").assertIsFocused()
     }
 
+    // --- a narrow screen: the Thor's bottom one, with no room for the platform rail ---
+
+    private fun settle() { rule.mainClock.advanceTimeBy(300); rule.waitForIdle() }
+
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun aNarrowScreenNamesThePlatformInTheHeader() {
+        show()
+        rule.onNodeWithTag("platform-rail").assertDoesNotExist()
+        rule.onNodeWithTag("platform-title").assertTextContains("Super Nintendo")
+        rule.onNodeWithTag("platform-title").assertTextContains("Synced 5 min ago") // beneath it
+        rule.onNodeWithTag("game-1").assertIsFocused() // the games still come first
+    }
+
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun aOnThePlatformOpensThePickerOnTheSelectedOne() {
+        state = state.copy(selected = platforms[2])
+        show()
+        press(listOf(Key.DirectionUp, Key.DirectionUp)) // over the search box to the header
+        rule.onNodeWithTag("platform-title").assertIsFocused()
+        press(Key.DirectionCenter)
+        settle() // the list scrolls to it first
+        rule.onNodeWithText("Choose a platform").assertExists()
+        rule.onNodeWithTag("platform-3").assertIsFocused() // Game Boy Advance, the one shown
+    }
+
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun aInThePickerChoosesAndBLeavesItAsItWas() {
+        show()
+        press(listOf(Key.DirectionUp, Key.DirectionUp, Key.DirectionCenter))
+        settle()
+        rule.onNodeWithTag("platform-1").assertIsFocused()
+        back()
+        settle()
+        rule.onNodeWithText("Choose a platform").assertDoesNotExist()
+        assertThat(calls.filter { it.startsWith("select") }).isEmpty()
+        rule.onNodeWithTag("platform-title").assertIsFocused() // back where it was opened
+
+        press(Key.DirectionCenter)
+        settle()
+        press(listOf(Key.DirectionDown, Key.DirectionCenter)) // PlayStation
+        assertThat(calls).contains("select:2")
+        rule.onNodeWithText("Choose a platform").assertDoesNotExist()
+        update { it.copy(selected = platforms[1]) } // as the library does
+        rule.onNodeWithTag("platform-title").assertTextContains("PlayStation")
+        rule.onNodeWithTag("game-1").assertIsFocused() // on to its games
+    }
+
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun l1AndR1StillChangePlatformOnANarrowScreen() {
+        show()
+        press(listOf(Key.ButtonR1, Key.ButtonL1))
+        assertThat(calls).containsAtLeast("cycle:1", "cycle:-1").inOrder()
+        update { it.copy(selected = platforms[3]) }
+        rule.onNodeWithTag("platform-title").assertTextContains("Nintendo DS")
+        rule.onNodeWithTag("game-1").assertIsFocused()
+    }
+
+    /** One chip in place of three: A moves it on to the next filter, and it keeps focus for the next press. */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun theFilterChipCyclesOnANarrowScreen() {
+        show()
+        press(listOf(Key.DirectionUp, Key.DirectionRight)) // past the search box
+        rule.onNodeWithTag("filter").assertIsFocused().assertTextEquals("All")
+        calls.clear()
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("filter:ON_DEVICE")
+        update { it.copy(filter = LibraryFilter.ON_DEVICE, games = games.filter { g -> g.state == InstallState.INSTALLED }) }
+        rule.onNodeWithTag("filter").assertIsFocused().assertTextEquals("On device")
+        press(Key.DirectionCenter)
+        update { it.copy(filter = LibraryFilter.NOT_ON_DEVICE, games = emptyList()) }
+        update { it.copy(games = games.filter { g -> g.state == InstallState.NOT_INSTALLED }) } // the games arriving don't take focus
+        rule.onNodeWithTag("filter").assertIsFocused().assertTextEquals("Not on device")
+        press(Key.DirectionCenter)
+        assertThat(calls).containsExactly("filter:ON_DEVICE", "filter:NOT_ON_DEVICE", "filter:ALL").inOrder()
+        press(Key.DirectionDown)
+        rule.onNodeWithTag("game-2").assertIsFocused() // the first of them
+    }
+
+    // --- a wide window: the focused game's details beside the games ---
+
+    /** Text in the details beside the games, not the game's card of the same name. */
+    private fun beside(text: String, substring: Boolean = false) =
+        rule.onNode(hasText(text, substring = substring) and hasAnyAncestor(hasTestTag("details-beside")))
+
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun aWideWindowShowsTheFocusedGameBesideTheGames() {
+        show()
+        rule.onNodeWithTag("game-1").assertIsFocused()
+        beside("Chrono Trigger").assertExists()
+        beside("On this device at snes/Chrono Trigger.sfc").assertExists()
+        beside("Super Nintendo", substring = true).assertExists() // its platform, size and regions
+        beside("On device").assertExists()
+        rule.onNodeWithTag("platform-rail").assertExists() // and the rest as on the Thor
+    }
+
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun theDetailsBesideFollowTheFocus() {
+        show()
+        press(listOf(Key.DirectionRight, Key.DirectionRight)) // Super Metroid, downloading
+        rule.onNodeWithTag("game-3").assertIsFocused()
+        beside("Super Metroid").assertExists()
+        beside("42%").assertExists()
+        beside("Chrono Trigger").assertDoesNotExist()
+        changeGame(3, games[2].copy(progress = 0.43f)) // its download moves on
+        beside("43%").assertExists()
+    }
+
+    /** Up to the search box, the details beside stay on the game left, as B or Down come back to it. */
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun theDetailsBesideKeepTheLastGameWhenFocusMovesUp() {
+        show()
+        press(Key.DirectionRight)
+        press(Key.DirectionUp)
+        rule.onNodeWithTag("game-2").assertIsNotFocused()
+        beside("EarthBound").assertExists()
+        press(Key.DirectionCenter) // the details too
+        beside("EarthBound").assertExists()
+    }
+
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun nothingBesideTheGamesTakesFocus() {
+        show()
+        val focusable = SemanticsMatcher.keyIsDefined(SemanticsProperties.Focused) and hasAnyAncestor(hasTestTag("details-beside"))
+        rule.onAllNodes(focusable, useUnmergedTree = true).assertCountEquals(0)
+        repeat(4) { press(Key.DirectionRight) } // to the end of the first row, and on
+        rule.onNode(isFocused() and hasAnyAncestor(hasTestTag("details-beside"))).assertDoesNotExist()
+        beside("The Legend of Zelda: A Link to the Past").assertExists() // the row's last game, still
+    }
+
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun aStillOpensTheDetailsOnAWideWindow() {
+        show()
+        press(Key.DirectionRight)
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Download").assertIsFocused() // the details' first button, to act on EarthBound
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("download:2")
+    }
+
+    /** A tablet with a monitor showing the game as a second screen: the details beside give way to it. */
+    @Config(qualifiers = TABLET_LANDSCAPE)
+    @Test fun theDetailsBesideGiveWayToASecondScreen() {
+        val companion = CompanionHolder()
+        show(companion)
+        beside("Chrono Trigger").assertExists()
+        rule.runOnIdle { companion.setPresenting(true) }
+        rule.waitForIdle()
+        rule.onNodeWithTag("details-beside").assertDoesNotExist()
+        rule.onNodeWithTag("game-1").assertIsFocused()
+    }
+
+    /** The Thor's top screen, 832 dp wide, has no room for them: it stays as it was. */
+    @Test fun theThorsTopScreenShowsNoDetailsBeside() {
+        show()
+        rule.onNodeWithTag("details-beside").assertDoesNotExist()
+        rule.onNodeWithTag("game-panel").assertDoesNotExist()
+    }
+
+    // --- the second screen: the Thor's bottom one shows the game the pad is on ---
+
+    private fun published(companion: CompanionHolder) = (companion.content.value as? CompanionContent.Game)?.game?.title
+
+    @Test fun theFocusedGameIsPublished() {
+        val companion = CompanionHolder()
+        show(companion)
+        assertThat(published(companion)).isEqualTo("Chrono Trigger")
+        assertThat((companion.content.value as CompanionContent.Game).platformName).isEqualTo("Super Nintendo")
+        press(Key.DirectionRight)
+        assertThat(published(companion)).isEqualTo("EarthBound")
+        changeGame(2, games[1].copy(state = InstallState.DOWNLOADING, progress = 0.1f, jobId = 2)) // downloads, as it shows
+        assertThat((companion.content.value as CompanionContent.Game).game.progress).isEqualTo(0.1f)
+        press(Key.DirectionUp) // to the search box: the game stays
+        assertThat(published(companion)).isEqualTo("EarthBound")
+    }
+
+    @Test fun anOpenDialogKeepsTheGameOnTheBottomScreen() {
+        val companion = CompanionHolder()
+        show(companion)
+        press(listOf(Key.DirectionRight, Key.DirectionCenter))
+        rule.onNodeWithText("Download").assertIsFocused()
+        assertThat(published(companion)).isEqualTo("EarthBound")
+        back()
+        assertThat(published(companion)).isEqualTo("EarthBound")
+    }
+
+    @Test fun leavingTheLibraryTakesItsGameOffTheBottomScreen() {
+        val companion = CompanionHolder()
+        var shown by mutableStateOf(true)
+        rule.setContent {
+            CompositionLocalProvider(LocalCompanion provides companion) { LoomTestTheme { if (shown) LibraryContent(state, actions) } }
+        }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        assertThat(published(companion)).isEqualTo("Chrono Trigger")
+        shown = false
+        rule.waitForIdle()
+        assertThat(companion.content.value).isEqualTo(CompanionContent.Idle)
+    }
+
     /** Found by audit: a sync error was cut to one line in the header, and nothing there led to pairing again. */
     @Test fun aRejectedTokenShowsWhyAndLeadsToPairing() {
         val error = "RomM rejected Loom's token. Pair again in Settings."
@@ -718,6 +928,34 @@ class LibraryScreenTest {
         rule.onNodeWithText("Restore server save").assertIsFocused()
         press(Key.DirectionCenter)
         rule.onNodeWithText("Restore Chrono Trigger's save from RomM?").assertExists()
+    }
+
+    /**
+     * On the bottom screen the details' buttons wrap onto lines of their own: the pad still reaches
+     * every one. Native graphics measure the words as on the device, so they wrap as there; such a
+     * window starts in touch mode, so the pad's keyboard mode is provided.
+     */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test fun everyDetailsButtonIsReachableWhenTheyWrap() {
+        state = withSave(1, eden(SaveSyncState.LOCAL_MISSING, chosen = true).copy(autoUpload = false))
+        val pad = object : InputModeManager {
+            override val inputMode get() = InputMode.Keyboard
+            override fun requestInputMode(inputMode: InputMode) = inputMode == InputMode.Keyboard
+        }
+        rule.setContent { CompositionLocalProvider(LocalInputModeManager provides pad) { LoomTestTheme { LibraryContent(state, actions) } } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Close").assertIsFocused()
+        val tops = listOf("Upload save", "Change save folder", "Close").map { rule.onNodeWithText(it).fetchSemanticsNode().boundsInRoot.top }
+        assertThat(tops.distinct()).hasSize(3) // three lines of buttons
+        val reached = mutableSetOf<String>()
+        for (key in listOf(Key.DirectionRight, Key.DirectionLeft, Key.DirectionUp, Key.DirectionUp, Key.DirectionLeft, Key.DirectionRight, Key.DirectionDown)) {
+            press(key)
+            rule.onAllNodes(isFocused()).fetchSemanticsNodes().single().config.getOrNull(SemanticsProperties.Text)?.let { reached += it.joinToString() }
+        }
+        assertThat(reached).containsAtLeast("Remove from device", "Upload save", "Restore server save", "Change save folder")
+        assertThat(calls.filterNot { it.startsWith("look") || it.startsWith("query") }).isEmpty() // moving does nothing
     }
 
     /** Loom uploaded the save by itself while Upload save had focus: the button goes, and focus stays in the details. */

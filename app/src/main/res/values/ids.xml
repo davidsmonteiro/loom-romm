@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The second screen's Compose view: saved state is kept by view id. -->
+    <item name="loom_second_screen" type="id" />
+</resources>

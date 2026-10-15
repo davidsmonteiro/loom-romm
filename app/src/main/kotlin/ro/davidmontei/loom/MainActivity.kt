@@ -2,8 +2,10 @@ package ro.davidmontei.loom
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,14 +30,24 @@ import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import ro.davidmontei.loom.data.download.DownloadRepository
+import ro.davidmontei.loom.data.saves.SaveRepository
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.ui.components.DialogHost
 import ro.davidmontei.loom.ui.components.FocusRingIndication
 import ro.davidmontei.loom.ui.input.GamepadKeys
 import ro.davidmontei.loom.ui.input.TouchModePress
 import ro.davidmontei.loom.ui.nav.LoomNavHost
+import ro.davidmontei.loom.ui.queue.queueItems
+import ro.davidmontei.loom.ui.second.CompanionHolder
+import ro.davidmontei.loom.ui.second.LocalCompanion
+import ro.davidmontei.loom.ui.second.PresentationWindow
+import ro.davidmontei.loom.ui.second.SecondScreenController
+import ro.davidmontei.loom.ui.second.SecondScreenPanel
+import ro.davidmontei.loom.ui.second.queueStrip
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.LoomTheme
 import javax.inject.Inject
@@ -43,11 +55,21 @@ import javax.inject.Inject
 data class AppState(val onboarded: Boolean, val swapConfirmBack: Boolean)
 
 @HiltViewModel
-class AppViewModel @Inject constructor(settings: SettingsStore) : ViewModel() {
+class AppViewModel @Inject constructor(settings: SettingsStore, downloads: DownloadRepository, saves: SaveRepository) : ViewModel() {
     /** Null until settings have loaded, so the first frame doesn't flash onboarding. */
     val state: StateFlow<AppState?> = settings.settings
         .map { AppState(it.onboardingComplete && it.server != null, it.swapConfirmBack) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** What the screens publish for a second screen, and what the queue holds, worked out only while one shows it. */
+    val companion = CompanionHolder(
+        strip = combine(downloads.jobs, downloads.progress, saves.observeConflicts()) { jobs, live, conflicts ->
+            queueStrip(queueItems(jobs, live), conflicts.count { !it.conflict.skipped })
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null),
+    )
+
+    /** "Use the second screen": off until settings have loaded, so a panel switched off never flashes up. */
+    val secondScreen: StateFlow<Boolean> = settings.settings.map { it.secondScreen }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 }
 
 @AndroidEntryPoint
@@ -62,6 +84,7 @@ class MainActivity : ComponentActivity() {
 
     private val app: AppViewModel by viewModels()
     private var openQueue by mutableStateOf(false)
+    private lateinit var secondScreen: SecondScreenController
     private val touchModePress = TouchModePress(
         inTouchMode = { window.decorView.isInTouchMode },
         leaveTouchMode = ::leaveTouchMode,
@@ -74,9 +97,15 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         hideSystemBars()
         openQueue = intent?.action == ACTION_OPEN_QUEUE
+        // Handed state only: a ViewModel asked for on the second screen would be another copy of this one's.
+        val holder = app.companion
+        secondScreen = SecondScreenController(this, holder, app.secondScreen, PresentationWindow(this, onTouch = holder::poke) {
+            SecondScreenPanel(holder)
+        })
+        lifecycle.addObserver(secondScreen)
         setContent {
             LoomTheme {
-                CompositionLocalProvider(LocalIndication provides FocusRingIndication()) {
+                CompositionLocalProvider(LocalIndication provides FocusRingIndication(), LocalCompanion provides app.companion) {
                     DialogHost {
                         Box(Modifier.fillMaxSize().background(LoomColors.Background)) {
                             val state = app.state.collectAsStateWithLifecycle().value ?: return@Box
@@ -92,6 +121,28 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.action == ACTION_OPEN_QUEUE) openQueue = true
+    }
+
+    /** With a screen each, another app can be resumed beside Loom and take the top (a game started on the other screen): the panel goes. */
+    override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
+        super.onTopResumedActivityChanged(isTopResumedActivity)
+        secondScreen.onTopResumedChanged(isTopResumedActivity)
+    }
+
+    /** Among others, a move to the other screen: the one Loom left can now take the panel, the one it's on can't. */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        secondScreen.onConfigurationChanged()
+    }
+
+    /**
+     * A touch on the screen: the second screen stays lit, or lights up again (a tap on that screen is
+     * heard by its panel). Not onUserInteraction, which Android also calls for every move of a stick
+     * or trigger: one resting a little off centre would keep the second screen lit for good.
+     */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) app.companion.poke()
+        return super.dispatchTouchEvent(ev)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -119,15 +170,17 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Pad A/B become confirm/back before Compose sees them, a pad button never falls back to
-     * another key (see [GamepadKeys]), and a press made in touch mode waits for focus (see
-     * [TouchModePress]).
+     * another key, the Shift AYN sends on a focus-mode change is dropped (see [GamepadKeys]), and
+     * a press made in touch mode waits for focus (see [TouchModePress]). Any other key is someone
+     * using Loom: the second screen stays lit, or lights up again, even for an X that only brings
+     * focus back after a tap.
      *
      * Lint flags these because androidx.core re-declares the platform method as
      * library-restricted; it is the public Activity.dispatchKeyEvent.
      */
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        GamepadKeys.dispatch(event, app.state.value?.swapConfirmBack ?: false, touchModePress::dispatch)
+        GamepadKeys.dispatch(event, app.state.value?.swapConfirmBack ?: false) { key -> app.companion.poke(); touchModePress.dispatch(key) }
 
     @SuppressLint("RestrictedApi")
     private fun deliver(key: KeyEvent): Boolean = super.dispatchKeyEvent(key)

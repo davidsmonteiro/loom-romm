@@ -25,10 +25,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Loom">
 
+        <!-- Moving to the Thor's other screen, or rotating a phone, lays Loom out again in place:
+             recreated, it would lose its place. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="keyboard|keyboardHidden|navigation"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|smallestScreenSize|screenLayout|density"
             android:windowSoftInputMode="adjustResize"
             android:launchMode="singleTop">
             <intent-filter>

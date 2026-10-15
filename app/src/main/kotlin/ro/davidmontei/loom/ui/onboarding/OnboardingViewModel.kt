@@ -193,9 +193,10 @@ class OnboardingViewModel @Inject constructor(
                     DeviceAuthResult.Expired -> _state.update { it.copy(session = null, pairError = "The code expired before it was approved. Start again for a new one.") }
                 }
             } catch (e: RommException.RateLimited) {
-                _state.update { it.copy(pairing = false, pairError = "RomM is rate-limiting pairing requests. Wait a minute and try again.") }
+                _state.update { it.copy(session = null, pairing = false, pairError = "RomM is rate-limiting pairing requests. Wait a minute and try again.") }
             } catch (e: RommException) {
-                _state.update { it.copy(pairing = false, pairError = e.message) }
+                // Nothing waits on the code any more, and approving it would go unseen: it goes, and A gets a new one.
+                _state.update { it.copy(session = null, pairing = false, pairError = e.message) }
             }
         }
     }

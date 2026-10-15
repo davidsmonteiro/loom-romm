@@ -29,6 +29,7 @@ import ro.davidmontei.loom.ui.components.LoomDialog
 import ro.davidmontei.loom.ui.components.LoomRow
 import ro.davidmontei.loom.ui.components.Space
 import ro.davidmontei.loom.ui.components.gameCount
+import ro.davidmontei.loom.ui.layout.rememberLoomLayout
 import ro.davidmontei.loom.ui.theme.LoomColors
 import ro.davidmontei.loom.ui.theme.tabular
 
@@ -92,7 +93,8 @@ fun FolderQuestionDialog(
                 runCatching { suggested.requestFocus() }
             }
             LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
+                // Two on a narrow screen, so folder names aren't cut short.
+                columns = GridCells.Fixed(if (rememberLoomLayout().compact) 2 else 3),
                 state = grid,
                 modifier = Modifier.fillMaxWidth().heightIn(max = 168.dp).testTag("folder-options"),
                 contentPadding = PaddingValues(4.dp),

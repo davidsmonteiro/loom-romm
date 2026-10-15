@@ -272,6 +272,15 @@ class StoresTest {
         assertThat(store.snapshot().azaharUserDir).isNull()
     }
 
+    @Test fun theSecondScreenIsOnUntilTurnedOff() = runBlocking<Unit> {
+        val store = SettingsStore(prefs("settings"))
+        assertThat(store.snapshot().secondScreen).isTrue()
+        store.setSecondScreen(false)
+        assertThat(store.snapshot().secondScreen).isFalse()
+        store.setSecondScreen(true)
+        assertThat(store.snapshot().secondScreen).isTrue()
+    }
+
     @Test fun automaticSaveUploadIsOnUntilTurnedOff() = runBlocking<Unit> {
         val store = SettingsStore(prefs("settings"))
         assertThat(store.snapshot().autoUploadSaves).isTrue()
