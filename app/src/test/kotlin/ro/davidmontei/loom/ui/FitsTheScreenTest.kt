@@ -182,6 +182,20 @@ class FitsTheScreenTest {
         rule.saveScreenshot("onboarding-pair-bottom-screen")
     }
 
+    /**
+     * Found by review: when waiting for approval failed, the error went under the code, below the
+     * bottom screen's hints, where the pad couldn't scroll. The code goes, and the error shows under
+     * Get a new code.
+     */
+    @Config(qualifiers = THOR_BOTTOM_ACTIVITY)
+    @Test fun aPairingErrorFitsTheBottomScreen() {
+        val failed = OnboardingState(step = OnboardingStep.PAIR, pairError = "RomM didn't answer. Check the server, then get a new code.")
+        rule.setContent { LoomTestTheme { OnboardingContent(failed, NoopOnboardingActions) } }
+        assertThat(overflow()).isEqualTo(0f)
+        onScreen("Get a new code", "RomM didn't answer. Check the server, then get a new code.")
+        rule.saveScreenshot("onboarding-pair-error-bottom-screen")
+    }
+
     /** On a phone in portrait every step fits, one column each, the QR code under the pairing code. */
     @Config(qualifiers = PHONE_PORTRAIT)
     @Test fun everyStepFitsAPhoneInPortrait() {

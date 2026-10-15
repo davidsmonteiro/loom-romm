@@ -16,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -54,6 +55,7 @@ import ro.davidmontei.loom.ui.onboarding.OnboardingViewModel
 import ro.davidmontei.loom.ui.onboarding.PairMode
 import java.io.File
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** The onboarding ViewModel against a fake RomM: what it saves, and when. */
@@ -204,6 +206,47 @@ class OnboardingViewModelTest {
         Thread.sleep(300) // …and that answer has had time to reach Loom
         assertThat(vm.state.value.serverSummary).isNull()
         assertThat(vm.state.value.serverError).isNull()
+    }
+
+    @Volatile private var codesAsked = 0
+
+    /** RomM gives a code to scan, then refuses to say whether it was approved: waiting for it fails. */
+    private fun serveACodeThatFails() {
+        romm.server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.url.encodedPath) {
+                "/api/auth/device/init" -> {
+                    codesAsked++
+                    json("""{"device_code":"dev-$codesAsked","user_code":"ABCD2345","verification_path":"/pair/device",""" +
+                        """"verification_path_complete":"/pair/device?user_code=ABCD2345","expires_in":600,"interval":1}""")
+                }
+                "/api/auth/device/token" -> json("""{"detail":"invalid_device_code"}""", 400)
+                else -> json("""{"detail":"not here"}""", 404)
+            }
+        }
+    }
+
+    /**
+     * Found by review: once waiting for approval failed, the code stayed, its countdown running as if
+     * Loom still waited (and on the Thor's bottom screen the error went below the hints), and A on
+     * "Scan a code" showed it again rather than asking for a new one. Nothing waits on it: it goes.
+     */
+    @Test fun aCodeNoLongerWaitedOnGoes() {
+        serveACodeThatFails()
+        // In real time: Loom waits RomM's interval, a second, before it asks about the code.
+        val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        Dispatchers.setMain(main)
+        try {
+            val vm = viewModel(pairAgain = true)
+            val failed = vm.await { it.pairError != null }
+            assertThat(failed.session).isNull()
+            assertThat(codesAsked).isEqualTo(1)
+            vm.setPairMode(PairMode.DEVICE_CODE) // A on "Scan a code"
+            vm.await { it.session != null }
+            assertThat(codesAsked).isEqualTo(2)
+        } finally {
+            viewModels.clear()
+            main.close()
+        }
     }
 
     /** Found by audit: B back to the Server step forgot the checked address, so Continue was disabled again. */
