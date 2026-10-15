@@ -26,7 +26,7 @@ class SaveBackups(
     private val dir: Path,
     private val keep: Int = BACKUPS_KEPT,
     /** Writes the archive and returns its hash; a seam for tests of a card that loses writes. */
-    private val archive: (unit: List<SaveRoot>, target: Path) -> String = SaveZipper::zip,
+    private val archive: (unit: SaveUnit, target: Path) -> String = { unit, target -> unit.pack(target) },
     private val now: () -> Instant = Instant::now,
 ) {
     init {
@@ -44,7 +44,7 @@ class SaveBackups(
      * @throws IOException when the copy can't be written or doesn't read back intact. The unit
      *   itself is never touched, and no partial backup is left.
      */
-    fun backUp(key: String, label: String, unit: List<SaveRoot>, expectedHash: String): Backup {
+    fun backUp(key: String, label: String, unit: SaveUnit, expectedHash: String): Backup {
         val folder = Files.createDirectories(dir.resolve(key))
         val name = freeName(folder, "${STAMP.format(stampFor(key))} ${NameSanitizer.sanitize(label, fallback = "save")}")
         val part = folder.resolve(".$name.part")
@@ -61,6 +61,10 @@ class SaveBackups(
             Files.deleteIfExists(part)
         }
     }
+
+    /** [backUp] for a unit of folders. */
+    fun backUp(key: String, label: String, unit: List<SaveRoot>, expectedHash: String): Backup =
+        backUp(key, label, SaveUnit.Folders(unit), expectedHash)
 
     /** A game's backups, newest first. */
     fun list(key: String): List<Path> {

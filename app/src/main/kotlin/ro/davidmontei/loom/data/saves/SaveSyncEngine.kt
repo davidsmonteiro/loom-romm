@@ -42,6 +42,7 @@ import ro.davidmontei.loom.storage.saves.SaveChangedException
 import ro.davidmontei.loom.storage.saves.SaveHasher
 import ro.davidmontei.loom.storage.saves.SaveRestorer
 import ro.davidmontei.loom.storage.saves.SaveRoot
+import ro.davidmontei.loom.storage.saves.SaveUnit
 import ro.davidmontei.loom.storage.saves.SaveZipper
 import ro.davidmontei.loom.storage.saves.ServerHead
 import ro.davidmontei.loom.storage.saves.SyncDecider
@@ -356,14 +357,14 @@ class SaveSyncEngine(
          */
         private suspend fun prepare(save: ResolvedSave.Ready): Prepared? {
             try {
-                restorer.recover(save.roots)
-                val before = UnitSnapshot.of(save.roots)
+                restorer.recover(save.unit)
+                val before = save.unit.snapshot()
                 val cached = saves.unit(save.romId)
                 val path = save.unitPath
                 val hash = when {
                     before.isEmpty -> null
                     cached != null && cached.unitPath == path && cached.fingerprint == before.fingerprint && cached.localHash != null -> cached.localHash
-                    else -> SaveHasher.hashUnit(save.roots)
+                    else -> save.unit.hash()
                 }
                 val baseline = saves.baseline(save.romId, SAVE_SLOT)?.takeIf { it.unitPath == path }
                 val prepared = Prepared(save, before, hash, baseline?.toBaseline(), cached)
@@ -570,7 +571,7 @@ class SaveSyncEngine(
         return when (val resolved = units.resolve(rom, install)) {
             is ResolvedSave.Ready -> {
                 // A restore Loom died in is undone first, so nothing acts on a half-restored save.
-                restorer.recover(resolved.roots)
+                restorer.recover(resolved.unit)
                 Opened.Ready(api, deviceId, resolved)
             }
             is ResolvedSave.Unsupported -> Opened.Refused(resolved.reason)
@@ -589,7 +590,7 @@ class SaveSyncEngine(
         if (opened is Opened.Refused) return ResolveResult.Failed(opened.reason)
         val (api, deviceId, save) = (opened as Opened.Ready).let { Triple(it.api, it.deviceId, it.save) }
         return try {
-            val local = SaveHasher.hashUnit(save.roots)
+            val local = save.unit.hash()
             if (local != null && local != saves.baseline(romId, SAVE_SLOT)?.localHash) {
                 return ResolveResult.Failed("The save on the Thor changed since the last sync", stale = true)
             }
@@ -625,21 +626,21 @@ class SaveSyncEngine(
         val (api, deviceId, save) = (opened as Opened.Ready).let { Triple(it.api, it.deviceId, it.save) }
         return try {
             // The user chose between what the conflict showed: both sides must still be exactly that.
-            val local = SaveHasher.hashUnit(save.roots)
+            val local = save.unit.hash()
             if (local != conflict.localHash) return ResolveResult.Failed(STALE_LOCAL, stale = true)
             val head = heads(api, listOf(romId))[romId]
             if (head?.saveId != conflict.serverSaveId || head?.contentHash != conflict.serverHash) return ResolveResult.Failed(STALE_SERVER, stale = true)
             when (choice) {
                 ConflictChoice.KEEP_THOR -> {
                     if (local == null) return ResolveResult.Failed("There's no save on the Thor to keep")
-                    checkRestorable(save, UnitSnapshot.of(save.roots).totalBytes)
+                    checkRestorable(save, save.unit.snapshot().totalBytes)
                     whenSettled(save, local) { file -> uploadSlotted(api, deviceId, null, save, file, local, head, overwrite = true) }
                         ?: return ResolveResult.Failed(stillWriting(save))
                 }
                 ConflictChoice.KEEP_SERVER, ConflictChoice.KEEP_BOTH -> {
                     if (head == null) return ResolveResult.Failed("RomM has no save for this game to take")
                     if (choice == ConflictChoice.KEEP_BOTH && local != null) {
-                        checkRestorable(save, UnitSnapshot.of(save.roots).totalBytes)
+                        checkRestorable(save, save.unit.snapshot().totalBytes)
                         whenSettled(save, local) { file -> uploadArchival(api, deviceId, save, file, local) }
                             ?: return ResolveResult.Failed(stillWriting(save))
                     }
@@ -718,9 +719,9 @@ class SaveSyncEngine(
     private suspend fun download(
         api: RommApi, deviceId: String, sessionId: Int?, romId: Int, save: ResolvedSave.Ready, head: ServerHead, expectedLocal: String?,
     ) {
-        val current = SaveHasher.hashUnit(save.roots)
+        val current = save.unit.hash()
         if (current != expectedLocal) throw SaveChangedException("The save on the Thor changed since Loom looked; nothing was replaced")
-        if (current != null) backups(save.roots).backUp(romId.toString(), save.title, save.roots, current)
+        if (current != null) backups(save.unit).backUp(romId.toString(), save.title, save.unit, current)
         val file = File(workDir, "download-$romId-${UUID.randomUUID()}.zip")
         try {
             rommCall { api.saveContent(head.saveId, deviceId, sessionId) }.use { body ->
@@ -730,10 +731,14 @@ class SaveSyncEngine(
             if (expected != null && SaveHasher.hashFile(file.toPath()) != expected && SaveHasher.md5(file.toPath()) != expected) {
                 throw SaveArchiveException("The downloaded save doesn't match RomM's hash; nothing was replaced")
             }
-            if (!SaveHasher.isZip(file.toPath())) throw SaveArchiveException("RomM's save for this game isn't a save archive Loom can restore")
-            val roots = SaveZipper.rootsIn(file.toPath())
-            if (save.roots.none { it.name in roots }) throw SaveArchiveException(otherSave(save, roots))
-            val restored = restorer.restore(file.toPath(), save.roots, current, save.maxUnitBytes)
+            when (val unit = save.unit) {
+                is SaveUnit.Folders -> {
+                    if (!SaveHasher.isZip(file.toPath())) throw SaveArchiveException("RomM's save for this game isn't a save archive Loom can restore")
+                    val roots = SaveZipper.rootsIn(file.toPath())
+                    if (unit.roots.none { it.name in roots }) throw SaveArchiveException(otherSave(save, unit.roots, roots))
+                }
+            }
+            val restored = restorer.restore(file.toPath(), save.unit, current, save.maxUnitBytes)
             // The hash the download was checked against: RomM 5.4.0 keeps it as this device's baseline.
             rommCall { api.confirmSaveDownloaded(head.saveId, SaveDownloadedRequest(deviceId, head.contentHash)) }
             writeBaseline(save, restored, head.saveId, head.contentHash, head.updatedAt)
@@ -751,15 +756,15 @@ class SaveSyncEngine(
      * between. Null, with nothing sent, while the emulator may still be writing.
      */
     private suspend fun <T> whenSettled(save: ResolvedSave.Ready, expected: String, block: suspend (File) -> T): T? {
-        val before = UnitSnapshot.of(save.roots)
+        val before = save.unit.snapshot()
         val newest = before.newestModified ?: return null
         if (Duration.between(newest, now()) < QUIET_PERIOD) return null
-        if (SaveHasher.hashUnit(save.roots) != expected) return null
+        if (save.unit.hash() != expected) return null
         pause(SECOND_HASH_DELAY_MS)
         workDir.mkdirs()
         val file = File(workDir, "upload-${save.romId}-${UUID.randomUUID()}.zip")
         try {
-            if (SaveZipper.zip(save.roots, file.toPath()) != expected || UnitSnapshot.of(save.roots) != before) return null
+            if (save.unit.pack(file.toPath()) != expected || save.unit.snapshot() != before) return null
             return block(file)
         } finally {
             file.delete()
@@ -781,8 +786,8 @@ class SaveSyncEngine(
         }
     }
 
-    private fun backups(roots: List<SaveRoot>): SaveBackups {
-        val volume = volumes.forPath(roots.first().folder.toString())
+    private fun backups(unit: SaveUnit): SaveBackups {
+        val volume = volumes.forPath(unit.anchor.toString())
             ?: throw IOException("Can't find the card holding this save to back it up; nothing was replaced")
         return SaveBackups(volume.root.toPath().resolve(SaveBackups.BACKUP_DIR), now = now)
     }
@@ -891,8 +896,8 @@ class SaveSyncEngine(
      * Why RomM's save can't go in place of the Thor's: it holds other folders. For a Switch game
      * those name another title, often because the wrong save folder was picked for the game.
      */
-    private fun otherSave(save: ResolvedSave.Ready, roots: Set<String>): String {
-        val ours = save.roots.joinToString { it.name }
+    private fun otherSave(save: ResolvedSave.Ready, ourRoots: List<SaveRoot>, roots: Set<String>): String {
+        val ours = ourRoots.joinToString { it.name }
         return when {
             roots.isEmpty() -> "RomM's save isn't laid out as ${emulatorName(save.emulator)} saves are; nothing was replaced"
             save.emulator == EdenSaveLocator.EMULATOR_ID -> "RomM's save is for title ${roots.joinToString(" and ")}, not $ours, " +

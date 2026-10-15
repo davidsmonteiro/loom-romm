@@ -10,7 +10,7 @@ import ro.davidmontei.loom.storage.saves.AzaharSaveLocation
 import ro.davidmontei.loom.storage.saves.AzaharSaveLocator
 import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import ro.davidmontei.loom.storage.saves.NcsdReader
-import ro.davidmontei.loom.storage.saves.SaveRoot
+import ro.davidmontei.loom.storage.saves.SaveUnit
 import ro.davidmontei.loom.storage.saves.SaveZipper
 import ro.davidmontei.loom.storage.saves.ThreeDsTitleId
 import java.io.File
@@ -24,8 +24,8 @@ sealed interface ResolvedSave {
         override val romId: Int,
         /** The emulator id Loom gives RomM, e.g. "azahar". */
         val emulator: String,
-        /** The save unit's folders, archived under their root names. */
-        val roots: List<SaveRoot>,
+        /** The save unit: what Loom hashes, uploads and restores as the game's save. */
+        val unit: SaveUnit,
         /** The name RomM stores an upload under (it adds a timestamp), e.g. "Pokemon X.zip". */
         val fileName: String,
         /** The game's title, for backups and archival copies. */
@@ -34,7 +34,7 @@ sealed interface ResolvedSave {
         val maxUnitBytes: Long = SaveZipper.MAX_UNIT_BYTES,
     ) : ResolvedSave {
         /** Where the save is, as Loom records it with the save's scan and baseline. */
-        val unitPath: String get() = roots.first().folder.toString()
+        val unitPath: String get() = unit.path
     }
 
     /** Loom can't sync this game until something changes (another emulator, a missing title ID). */
@@ -102,7 +102,7 @@ class SaveUnitResolver(private val settings: SettingsStore, private val volumes:
             is AzaharSaveLocation.Found -> ResolvedSave.Ready(
                 romId = rom.id,
                 emulator = AzaharSaveLocator.EMULATOR_ID,
-                roots = listOf(location.unit),
+                unit = SaveUnit.Folders(listOf(location.unit)),
                 fileName = archiveName(rom),
                 title = rom.title,
             )

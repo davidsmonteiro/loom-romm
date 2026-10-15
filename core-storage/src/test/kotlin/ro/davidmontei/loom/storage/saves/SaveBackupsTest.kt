@@ -40,7 +40,7 @@ class SaveBackupsTest {
     /** A card that loses writes: the copy is read back before Loom relies on it. */
     @Test fun aCopyThatDoesntReadBackIsNoBackup() {
         val lossy = SaveBackups(path(".loom/save-backups"), archive = { unit, target ->
-            SaveZipper.zip(unit, target).also { Files.write(target, byteArrayOf(0x50, 0x4b)) }
+            unit.pack(target).also { Files.write(target, byteArrayOf(0x50, 0x4b)) }
         }) { clock }
         assertThrows(java.io.IOException::class.java) { lossy.backUp("42", "Game", unit(), AZAHAR_UNIT_HASH) }
         assertThat(backups().list("42")).isEmpty()

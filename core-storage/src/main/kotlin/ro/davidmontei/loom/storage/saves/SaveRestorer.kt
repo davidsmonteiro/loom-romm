@@ -61,16 +61,17 @@ class SaveRestorer(
      *   files don't come out as the archive says.
      * @throws IOException when the card can't be written. In every case the unit is left as it was.
      */
-    fun restore(archive: Path, unit: List<SaveRoot>, expectedCurrent: String?, maxUnitBytes: Long = SaveZipper.MAX_UNIT_BYTES): String {
+    fun restore(archive: Path, unit: SaveUnit, expectedCurrent: String?, maxUnitBytes: Long = SaveZipper.MAX_UNIT_BYTES): String {
         val parent = parentOf(unit)
         recover(unit)
-        if (SaveHasher.hashUnit(unit) != expectedCurrent) throw SaveChangedException("The save changed since it was backed up")
-        val names = unit.map { it.name }.toSet()
+        if (unit.hash() != expectedCurrent) throw SaveChangedException("The save changed since it was backed up")
+        val roots = rootsOf(unit)
+        val names = roots.map { it.name }.toSet()
         val expected = SaveHasher.hashZip(archive, names)
 
         Files.createDirectories(parent)
         val work = Files.createDirectory(parent.resolve(WORK_PREFIX + UUID.randomUUID()))
-        val staged = unit.map { SaveRoot(it.name, work.resolve(NEW).resolve(it.name)) }
+        val staged = roots.map { SaveRoot(it.name, work.resolve(NEW).resolve(it.name)) }
         val incoming = try {
             unpack(archive, work.resolve(NEW), names, maxUnitBytes)
             if (SaveHasher.hashUnit(staged) != expected) throw SaveArchiveException("The unpacked save doesn't match the archive")
@@ -81,7 +82,7 @@ class SaveRestorer(
         }
 
         val outgoing = try {
-            SaveZipper.entries(unit).also { writeJournal(work, Journal(incoming, it.map { e -> e.name }.toSet())) }
+            SaveZipper.entries(roots).also { writeJournal(work, Journal(incoming, it.map { e -> e.name }.toSet())) }
         } catch (e: Exception) {
             deleteTree(work)
             throw e
@@ -89,7 +90,7 @@ class SaveRestorer(
         try {
             for (old in outgoing) moveInto(old.file, work.resolve(OLD).resolve(old.name))
             for (name in incoming) moveInto(work.resolve(NEW).resolve(name), live(unit, name))
-            if (SaveHasher.hashUnit(unit) != expected) throw SaveArchiveException("The restored save doesn't match the archive")
+            if (unit.hash() != expected) throw SaveArchiveException("The restored save doesn't match the archive")
             Files.createFile(work.resolve(DONE))
         } catch (e: Exception) {
             try {
@@ -103,6 +104,10 @@ class SaveRestorer(
         return expected
     }
 
+    /** [restore] for a unit of folders. */
+    fun restore(archive: Path, unit: List<SaveRoot>, expectedCurrent: String?, maxUnitBytes: Long = SaveZipper.MAX_UNIT_BYTES): String =
+        restore(archive, SaveUnit.Folders(unit), expectedCurrent, maxUnitBytes)
+
     /**
      * Cleans up after a restore Loom didn't finish: a restore that died or failed while swapping
      * files is undone, so the old save is back; any other leftover work folder is removed. Old
@@ -112,7 +117,7 @@ class SaveRestorer(
      * @throws IOException when the old files can't be put back; the work folder is then kept, so
      *   nothing is lost and the next attempt can finish the job.
      */
-    fun recover(unit: List<SaveRoot>): Boolean {
+    fun recover(unit: SaveUnit): Boolean {
         val parent = parentOf(unit)
         if (!parent.isDirectory(LinkOption.NOFOLLOW_LINKS)) return false
         val leftovers = checkedIo {
@@ -125,12 +130,15 @@ class SaveRestorer(
         return leftovers.isNotEmpty()
     }
 
+    /** [recover] for a unit of folders. */
+    fun recover(unit: List<SaveRoot>): Boolean = recover(SaveUnit.Folders(unit))
+
     /**
      * Takes the new files that made it into place back out, and moves every old file back. Safe to
      * run again after it stopped midway: a live file whose new copy left `new/` is the new one only
      * while its old namesake is still aside in `old/`; once that is gone, it was already put back.
      */
-    private fun rollBack(work: Path, unit: List<SaveRoot>) {
+    private fun rollBack(work: Path, unit: SaveUnit) {
         val journal = readJournal(work)
         for (name in journal.incoming) {
             val live = live(unit, name)
@@ -152,8 +160,8 @@ class SaveRestorer(
     }
 
     /** Where the file named [name] ("data/00000001/main") lives in the unit. */
-    private fun live(unit: List<SaveRoot>, name: String): Path {
-        val root = unit.firstOrNull { it.name == SaveZipper.rootOf(name) } ?: throw SaveArchiveException("No root for $name")
+    private fun live(unit: SaveUnit, name: String): Path {
+        val root = rootsOf(unit).firstOrNull { it.name == SaveZipper.rootOf(name) } ?: throw SaveArchiveException("No root for $name")
         return root.folder.resolve(name.substringAfter('/'))
     }
 
@@ -181,11 +189,15 @@ class SaveRestorer(
     private fun holdsFiles(folder: Path): Boolean = folder.isDirectory(LinkOption.NOFOLLOW_LINKS) &&
         checkedIo { Files.walk(folder).use { walk -> walk.anyMatch { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) } } }
 
-    private fun parentOf(unit: List<SaveRoot>): Path {
-        require(unit.isNotEmpty()) { "A save unit has at least one folder" }
-        val parent = unit.first().folder.toAbsolutePath().parent
-        require(unit.all { it.folder.toAbsolutePath().parent == parent }) { "A unit's folders must share one parent to be restored" }
-        return parent
+    /** The folder the unit's files are restored in, beside which the work folder goes. */
+    private fun parentOf(unit: SaveUnit): Path = when (unit) {
+        is SaveUnit.Folders -> unit.anchor.also { parent ->
+            require(unit.roots.all { it.folder.toAbsolutePath().parent == parent }) { "A unit's folders must share one parent to be restored" }
+        }
+    }
+
+    private fun rootsOf(unit: SaveUnit): List<SaveRoot> = when (unit) {
+        is SaveUnit.Folders -> unit.roots
     }
 
     private fun deleteTree(path: Path) {

@@ -5,6 +5,7 @@ import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.junit.runner.RunWith
+import ro.davidmontei.loom.storage.saves.SaveUnit
 import java.io.File
 
 /** From an installed 3DS game to its Azahar save folder, or why not. */
@@ -17,6 +18,8 @@ class SaveUnitResolverTest : SaveSyncTestBase() {
         return resolver.resolve(dao.rom(game.romId)!!, dao.install(game.romId)!!)
     }
 
+    private val ResolvedSave.Ready.roots get() = (unit as SaveUnit.Folders).roots
+
     @Test fun aCartridgeImageNamesItsSaveFolder() = runBlocking<Unit> {
         install(pokemonX)
         val ready = resolve(pokemonX) as ResolvedSave.Ready
@@ -24,6 +27,20 @@ class SaveUnitResolverTest : SaveSyncTestBase() {
         assertThat(ready.roots.single().name).isEqualTo("data")
         assertThat(ready.roots.single().folder.toFile()).isEqualTo(saveFolder(pokemonX))
         assertThat(ready.fileName).isEqualTo("Pokemon X.zip")
+    }
+
+    /**
+     * Loom 0.3 recorded a save's place as its folder's path, and a baseline recorded for another
+     * place is of another save: an Azahar or Eden game's unit must keep that path to stay in sync.
+     */
+    @Test fun aFolderUnitsPathIsTheOneBaselinesRecorded() = runBlocking<Unit> {
+        install(pokemonX)
+        putProdKeys()
+        installSwitch(wonder)
+        val dao = db.catalogDao()
+        val switch = resolver.resolve(dao.rom(wonder.romId)!!, dao.install(wonder.romId)!!) as ResolvedSave.Ready
+        assertThat((resolve(pokemonX) as ResolvedSave.Ready).unitPath).isEqualTo(saveFolder(pokemonX).path)
+        assertThat(switch.unitPath).isEqualTo(edenFolder(wonder).path)
     }
 
     /** RomM's sigil can name an update's title (0004000e); only a game's own title has the save. */

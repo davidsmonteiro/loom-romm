@@ -16,6 +16,7 @@ import ro.davidmontei.loom.storage.saves.EdenSaveLocator
 import ro.davidmontei.loom.storage.saves.EdenTitleFolder
 import ro.davidmontei.loom.storage.saves.SAVE_SLOT
 import ro.davidmontei.loom.storage.saves.SaveRoot
+import ro.davidmontei.loom.storage.saves.SaveUnit
 import ro.davidmontei.loom.storage.saves.SwitchHeaderKey
 import ro.davidmontei.loom.storage.saves.SwitchTitleId
 import ro.davidmontei.loom.storage.saves.SwitchTitleIdReader
@@ -77,7 +78,7 @@ class EdenSaves(
                 is EdenSaveLocation.Found -> ResolvedSave.Ready(
                     romId = rom.id,
                     emulator = EdenSaveLocator.EMULATOR_ID,
-                    roots = listOf(location.unit),
+                    unit = SaveUnit.Folders(listOf(location.unit)),
                     fileName = SaveUnitResolver.archiveName(rom),
                     title = rom.title,
                     maxUnitBytes = maxUnitBytes,
