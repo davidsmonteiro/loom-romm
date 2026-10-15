@@ -43,6 +43,7 @@ import ro.davidmontei.loom.data.db.PlatformEntity
 import ro.davidmontei.loom.data.db.PlatformSummary
 import ro.davidmontei.loom.data.download.VolumeInfo
 import ro.davidmontei.loom.data.saves.SaveSyncEngine
+import ro.davidmontei.loom.data.sent.SendToDeviceState
 import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.data.settings.ServerConfig
@@ -119,6 +120,7 @@ class SettingsScreenTest {
         var onCard: List<SystemFolder>? = null
         override suspend fun foldersOnCard(names: List<String>) = onCard?.filter { f -> names.any { it.equals(f.name, ignoreCase = true) } }
         override fun setConcurrency(n: Int) { calls += "concurrency:$n" }
+        override fun setReceiveFromRomm(on: Boolean) { calls += "receive:$on" }
         override fun setAutoUploadSaves(on: Boolean) { calls += "autoUpload:$on" }
         override fun setAzaharFolder(dir: File?) { calls += "azahar:$dir" }
         override fun setEdenFolder(dir: File?) { calls += "eden:$dir" }
@@ -303,6 +305,63 @@ class SettingsScreenTest {
         assertThat(calls).contains("battery")
         update { it.copy(batteryUnrestricted = true) } // back from Android's dialog, allowed
         rule.onNodeWithText("1").assertIsFocused()
+    }
+
+    @Test fun theRommSwitchTurnsReceivingOff() {
+        state = state.copy(sendToDevice = SendToDeviceState.Ready("dev-1"))
+        show()
+        goTo(SettingsSection.DOWNLOADS)
+        press(Key.DirectionCenter) // the first concurrency chip
+        press(Key.DirectionDown); press(Key.DirectionDown) // past Allow background downloads
+        rule.onNodeWithText("Receive games sent from RomM").assertIsFocused()
+        rule.onNodeWithText("Pair again").assertDoesNotExist()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("receive:false")
+    }
+
+    /** RomM refuses the device: the switch says to pair again, and Pair again is beside it, the row keeping its height. */
+    @Test fun pairAgainSitsBesideTheSwitchWhenRommCantSendHere() {
+        state = state.copy(sendToDevice = SendToDeviceState.NeedsPairing)
+        show()
+        goTo(SettingsSection.DOWNLOADS)
+        press(Key.DirectionCenter) // the first concurrency chip
+        rule.onNodeWithText("Pair again, with the code Loom shows, to receive games from RomM.", useUnmergedTree = true).assertExists()
+        val switch = rule.onNodeWithText("Receive games sent from RomM").getBoundsInRoot()
+        val pairAgain = rule.onNodeWithText("Pair again").getBoundsInRoot()
+        assertThat(pairAgain.left).isAtLeast(switch.right)
+        assertThat(pairAgain.top).isAtLeast(switch.top)
+        assertThat(pairAgain.bottom).isAtMost(switch.bottom)
+        press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionRight)
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("repair") // nothing to confirm: RomM already refuses the device
+    }
+
+    /** Pairing again from Downloads comes back to its Pair again, and to the switch once the new pairing works. */
+    @Test fun backFromPairingFocusLandsOnPairAgainOrTheSwitch() {
+        state = state.copy(sendToDevice = SendToDeviceState.NeedsPairing)
+        val restore = StateRestorationTester(rule)
+        restore.setContent { LoomTestTheme { SettingsContent(state, actions) } }
+        rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        goTo(SettingsSection.DOWNLOADS)
+        press(Key.DirectionCenter); press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionRight) // Pair again
+        press(Key.DirectionCenter)
+        assertThat(calls).contains("repair")
+        // Pairing opens on top and Settings leaves composition; coming back recreates it from saved state.
+        restore.emulateSavedInstanceStateRestore()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText("Pair again").assertIsFocused()
+        update { it.copy(sendToDevice = SendToDeviceState.Ready("dev-2")) }
+        rule.onNodeWithText("Pair again").assertDoesNotExist()
+        rule.onNodeWithText("Receive games sent from RomM").assertIsFocused()
+
+        // Paired while away, the button gone by the time Settings is back: the switch.
+        update { it.copy(sendToDevice = SendToDeviceState.NeedsPairing) }
+        press(Key.DirectionRight); press(Key.DirectionCenter)
+        state = state.copy(sendToDevice = SendToDeviceState.Ready("dev-3"))
+        restore.emulateSavedInstanceStateRestore()
+        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
+        rule.onNodeWithText("Receive games sent from RomM").assertIsFocused()
     }
 
     @Test fun librarySyncOpensOnTheChosenIntervalAndAChoosesAnother() {

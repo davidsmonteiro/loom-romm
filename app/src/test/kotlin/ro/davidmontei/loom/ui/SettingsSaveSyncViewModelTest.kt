@@ -41,6 +41,7 @@ import ro.davidmontei.loom.data.mapping.FolderChooser
 import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.saves.SaveSyncScheduler
 import ro.davidmontei.loom.data.saves.SaveSyncTriggers
+import ro.davidmontei.loom.data.sent.SendToDeviceStore
 import ro.davidmontei.loom.data.saves.SaveSyncWorker
 import ro.davidmontei.loom.data.settings.SettingsStore
 import ro.davidmontei.loom.net.ActiveServer
@@ -93,6 +94,7 @@ class SettingsSaveSyncViewModelTest {
             InstallManager(db.catalogDao(), settings, mapping, volumes),
             CatalogSyncScheduler(workManager), RommConnector(OkHttpClient()), ActiveServer(settings, credentials, OkHttpClient(), scope),
             SaveSyncTriggers(settings, SaveSyncScheduler(workManager)),
+            SendToDeviceStore(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "send_to_device.preferences_pb") }),
         )
     }
 

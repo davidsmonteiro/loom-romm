@@ -32,6 +32,9 @@ import ro.davidmontei.loom.data.mapping.MappingRepository
 import ro.davidmontei.loom.data.saves.EdenSaves
 import ro.davidmontei.loom.data.saves.SaveSyncTriggers
 import ro.davidmontei.loom.data.saves.SaveUnitResolver
+import ro.davidmontei.loom.data.sent.SendToDeviceState
+import ro.davidmontei.loom.data.sent.SendToDeviceStore
+import ro.davidmontei.loom.data.sent.sendToDeviceState
 import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.data.settings.ServerConfig
 import ro.davidmontei.loom.data.settings.Settings
@@ -88,6 +91,10 @@ data class SettingsUiState(
     val storage: StorageInfo = StorageInfo(null, null, null, null),
     val batteryUnrestricted: Boolean = false,
     val allFilesAccess: Boolean = false,
+    /** Whether games sent from RomM can come, and if not, why. */
+    val sendToDevice: SendToDeviceState = SendToDeviceState.NotSetUp,
+    /** The switch for games sent from RomM. */
+    val receiveFromRomm: Boolean = true,
     val appVersion: String = BuildConfig.VERSION_NAME,
     val contractVersion: String = ROMM_CONTRACT_VERSION,
 )
@@ -106,6 +113,7 @@ class SettingsViewModel @Inject constructor(
     private val connector: RommConnector,
     private val server: ActiveServer,
     private val saveSync: SaveSyncTriggers,
+    private val sendToDevice: SendToDeviceStore,
 ) : ViewModel() {
 
     private val storageInfo = MutableStateFlow(StorageInfo(null, null, null, null))
@@ -126,6 +134,10 @@ class SettingsViewModel @Inject constructor(
         )
     }.combine(deviceState) { ui, (battery, files) -> ui.copy(batteryUnrestricted = battery, allFilesAccess = files) }
         .combine(sync.status) { ui, status -> ui.copy(sync = status) }
+        .combine(sendToDevice.settings) { ui, sent ->
+            ui.copy(sendToDevice = ui.settings?.let { sendToDeviceState(it, ui.credentials, sent) } ?: SendToDeviceState.NotSetUp,
+                receiveFromRomm = sent.receive)
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     private val _messages = Channel<String>(Channel.BUFFERED)
@@ -239,6 +251,9 @@ class SettingsViewModel @Inject constructor(
     // --- downloads, saves & controls ---
 
     fun setConcurrency(n: Int) = viewModelScope.launch { store.setMaxConcurrentDownloads(n) }
+
+    /** RomM hears of it at once (see SendToDevice), and lists the Thor under "Install on device" only while it's on. */
+    fun setReceiveFromRomm(on: Boolean) = viewModelScope.launch { sendToDevice.setReceive(on) }
 
     fun setAutoUploadSaves(on: Boolean) = viewModelScope.launch { saveSync.setAutomaticUpload(on) }
 

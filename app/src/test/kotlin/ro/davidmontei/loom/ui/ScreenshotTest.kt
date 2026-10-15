@@ -80,6 +80,7 @@ class ScreenshotTest {
                 lastSaveSync = ro.davidmontei.loom.data.settings.SaveSyncOutcome(System.currentTimeMillis() - 12 * 60_000, "1 uploaded · 1 newer on RomM", false),
             ),
             storage = SettingsScreenTest.sample.storage.copy(azaharFound = "/storage/6365-3230/ROMs/n3ds"),
+            sendToDevice = ro.davidmontei.loom.data.sent.SendToDeviceState.Ready("dev-1"),
         )
         rule.setContent { LoomTestTheme { ro.davidmontei.loom.ui.settings.SettingsContent(state, SettingsScreenTest.noop) } }
         settle()

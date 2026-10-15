@@ -68,6 +68,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ro.davidmontei.loom.data.download.VolumeInfo
+import ro.davidmontei.loom.data.sent.SendToDeviceState
 import ro.davidmontei.loom.data.settings.CatalogRefresh
 import ro.davidmontei.loom.storage.engine.formatBytes
 import ro.davidmontei.loom.storage.mapping.ArchivePolicy
@@ -120,6 +121,8 @@ interface SettingsActions {
     /** Which of [names] are folders on the card, with their game counts; null when Loom can't look. Off the main thread. */
     suspend fun foldersOnCard(names: List<String>): List<SystemFolder>?
     fun setConcurrency(n: Int)
+    /** The switch for games sent from RomM's web UI. */
+    fun setReceiveFromRomm(on: Boolean)
     /** The automatic upload switch; the periodic scan follows it. */
     fun setAutoUploadSaves(on: Boolean)
     /** Azahar's user directory; null goes back to the 3DS system folder. */
@@ -160,6 +163,7 @@ fun SettingsScreen(onBack: () -> Unit, onRepair: () -> Unit, vm: SettingsViewMod
             override val cocoonFolders get() = vm.cocoonFolders
             override suspend fun foldersOnCard(names: List<String>) = vm.foldersOnCard(names)
             override fun setConcurrency(n: Int) { vm.setConcurrency(n) }
+            override fun setReceiveFromRomm(on: Boolean) { vm.setReceiveFromRomm(on) }
             override fun setAutoUploadSaves(on: Boolean) { vm.setAutoUploadSaves(on) }
             override fun setAzaharFolder(dir: java.io.File?) { vm.setAzaharFolder(dir) }
             override fun setEdenFolder(dir: java.io.File?) { vm.setEdenFolder(dir) }
@@ -235,7 +239,7 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, message: S
                     SettingsSection.LIBRARY -> LibrarySyncSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
                     SettingsSection.STORAGE -> StorageSection(state, actions, first)
                     SettingsSection.MAPPING -> MappingSection(state, actions, first)
-                    SettingsSection.DOWNLOADS -> DownloadsSection(state, actions, first)
+                    SettingsSection.DOWNLOADS -> DownloadsSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
                     SettingsSection.SAVES -> SaveSyncSection(state, sectionActions, first, backFromPairing) { backFromPairing = false }
                     SettingsSection.CONTROLS -> Box(first) {
                         LoomSwitchRow("Swap A and B", state.settings?.swapConfirmBack == true, actions::setSwap,
@@ -631,10 +635,24 @@ private class EditorLayout {
     }
 }
 
+/**
+ * Downloads: how many at once, whether Android lets them run in the background, and games sent from
+ * RomM's web UI, with Pair again beside that switch when RomM won't send them here. The switch names
+ * itself rather than having a heading, so the section fits the screen.
+ */
 @Composable
-private fun DownloadsSection(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
+private fun DownloadsSection(
+    state: SettingsUiState,
+    actions: SettingsActions,
+    modifier: Modifier = Modifier,
+    backFromPairing: Boolean = false,
+    onBackFromPairing: () -> Unit = {},
+) {
     val first = modifier
     val firstChip = remember { FocusRequester() }
+    val rommSwitch = remember { FocusRequester() }
+    val pairAgainFocus = remember { FocusRequester() }
+    val needsPairing = state.sendToDevice == SendToDeviceState.NeedsPairing
     // Allowing background downloads replaces the focused button with a line of text; focus stays in the section.
     // (Read while composing: by the time the effect runs, the button has gone and reported losing focus.)
     var allowFocused by remember { mutableStateOf(false) }
@@ -642,24 +660,62 @@ private fun DownloadsSection(state: SettingsUiState, actions: SettingsActions, m
     LaunchedEffect(state.batteryUnrestricted) {
         if (state.batteryUnrestricted && allowHadFocus) { delay(50); runCatching { firstChip.requestFocus() } }
     }
+    // Back from pairing again, focus is where the user left, on Pair again. If the new pairing already works,
+    // the button has gone: the switch beside it instead.
+    LaunchedEffect(Unit) {
+        if (backFromPairing) {
+            delay(50) // as InitialFocus: the button has to be laid out first
+            if (!runCatching { pairAgainFocus.requestFocus() }.getOrDefault(false)) runCatching { rommSwitch.requestFocus() }
+            onBackFromPairing()
+        }
+    }
+    // The pairing can also start working once Pair again has focus, taking the button away: focus goes to the switch.
+    var pairAgainFocused by remember { mutableStateOf(false) }
+    val pairAgainHadFocus = pairAgainFocused
+    LaunchedEffect(needsPairing) {
+        if (!needsPairing && pairAgainHadFocus) { delay(50); runCatching { rommSwitch.requestFocus() } }
+    }
     SectionHeader("At the same time")
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
         (1..3).forEach { n ->
             LoomChip("$n", state.settings?.maxConcurrentDownloads == n, { actions.setConcurrency(n) },
                 if (n == 1) first.focusRequester(firstChip) else Modifier)
         }
+        Text("One at a time is usually fastest over one connection; two or three can help with many small games.",
+            Modifier.weight(1f).padding(start = Space.m), color = LoomColors.TextMuted, style = MaterialTheme.typography.bodySmall)
     }
-    Text("One at a time is usually fastest over one connection; two or three can help with many small games.",
-        color = LoomColors.TextMuted, style = MaterialTheme.typography.bodySmall)
     SectionHeader("Background")
     if (state.batteryUnrestricted) {
-        Text("Loom may run in the background: downloads continue and restart after Android kills the app.", color = LoomColors.Installed)
+        Text("Loom may run in the background: downloads continue and restart after Android kills the app.",
+            color = LoomColors.Installed, style = MaterialTheme.typography.bodyMedium)
     } else {
         Text("Loom is battery-optimised. Android may stop downloads in the background and not restart them until you open Loom.",
-            color = LoomColors.TextMuted)
+            color = LoomColors.TextMuted, style = MaterialTheme.typography.bodyMedium)
         LoomButton("Allow background downloads", onClick = actions::openBatterySettings,
             modifier = Modifier.onFocusChanged { allowFocused = it.isFocused })
     }
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f).focusRequester(rommSwitch)) {
+            LoomSwitchRow("Receive games sent from RomM", state.receiveFromRomm, actions::setReceiveFromRomm,
+                subtitle = state.sendToDevice.wording(), subtitleLines = 2,
+                subtitleColor = if (needsPairing) LoomColors.Error else LoomColors.TextMuted)
+        }
+        // RomM already refuses the device, so unlike Server & pairing's Pair again there is nothing to lose or confirm.
+        if (needsPairing) {
+            LoomButton("Pair again", onClick = actions::repair,
+                modifier = Modifier.focusRequester(pairAgainFocus).onFocusChanged { pairAgainFocused = it.isFocused })
+        }
+    }
+}
+
+/** What Settings says of games sent from RomM's web UI ("Install on device" there). */
+private fun SendToDeviceState.wording(): String = when (this) {
+    is SendToDeviceState.Ready -> "Games sent with RomM's Install on device join the queue."
+    SendToDeviceState.Off -> "RomM's Install on device doesn't offer the Thor."
+    SendToDeviceState.NotSetUp -> "Once Loom is paired, games sent from RomM's web UI join the queue."
+    is SendToDeviceState.OldServer -> "Needs RomM 5.4 or newer" + (version?.let { ": this server runs $it." } ?: ".")
+    SendToDeviceState.OffOnServer -> "Sending games to devices is switched off on the RomM server."
+    SendToDeviceState.NeedsPairing -> "Pair again, with the code Loom shows, to receive games from RomM."
 }
 
 /**

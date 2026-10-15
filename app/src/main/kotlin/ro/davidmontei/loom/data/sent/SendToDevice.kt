@@ -71,6 +71,23 @@ sealed interface SendToDeviceState {
 }
 
 /**
+ * Whether games sent from RomM can come, from Loom's [settings], its [credentials] and the switch and
+ * what RomM said ([sent]). Device installs that RomM hasn't said anything of yet (a server Loom paired
+ * with since its last heartbeat) count as on: RomM's own default, and a claim refused for them asks.
+ */
+fun sendToDeviceState(settings: Settings, credentials: Credentials?, sent: SendToDeviceSettings): SendToDeviceState {
+    if (!settings.onboardingComplete || settings.server == null || credentials == null) return SendToDeviceState.NotSetUp
+    if (!sent.receive) return SendToDeviceState.Off
+    if (!sendsToDevices(settings.serverVersion)) return SendToDeviceState.OldServer(settings.serverVersion)
+    if (sent.installsEnabled == false) return SendToDeviceState.OffOnServer
+    val deviceId = credentials.deviceId
+    if (deviceId == null || sent.needsPairing) return SendToDeviceState.NeedsPairing
+    return SendToDeviceState.Ready(deviceId)
+}
+
+private fun sendsToDevices(version: String?) = version?.let(RommVersion::parse)?.let { it >= ROMM_5_4 } == true
+
+/**
  * Games sent from RomM's web UI land in Loom's queue (RomM 5.4's device installs, ADR 0013). RomM keeps
  * each game sent as an install request until the device claims it and reports how it went; Loom claims
  * at start, each time it comes to the front, when RomM answers again after being out of reach, after
@@ -315,16 +332,7 @@ class SendToDevice(
         if (credentials.current.value?.token == token) store.setNeedsPairing(true)
     }
 
-    private fun Inputs.state(): SendToDeviceState {
-        val creds = credentials
-        if (!settings.onboardingComplete || settings.server == null || creds == null) return SendToDeviceState.NotSetUp
-        if (!store.receive) return SendToDeviceState.Off
-        if (!sendsToDevices(settings.serverVersion)) return SendToDeviceState.OldServer(settings.serverVersion)
-        if (store.installsEnabled == false) return SendToDeviceState.OffOnServer
-        val deviceId = creds.deviceId
-        if (deviceId == null || store.needsPairing) return SendToDeviceState.NeedsPairing
-        return SendToDeviceState.Ready(deviceId)
-    }
+    private fun Inputs.state() = sendToDeviceState(settings, credentials, store)
 
     /** Where the socket connects while games can come. */
     private fun Inputs.liveTarget(): LiveNudges.Target? {
@@ -340,8 +348,6 @@ class SendToDevice(
         if (!settings.onboardingComplete || store.needsPairing || !sendsToDevices(settings.serverVersion)) return null
         return Declaration(deviceId, store.receive, creds.token)
     }
-
-    private fun sendsToDevices(version: String?) = version?.let(RommVersion::parse)?.let { it >= ROMM_5_4 } == true
 
     companion object {
         /** How long nudges are gathered before claiming once for all of them. */

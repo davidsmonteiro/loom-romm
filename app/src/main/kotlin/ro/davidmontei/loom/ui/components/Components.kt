@@ -186,6 +186,8 @@ fun LoomRow(
     /** Shorter, for lists that must fit the screen (Settings' sections). */
     dense: Boolean = false,
     subtitleLines: Int = 3,
+    /** The error colour for a subtitle saying what's wrong. */
+    subtitleColor: Color = LoomColors.TextMuted,
 ) {
     val shape = RoundedCornerShape(14.dp)
     Row(
@@ -208,7 +210,7 @@ fun LoomRow(
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (subtitle != null) {
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = LoomColors.TextMuted, maxLines = subtitleLines,
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = subtitleColor, maxLines = subtitleLines,
                     overflow = TextOverflow.Ellipsis)
             }
         }
@@ -217,8 +219,15 @@ fun LoomRow(
 }
 
 @Composable
-fun LoomSwitchRow(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit, subtitle: String? = null, subtitleLines: Int = 3) {
-    LoomRow(title = title, subtitle = subtitle, subtitleLines = subtitleLines, onClick = { onCheckedChange(!checked) }, trailing = {
+fun LoomSwitchRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    subtitle: String? = null,
+    subtitleLines: Int = 3,
+    subtitleColor: Color = LoomColors.TextMuted,
+) {
+    LoomRow(title = title, subtitle = subtitle, subtitleLines = subtitleLines, subtitleColor = subtitleColor, onClick = { onCheckedChange(!checked) }, trailing = {
         val shape = RoundedCornerShape(50)
         Box(
             Modifier.size(width = 52.dp, height = 30.dp)

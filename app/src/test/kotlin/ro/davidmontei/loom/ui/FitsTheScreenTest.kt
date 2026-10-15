@@ -28,6 +28,7 @@ import ro.davidmontei.loom.storage.mapping.SystemFolder
 import ro.davidmontei.loom.storage.saves.EdenProfile
 import ro.davidmontei.loom.data.db.SaveSyncState
 import ro.davidmontei.loom.data.saves.SaveSyncEngine
+import ro.davidmontei.loom.data.sent.SendToDeviceState
 import ro.davidmontei.loom.data.settings.SaveSyncOutcome
 import ro.davidmontei.loom.data.saves.conflictReason
 import ro.davidmontei.loom.storage.saves.SyncDecision
@@ -141,12 +142,17 @@ class FitsTheScreenTest {
      * fold. Downloads and Saves are two sections now, and each fits.
      */
     @Test fun theDownloadsSectionFits() {
-        var state by mutableStateOf(SettingsScreenTest.sample)
+        var state by mutableStateOf(SettingsScreenTest.sample.copy(sendToDevice = SendToDeviceState.Ready("dev-1")))
         rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-DOWNLOADS").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f) // battery-optimised, with the button to allow background downloads
         state = state.copy(batteryUnrestricted = true)
         assertThat(settingsOverflow()).isEqualTo(0f)
+        // At its tallest: battery-optimised, and RomM refusing the device, with Pair again beside the switch.
+        state = state.copy(batteryUnrestricted = false, sendToDevice = SendToDeviceState.NeedsPairing)
+        assertThat(settingsOverflow()).isEqualTo(0f)
+        assertThat(ellipsized("Pair again, with the code Loom shows")).isFalse()
+        rule.saveScreenshot("settings-downloads-pair-again")
     }
 
     /**
