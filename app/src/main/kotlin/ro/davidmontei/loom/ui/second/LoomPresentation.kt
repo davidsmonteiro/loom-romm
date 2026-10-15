@@ -58,6 +58,20 @@ class LoomPresentation(
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) onTouch()
         return super.dispatchTouchEvent(ev)
     }
+
+    /**
+     * A presentation starts, and watches the displays, before its window is added. When adding it
+     * fails (the display went after it was picked), dismiss() can't stop one that never showed, so
+     * it would watch on, holding the activity, until Loom's process ends: it is stopped here.
+     */
+    override fun show() {
+        try {
+            super.show()
+        } catch (e: RuntimeException) {
+            onStop()
+            throw e
+        }
+    }
 }
 
 /** Shows [content] in a [LoomPresentation]; [onTouch]: a tap on it. */

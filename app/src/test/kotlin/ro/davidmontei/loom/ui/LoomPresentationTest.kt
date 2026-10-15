@@ -1,5 +1,7 @@
 package ro.davidmontei.loom.ui
 
+import android.app.Dialog
+import android.app.Presentation
 import android.hardware.display.DisplayManager
 import android.os.Looper
 import android.view.Display
@@ -13,14 +15,17 @@ import androidx.lifecycle.findViewTreeLifecycleOwner
 import androidx.lifecycle.findViewTreeViewModelStoreOwner
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowDisplayManager
+import org.robolectric.util.ReflectionHelpers
 import ro.davidmontei.loom.R
 import ro.davidmontei.loom.ui.second.LoomPresentation
+import java.lang.reflect.Proxy
 
 /** The window the second screen is drawn in: one the pad never reaches, laid out for its own screen. */
 @RunWith(AndroidJUnit4::class)
@@ -79,6 +84,32 @@ class LoomPresentationTest {
         assertThat(view.findViewTreeLifecycleOwner()).isSameInstanceAs(activity)
         assertThat(view.findViewTreeViewModelStoreOwner()).isNull()
         panel.dismiss()
+    }
+
+    /** How many display listeners the app has: a presentation adds one while it shows. */
+    private fun displayListeners(): Int {
+        val global = ReflectionHelpers.callStaticMethod<Any>(Class.forName("android.hardware.display.DisplayManagerGlobal"), "getInstance")
+        return ReflectionHelpers.getField<Collection<*>>(global, "mDisplayListeners").size
+    }
+
+    /** As the window manager does when the display went after it was picked: the window can't be added. */
+    private fun refuseWindows(panel: Presentation) {
+        val real = ReflectionHelpers.getField<WindowManager>(panel, "mWindowManager")
+        val refusing = Proxy.newProxyInstance(WindowManager::class.java.classLoader, arrayOf(WindowManager::class.java)) { _, method, args ->
+            if (method.name == "addView") throw WindowManager.InvalidDisplayException("The display went")
+            method.invoke(real, *(args ?: emptyArray()))
+        }
+        ReflectionHelpers.setField(Dialog::class.java, panel, "mWindowManager", refusing)
+    }
+
+    /** Found by review: a show that failed left the panel watching the displays, holding the activity until Loom's process ended. */
+    @Test fun aFailedShowLetsGoOfTheActivity() {
+        val panel = LoomPresentation(activity, bottomScreen()) { Text("Chrono Trigger") }
+        val before = displayListeners()
+        refuseWindows(panel)
+        assertThrows(WindowManager.InvalidDisplayException::class.java) { panel.show() }
+        idle()
+        assertThat(displayListeners()).isEqualTo(before)
     }
 
     /** A tap on the panel does nothing there, but it is someone using Loom: it lights the panel again. */
