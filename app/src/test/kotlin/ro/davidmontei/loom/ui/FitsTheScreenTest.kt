@@ -150,30 +150,34 @@ class FitsTheScreenTest {
         assertThat(settingsOverflow()).isEqualTo(0f)
     }
 
-    /**
-     * Saves at its tallest: a failed last sync whose reason, the longest, sits beside Pair again; a
-     * chosen Azahar folder (with the button back to the 3DS one); and a chosen Eden folder without
-     * user/save, no prod.keys, and two profiles to choose between.
-     */
-    @Test fun theSavesSectionFits() {
+    /** Saves with every folder chosen, a failed sync and two Eden profiles to choose between. */
+    private fun tallestSaves(lastSaveSync: SaveSyncOutcome): ro.davidmontei.loom.ui.settings.SettingsUiState {
         val settings = SettingsScreenTest.sample.settings!!.copy(
             azaharUserDir = "/storage/6365-3230/Emulation/Azahar/user",
             edenSaveDir = "/storage/6365-3230/Emulation/Eden/nand",
-            lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true),
+            lastSaveSync = lastSaveSync,
         )
         val storage = SettingsScreenTest.sample.storage.copy(
             edenProfiles = listOf(EdenProfile("0123456789ABCDEF0123456789ABCDEF", 12, null), EdenProfile("4E431822D6DEFD527268BA35B5C09533", 3, null)),
         )
-        rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample.copy(settings = settings, storage = storage), SettingsScreenTest.noop) } }
+        return SettingsScreenTest.sample.copy(settings = settings, storage = storage)
+    }
+
+    /**
+     * Saves at its tallest: a failed last sync whose reason, the longest, sits beside Pair again, and
+     * a card per emulator, each saying where its folder is on one line.
+     */
+    @Test fun theSavesSectionFits() {
+        val state = tallestSaves(SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true))
+        rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
         rule.onNodeWithText("Pair again").assertExists()
-        rule.onNodeWithText("Use 3DS folder").assertExists()
-        rule.onNodeWithText("Use saves/Eden").assertExists()
-        rule.onNodeWithTag("eden-profile").assertExists()
-        // How Loom found each folder, in full, on one line. (Labels with letter spacing report a width
-        // overflow they don't have, so the ellipsis and the line count are what's checked.)
-        for (line in listOf("Chosen here.", "Chosen, but it has no user/save.")) {
+        rule.onNodeWithTag("azahar-card").assertExists()
+        rule.onNodeWithTag("eden-card").assertExists()
+        // Each card's line in full. (Labels with letter spacing report a width overflow they don't
+        // have, so the ellipsis and the line count are what's checked.)
+        for (line in listOf("Your chosen folder", "Chosen, but it has no user/save")) {
             assertWithMessage(line).that(ellipsized(line)).isFalse()
             assertWithMessage(line).that(lineCount(line)).isEqualTo(1)
         }
@@ -183,39 +187,56 @@ class FitsTheScreenTest {
 
     /** The same with sync switched off on RomM, days ago: the longest last-sync line, across the section's width. */
     @Test fun theSavesSectionFitsWithSyncSwitchedOffOnRomm() {
-        val settings = SettingsScreenTest.sample.settings!!.copy(
-            azaharUserDir = "/storage/6365-3230/Emulation/Azahar/user",
-            edenSaveDir = "/storage/6365-3230/Emulation/Eden/nand",
-            lastSaveSync = SaveSyncOutcome(System.currentTimeMillis() - 10 * 86_400_000L, SaveSyncEngine.SYNC_OFF, failed = true),
-        )
-        val storage = SettingsScreenTest.sample.storage.copy(
-            edenProfiles = listOf(EdenProfile("0123456789ABCDEF0123456789ABCDEF", 12, null), EdenProfile("4E431822D6DEFD527268BA35B5C09533", 3, null)),
-        )
-        rule.setContent { LoomTestTheme { SettingsContent(SettingsScreenTest.sample.copy(settings = settings, storage = storage), SettingsScreenTest.noop) } }
+        val state = tallestSaves(SaveSyncOutcome(System.currentTimeMillis() - 10 * 86_400_000L, SaveSyncEngine.SYNC_OFF, failed = true))
+        rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
         assertThat(lineCount("pairing again won't help.")).isEqualTo(2)
         rule.saveScreenshot("settings-saves-sync-off")
     }
 
-    /** Eight Eden profiles: one chip in Saves, and a list of them all that fits beside its explanation. */
+    /**
+     * Each emulator's details at their tallest, with every button: a long chosen folder, and for
+     * Eden two profiles to choose between and no prod.keys. All of it shows, and the buttons sit
+     * on one line inside the dialog.
+     */
+    @Test fun eachEmulatorsDialogFits() {
+        val tallest = tallestSaves(SaveSyncOutcome(System.currentTimeMillis(), "no changes", failed = false))
+        val long = "/storage/6365-3230/Emulation/Some Emulator Front-end/Collections/Nintendo/Handhelds and Consoles"
+        val state = tallest.copy(settings = tallest.settings!!.copy(azaharUserDir = "$long/Azahar/user", edenSaveDir = "$long/Eden/nand"))
+        rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
+        rule.onNodeWithTag("section-SAVES").performClick()
+        for ((tag, name) in listOf("azahar" to "Azahar", "eden" to "Eden")) {
+            rule.onNodeWithTag("$tag-card").performClick()
+            assertWithMessage(name).that(overflow("$name's saves")).isEqualTo(0f)
+            rule.saveScreenshot("settings-saves-$tag-details")
+            assertWithMessage(name).that(cutShort("$long/$name")).isFalse()
+            val dialog = rule.onNode(hasText("$name's saves")).fetchSemanticsNode().boundsInRoot
+            val close = rule.onNodeWithTag("$tag-close").fetchSemanticsNode().boundsInRoot
+            assertWithMessage(name).that(close.right).isAtMost(dialog.right)
+            assertWithMessage(name).that(lineCount("Close")).isEqualTo(1)
+            if (tag == "eden") assertThat(lineCount("each Switch game asks which save folder is its.")).isEqualTo(1)
+            rule.onNodeWithTag("$tag-close").performClick()
+            rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        }
+    }
+
+    /** Eight Eden profiles: a list of them all, from Eden's details, that fits beside its explanation. */
     @Test fun manyEdenProfilesFit() {
         val profiles = (1..8).map { i -> EdenProfile("4E431822D6DEFD527268BA35B5C095%02X".format(i), 40 + i, java.time.Instant.parse("2026-10-14T12:00:00Z").minusSeconds(86_400L * i)) }
-        val settings = SettingsScreenTest.sample.settings!!.copy(
-            azaharUserDir = "/storage/6365-3230/Emulation/Azahar/user", edenSaveDir = "/storage/6365-3230/Emulation/Eden/nand",
-            lastSaveSync = SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true),
-        )
-        val state = SettingsScreenTest.sample.copy(settings = settings, storage = SettingsScreenTest.sample.storage.copy(edenProfiles = profiles))
+        val tallest = tallestSaves(SaveSyncOutcome(System.currentTimeMillis(), SaveSyncEngine.NO_DEVICE, failed = true, needsPairing = true))
+        val state = tallest.copy(storage = tallest.storage.copy(edenProfiles = profiles))
         rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
+        rule.onNodeWithTag("eden-card").performClick()
         rule.onNodeWithTag("eden-profile").performClick()
         assertThat(overflow("Whose Switch saves does Loom sync?")).isEqualTo(0f)
         assertThat(cutShort("Yours is likely the one whose saves changed last.")).isFalse()
         rule.saveScreenshot("settings-saves-eden-profiles")
     }
 
-    /** Saves as on the Thor: both folders found where Loom looks, shown in full, and Loom able to read title IDs. */
+    /** Saves as on the Thor: both folders found where Loom looks, and Loom able to read title IDs. */
     @Test fun theSavesSectionShowsTheThorsFoldersInFull() {
         val storage = SettingsScreenTest.sample.storage.copy(
             romsRoot = "/storage/6365-3230/ROMs", azaharFound = "/storage/6365-3230/ROMs/n3ds", edenFound = "/storage/6365-3230/ROMs/saves/Eden",
@@ -225,8 +246,36 @@ class FitsTheScreenTest {
         rule.onNodeWithTag("section-SAVES").performClick()
         assertThat(settingsOverflow()).isEqualTo(0f)
         rule.saveScreenshot("settings-saves-thor")
-        for (line in listOf("/storage/6365-3230/ROMs/n3ds", "/storage/6365-3230/ROMs/saves/Eden", "Found in ROMs/saves/Eden.")) {
+        for (line in listOf("Found in the 3DS folder", "Found in ROMs/saves/Eden")) {
             assertWithMessage(line).that(ellipsized(line)).isFalse()
+        }
+        rule.onNodeWithTag("eden-card").performClick()
+        rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+        assertThat(lineCount("/storage/6365-3230/ROMs/saves/Eden")).isEqualTo(1)
+    }
+
+    /**
+     * The folder browser in Saves, in a folder with more folders than fit: it takes the section's
+     * place, and its list scrolls in its own pane, so the section itself never does.
+     */
+    @Test fun theSavesFolderBrowserFits() {
+        val card = File(System.getProperty("java.io.tmpdir"), "loom-fits-${System.nanoTime()}/6365-3230")
+        val roms = File(card, "ROMs")
+        try {
+            (1..30).forEach { File(roms, "system%02d".format(it)).mkdirs() }
+            val n3ds = File(roms, "n3ds").apply { File(this, "sdmc/Nintendo 3DS").mkdirs() }
+            val state = SettingsScreenTest.sample.copy(storage = SettingsScreenTest.sample.storage.copy(romsRoot = roms.path, azaharFound = n3ds.path))
+            rule.setContent { LoomTestTheme { SettingsContent(state, SettingsScreenTest.noop) } }
+            rule.onNodeWithTag("section-SAVES").performClick()
+            rule.onNodeWithTag("azahar-card").performClick()
+            rule.onNodeWithTag("azahar-change-folder").performClick()
+            rule.mainClock.advanceTimeBy(300); rule.waitForIdle()
+            rule.onNodeWithTag("save-folder-browser").assertExists()
+            assertThat(settingsOverflow()).isEqualTo(0f)
+            rule.onNodeWithText("Use this folder").assertExists()
+            rule.saveScreenshot("settings-saves-browser")
+        } finally {
+            card.parentFile!!.deleteRecursively()
         }
     }
 

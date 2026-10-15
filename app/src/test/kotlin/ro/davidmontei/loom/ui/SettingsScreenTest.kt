@@ -665,7 +665,7 @@ class SettingsScreenTest {
         press(Key.DirectionDown)
         rule.onNodeWithText("Pair again").assertIsFocused()
         press(Key.DirectionDown)
-        rule.onNodeWithTag("azahar-change-folder").assertIsFocused() // the rest of the section is still reachable
+        rule.onNodeWithTag("eden-card").assertIsFocused() // the rest of the section is still reachable, below it
         press(Key.DirectionUp)
         rule.onNodeWithText("Pair again").assertIsFocused()
         press(Key.DirectionCenter)
@@ -685,7 +685,7 @@ class SettingsScreenTest {
         rule.onNodeWithTag("last-save-sync").assertTextEquals("Last sync 5 min ago: ${SaveSyncEngine.SYNC_OFF}")
         rule.onNodeWithText("Pair again").assertDoesNotExist()
         press(Key.DirectionDown)
-        rule.onNodeWithTag("azahar-change-folder").assertIsFocused()
+        rule.onNodeWithTag("azahar-card").assertIsFocused()
     }
 
     /** Pairing again from Saves comes back to its Pair again, and to the switch once the save sync it starts has run. */
@@ -722,44 +722,129 @@ class SettingsScreenTest {
         rule.onNodeWithText("Upload saves automatically").assertIsFocused()
     }
 
-    /** Azahar's folder browser opens beside the folder in use, and says whether the open folder holds Azahar's data. */
-    @Test fun azaharsFolderIsChosenWithTheFolderBrowser() {
+    // --- each emulator's card, its details and its folder browser ---
+
+    /** The Thor's card with Azahar's data in ROMs/n3ds and Eden's saves in ROMs/saves/Eden. */
+    private fun thorCard(): Pair<File, File> {
         val card = tmp.newFolder("6365-3230")
         val n3ds = File(card, "ROMs/n3ds").apply { File(this, "sdmc/Nintendo 3DS").mkdirs(); File(this, "nand").mkdirs() }
+        val eden = File(card, "ROMs/saves/Eden").apply { File(this, "user/save/0000000000000000").mkdirs() }
         File(card, "ROMs/snes").mkdirs()
-        state = sample.copy(storage = sample.storage.copy(romsRoot = File(card, "ROMs").path, azaharFound = n3ds.path))
+        File(card, "ROMs/saves/Other").mkdirs()
+        state = sample.copy(storage = sample.storage.copy(romsRoot = File(card, "ROMs").path, azaharFound = n3ds.path, edenFound = eden.path))
+        return n3ds to eden
+    }
+
+    /** From the switch down to [tag]'s card, and A on it: its details open on Change folder. */
+    private fun openDetails(tag: String) {
+        press(Key.DirectionDown)
+        if (tag == "eden") press(Key.DirectionRight)
+        rule.onNodeWithTag("$tag-card").assertIsFocused()
+        press(Key.DirectionCenter)
+    }
+
+    /** Each emulator has a card saying where its saves are; A opens its details, with its folder in full, and B goes back to the card. */
+    @Test fun aCardOpensItsEmulatorsDetails() {
+        val (n3ds, _) = thorCard()
+        state = state.copy(storage = state.storage.copy(edenFound = null))
         show()
         toTheSaveSwitch()
-        rule.onNodeWithText(n3ds.path).assertExists()
-        rule.onNodeWithTag("azahar-folder-status").assertTextEquals("Found in the 3DS folder.")
-        press(Key.DirectionDown)
+        rule.onNodeWithTag("azahar-card").assertTextEquals("Azahar · 3DS", "Found in the 3DS folder")
+        rule.onNodeWithTag("eden-card").assertTextEquals("Eden · Switch", "Not found yet")
+        openDetails("azahar")
+        rule.onNodeWithText("Azahar's saves").assertExists()
+        rule.onNodeWithTag("azahar-folder-path", useUnmergedTree = true).assertTextEquals(n3ds.path)
+        rule.onNodeWithTag("azahar-folder-status", useUnmergedTree = true).assertTextEquals("Found in the 3DS folder.")
+        rule.onNodeWithText("sdmc and nand", substring = true).assertExists()
         rule.onNodeWithTag("azahar-change-folder").assertIsFocused()
-        press(Key.DirectionCenter) // the browser opens, on the folder in use
+        rule.onNodeWithTag("azahar-use-default").assertDoesNotExist() // nothing chosen to go back from
+        back()
+        rule.onNodeWithText("Azahar's saves").assertDoesNotExist()
+        rule.onNodeWithTag("azahar-card").assertIsFocused()
+        back()
+        rule.onNodeWithTag("section-SAVES").assertIsFocused()
+    }
+
+    @Test fun theCardsMoveWithTheDpad() {
+        show()
+        toTheSaveSwitch()
+        press(Key.DirectionDown)
+        rule.onNodeWithTag("azahar-card").assertIsFocused()
+        press(Key.DirectionRight)
+        rule.onNodeWithTag("eden-card").assertIsFocused()
+        press(Key.DirectionLeft)
+        rule.onNodeWithTag("azahar-card").assertIsFocused()
+        press(Key.DirectionUp)
+        rule.onNodeWithText("Upload saves automatically").assertIsFocused()
+    }
+
+    /** Change folder: the browser takes the section's place, opening beside the folder in use. */
+    @Test fun changeFolderOpensTheBrowserInPlaceOfTheCards() {
+        thorCard()
+        show()
+        toTheSaveSwitch()
+        openDetails("azahar")
+        press(Key.DirectionCenter)
+        rule.onNodeWithText("Azahar's saves").assertDoesNotExist()
+        rule.onNodeWithTag("save-folder-browser").assertExists()
+        rule.onNodeWithText("Upload saves automatically").assertDoesNotExist()
+        rule.onNodeWithTag("last-save-sync").assertDoesNotExist()
+        rule.onNodeWithTag("azahar-card").assertDoesNotExist()
+        rule.onNodeWithText("Azahar's folder".uppercase()).assertExists()
         rule.onNodeWithText("n3ds").assertIsFocused()
         rule.onNodeWithText("Azahar's folder holds sdmc and nand; they aren't here.").assertExists() // ROMs itself
+    }
+
+    /** Azahar's folder browser says whether the open folder holds Azahar's data; picking one puts focus back on the card. */
+    @Test fun pickingAFolderGivesFocusBackToItsCard() {
+        val (n3ds, _) = thorCard()
+        show()
+        toTheSaveSwitch()
+        openDetails("azahar")
+        press(Key.DirectionCenter) // Change folder: the browser opens, on the folder in use
+        rule.onNodeWithText("n3ds").assertIsFocused()
         press(Key.DirectionCenter) // A goes into it
         rule.onNodeWithText("Azahar's data is here (nand, sdmc).").assertExists()
         rule.onNodeWithText("Use this folder").assertIsFocused()
         press(Key.DirectionCenter)
         assertThat(calls).contains("azahar:${n3ds.path}")
-        rule.onNodeWithTag("azahar-change-folder").assertIsFocused()
+        rule.onNodeWithTag("save-folder-browser").assertDoesNotExist()
+        rule.onNodeWithTag("azahar-card").assertIsFocused()
     }
 
-    @Test fun bClosesAzaharsFolderBrowser() {
+    /** B goes up through the folders opened, then closes the browser, back on its card; the next B leaves the section. */
+    @Test fun bClosesTheBrowserBackToItsCard() {
+        thorCard()
         show()
         toTheSaveSwitch()
-        press(Key.DirectionDown); press(Key.DirectionCenter) // the browser lists volumes: the card isn't there in tests
-        rule.onNodeWithText("SD card").assertIsFocused()
+        openDetails("azahar")
+        press(Key.DirectionCenter)
+        press(Key.DirectionCenter) // into n3ds
+        rule.onNodeWithText("Use this folder").assertIsFocused()
         back()
-        rule.onNodeWithTag("azahar-change-folder").assertIsFocused()
+        rule.onNodeWithText("n3ds").assertIsFocused() // up, on the folder just left
+        back()
+        rule.onNodeWithTag("save-folder-browser").assertDoesNotExist()
+        rule.onNodeWithTag("azahar-card").assertIsFocused()
         back()
         rule.onNodeWithTag("section-SAVES").assertIsFocused()
         assertThat(calls.filter { it.startsWith("azahar") }).isEmpty()
     }
 
+    /** Without the card in the list of storages, the browser starts there; B still closes it. */
+    @Test fun bClosesTheBrowserFromTheListOfStorages() {
+        show()
+        toTheSaveSwitch()
+        openDetails("azahar")
+        press(Key.DirectionCenter) // the browser lists volumes: the card isn't there in tests
+        rule.onNodeWithText("SD card").assertIsFocused()
+        back()
+        rule.onNodeWithTag("azahar-card").assertIsFocused()
+    }
+
     /**
-     * The button goes once the 3DS folder is back in use. Found by review: focus went with it to the
-     * section list, so the next B left Settings; it moves to Change folder instead.
+     * A chosen folder's details offer the way back to the 3DS folder. Pressing it closes them, and
+     * focus is back on the card.
      */
     @Test fun aChosenFolderCanGoBackToThe3dsFolder() {
         state = sample.copy(settings = sample.settings!!.copy(azaharUserDir = "/storage/6365-3230/Azahar"))
@@ -770,16 +855,18 @@ class SettingsScreenTest {
             }
         })
         toTheSaveSwitch()
-        rule.onNodeWithText("/storage/6365-3230/Azahar").assertExists()
-        rule.onNodeWithTag("azahar-folder-status").assertTextEquals("Chosen here.")
-        press(Key.DirectionDown)
+        rule.onNodeWithTag("azahar-card").assertTextEquals("Azahar · 3DS", "Your chosen folder")
+        openDetails("azahar")
+        rule.onNodeWithTag("azahar-folder-path", useUnmergedTree = true).assertTextEquals("/storage/6365-3230/Azahar")
+        rule.onNodeWithTag("azahar-folder-status", useUnmergedTree = true).assertTextEquals("You chose this folder.")
         rule.onNodeWithTag("azahar-change-folder").assertIsFocused()
-        press(Key.DirectionRight)
+        press(Key.DirectionLeft)
         rule.onNodeWithText("Use 3DS folder").assertIsFocused()
         press(Key.DirectionCenter)
         assertThat(calls).contains("azahar:null")
-        rule.onNodeWithText("Use 3DS folder").assertDoesNotExist()
-        rule.onNodeWithTag("azahar-change-folder").assertIsFocused()
+        rule.onNodeWithText("Azahar's saves").assertDoesNotExist()
+        rule.onNodeWithTag("azahar-card").assertIsFocused()
+        rule.onNodeWithTag("azahar-card").assertTextEquals("Azahar · 3DS", "Not found yet")
         back()
         rule.onNodeWithTag("section-SAVES").assertIsFocused()
     }
@@ -787,27 +874,24 @@ class SettingsScreenTest {
     @Test fun withoutAzaharsFolderItSaysWhatToDo() {
         show()
         toTheSaveSwitch()
-        rule.onNodeWithTag("azahar-folder-path").assertTextEquals("Not found")
-        rule.onNodeWithTag("azahar-folder-status").assertTextEquals("Run a game in Azahar once, or choose the folder holding its sdmc and nand.")
         rule.onNodeWithTag("last-save-sync").assertTextEquals("No save sync has run yet.")
+        rule.onNodeWithTag("azahar-card").assertTextEquals("Azahar · 3DS", "Not found yet")
+        openDetails("azahar")
+        rule.onNodeWithTag("azahar-folder-path", useUnmergedTree = true).assertTextEquals("No folder")
+        rule.onNodeWithTag("azahar-folder-status", useUnmergedTree = true).assertTextEquals("Not found: run a game in Azahar once, or choose the folder holding its sdmc and nand.")
         rule.onNodeWithText("Use 3DS folder").assertDoesNotExist()
     }
 
-    // --- Eden's folder, below Azahar's ---
-
-    /** Eden's folder browser: below Azahar's Change folder, opening beside the folder in use, saying whether it holds user/save. */
+    /** Eden's card is beside Azahar's; its browser opens beside Eden's folder, saying whether it holds user/save. */
     @Test fun edensFolderIsChosenWithTheFolderBrowser() {
-        val card = tmp.newFolder("6365-3230")
-        val eden = File(card, "ROMs/saves/Eden").apply { File(this, "user/save/0000000000000000").mkdirs() }
-        File(card, "ROMs/saves/Other").mkdirs()
-        state = sample.copy(storage = sample.storage.copy(romsRoot = File(card, "ROMs").path, edenFound = eden.path))
+        val (_, eden) = thorCard()
         show()
         toTheSaveSwitch()
-        rule.onNodeWithText(eden.path).assertExists()
-        rule.onNodeWithTag("eden-folder-status").assertTextEquals("Found in ROMs/saves/Eden.")
-        press(Key.DirectionDown); press(Key.DirectionDown)
-        rule.onNodeWithTag("eden-change-folder").assertIsFocused()
-        press(Key.DirectionCenter) // the browser opens in saves, on Eden
+        rule.onNodeWithTag("eden-card").assertTextEquals("Eden · Switch", "Found in ROMs/saves/Eden")
+        openDetails("eden")
+        rule.onNodeWithTag("eden-folder-path", useUnmergedTree = true).assertTextEquals(eden.path)
+        rule.onNodeWithTag("eden-folder-status", useUnmergedTree = true).assertTextEquals("Found in ROMs/saves/Eden.")
+        press(Key.DirectionCenter) // Change folder: the browser opens in saves, on Eden
         rule.onNodeWithText("Eden").assertIsFocused()
         rule.onNodeWithText("Eden's save folder holds user/save; it isn't here.").assertExists()
         press(Key.DirectionCenter)
@@ -816,10 +900,10 @@ class SettingsScreenTest {
         press(Key.DirectionCenter)
         assertThat(calls).contains("eden:${eden.path}")
         assertThat(calls.filter { it.startsWith("azahar") }).isEmpty()
-        rule.onNodeWithTag("eden-change-folder").assertIsFocused()
+        rule.onNodeWithTag("eden-card").assertIsFocused()
     }
 
-    /** As with Azahar's: going back to saves/Eden takes the button away, and focus moves to Change folder. */
+    /** As with Azahar's: going back to saves/Eden closes the details, back on Eden's card. */
     @Test fun aChosenEdenFolderCanGoBackToSavesEden() {
         state = sample.copy(settings = sample.settings!!.copy(edenSaveDir = "/storage/6365-3230/Emulation/Eden"))
         show(object : SettingsActions by actions {
@@ -829,30 +913,31 @@ class SettingsScreenTest {
             }
         })
         toTheSaveSwitch()
-        rule.onNodeWithText("/storage/6365-3230/Emulation/Eden").assertExists()
-        rule.onNodeWithTag("eden-folder-status").assertTextEquals("Chosen, but it has no user/save.")
-        press(Key.DirectionDown); press(Key.DirectionDown) // Azahar's row, then Eden's
-        assertThat(focusedTag()).isAnyOf("eden-change-folder", "eden-use-default")
-        if (focusedTag() == "eden-change-folder") press(Key.DirectionRight)
+        rule.onNodeWithTag("eden-card").assertTextEquals("Eden · Switch", "Chosen, but it has no user/save")
+        openDetails("eden")
+        rule.onNodeWithTag("eden-folder-path", useUnmergedTree = true).assertTextEquals("/storage/6365-3230/Emulation/Eden")
+        rule.onNodeWithTag("eden-folder-status", useUnmergedTree = true).assertTextEquals("You chose this folder, but it has no user/save.")
+        press(Key.DirectionLeft)
         rule.onNodeWithText("Use saves/Eden").assertIsFocused()
         press(Key.DirectionCenter)
         assertThat(calls).contains("eden:null")
-        rule.onNodeWithText("Use saves/Eden").assertDoesNotExist()
-        rule.onNodeWithTag("eden-change-folder").assertIsFocused()
+        rule.onNodeWithText("Eden's saves").assertDoesNotExist()
+        rule.onNodeWithTag("eden-card").assertIsFocused()
     }
 
     /**
-     * Several Eden profiles: Settings asks whose saves Loom syncs. One chip opens them all, each with
-     * its saves' count and newest change, however many there are; A on one chooses it.
+     * Several Eden profiles: Eden's card says to choose one, and its details open on Choose profile.
+     * That lists them all, each with its saves' count and newest change, however many there are;
+     * A on one chooses it, back in Eden's details.
      */
-    @Test fun whoseEdenSavesIsChosenWithThePad() {
+    @Test fun whoseEdenSavesIsChosenFromEdensDetails() {
         val profiles = (1..8).map { i -> EdenProfile("%032X".format(i), i, java.time.Instant.parse("2026-10-14T12:00:00Z").minusSeconds(3600L * i)) }
-        state = sample.copy(storage = sample.storage.copy(edenProfiles = profiles))
+        state = sample.copy(storage = sample.storage.copy(edenFound = "/storage/6365-3230/ROMs/saves/Eden", edenProfiles = profiles))
         show()
         toTheSaveSwitch()
-        rule.onNodeWithText("Eden has 8 profiles. Whose saves does Loom sync?").assertExists()
-        rule.onNodeWithTag("prod-keys").assertDoesNotExist() // the question takes its place
-        press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionDown) // Azahar's row, Eden's, the profile
+        rule.onNodeWithTag("eden-card").assertTextEquals("Eden · Switch", "Several profiles: choose one")
+        openDetails("eden")
+        rule.onNodeWithTag("eden-profile-line", useUnmergedTree = true).assertTextEquals("Eden has 8 profiles. Whose saves does Loom sync? Choose profile picks one.")
         rule.onNodeWithTag("eden-profile").assertIsFocused()
         press(Key.DirectionCenter)
         rule.onNodeWithText("Whose Switch saves does Loom sync?").assertExists()
@@ -863,49 +948,58 @@ class SettingsScreenTest {
         press(Key.DirectionCenter)
         assertThat(calls).contains("edenProfile:${profiles[7].id}")
         rule.onNodeWithText("Whose Switch saves does Loom sync?").assertDoesNotExist()
+        rule.onNodeWithText("Eden's saves").assertExists()
         rule.onNodeWithTag("eden-profile").assertIsFocused()
         update { it.copy(settings = it.settings!!.copy(edenProfile = profiles[7].id)) }
-        rule.onNodeWithText("0000…0008 · 8 saves").assertExists()
+        rule.onNodeWithTag("eden-profile-line", useUnmergedTree = true).assertTextEquals("Loom syncs the saves of Eden's profile 0000…0008 (8 saves).")
+        back()
+        rule.onNodeWithTag("eden-card").assertIsFocused()
+        rule.onNodeWithTag("eden-card").assertTextEquals("Eden · Switch", "Found in ROMs/saves/Eden")
     }
 
     @Test fun bLeavesTheProfileListChoosingNothing() {
         val profiles = listOf(EdenProfile("0123456789ABCDEF0123456789ABCDEF", 2, null), EdenProfile("4E431822D6DEFD527268BA35B5C09533", 3, null))
-        state = sample.copy(storage = sample.storage.copy(edenProfiles = profiles))
+        state = sample.copy(storage = sample.storage.copy(edenFound = "/storage/6365-3230/ROMs/saves/Eden", edenProfiles = profiles))
         show()
         toTheSaveSwitch()
-        press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionDown); press(Key.DirectionCenter)
+        openDetails("eden")
+        press(Key.DirectionCenter)
         rule.onNodeWithText("Whose Switch saves does Loom sync?").assertExists()
         back()
         rule.onNodeWithText("Whose Switch saves does Loom sync?").assertDoesNotExist()
         assertThat(calls.filter { it.startsWith("edenProfile") }).isEmpty()
-        rule.onNodeWithTag("eden-profile").assertIsFocused()
+        rule.onNodeWithTag("eden-profile").assertIsFocused() // back in Eden's details, where it was
     }
 
-    /** Eden's browser opens beside Eden's folder, even right after Azahar's was open: each remembers its own place. */
-    @Test fun edensBrowserNeverOpensWhereAzaharsWas() {
-        val card = tmp.newFolder("6365-3230")
-        val n3ds = File(card, "ROMs/n3ds").apply { File(this, "sdmc/Nintendo 3DS").mkdirs() }
-        val eden = File(card, "ROMs/saves/Eden").apply { File(this, "user/save").mkdirs() }
-        state = sample.copy(storage = sample.storage.copy(romsRoot = File(card, "ROMs").path, azaharFound = n3ds.path, edenFound = eden.path))
+    /** Eden's browser opens beside Eden's folder, even right after Azahar's was open: each starts at its own folder. */
+    @Test fun eachBrowserStartsAtItsOwnFolder() {
+        val (_, eden) = thorCard()
         show()
         toTheSaveSwitch()
-        press(Key.DirectionDown); press(Key.DirectionCenter) // Azahar's browser, in ROMs
+        openDetails("azahar")
+        press(Key.DirectionCenter) // Azahar's browser, in ROMs
         rule.onNodeWithText("n3ds").assertIsFocused()
-        rule.onNodeWithTag("eden-change-folder").performClick() // straight to Eden's
-        rule.waitForIdle(); rule.mainClock.advanceTimeBy(200); rule.waitForIdle()
-        rule.onNodeWithText(File(card, "ROMs/saves").path).assertExists() // the browser is in saves, beside Eden
-        rule.onNodeWithText("Eden").assertExists()
+        press(Key.DirectionDown) // the next folder, and into it
+        press(Key.DirectionCenter)
+        back(); back() // up to ROMs, then closed
+        rule.onNodeWithTag("azahar-card").assertIsFocused()
+        press(Key.DirectionRight)
+        press(Key.DirectionCenter) // Eden's details
+        press(Key.DirectionCenter) // Eden's browser
+        rule.onNodeWithText(eden.parentFile!!.path).assertExists() // the browser is in saves, beside Eden
+        rule.onNodeWithText("Eden").assertIsFocused()
         rule.onNodeWithText("n3ds").assertDoesNotExist()
     }
 
-    /** Whether Loom can read Switch title IDs, without a word of the key itself. */
+    /** Whether Loom can read Switch title IDs, in Eden's details, without a word of the key itself. */
     @Test fun theSectionSaysWhetherLoomCanReadSwitchTitleIds() {
         show()
         toTheSaveSwitch()
-        rule.onNodeWithTag("prod-keys").assertTextEquals("No prod.keys in the ROMs folder: each Switch game asks which save folder is its.")
+        openDetails("eden")
+        rule.onNodeWithTag("prod-keys", useUnmergedTree = true).assertTextEquals("No prod.keys in the ROMs folder: each Switch game asks which save folder is its.")
         update { it.copy(storage = it.storage.copy(prodKeys = "/storage/6365-3230/ROMs/prod.keys")) }
-        rule.onNodeWithTag("prod-keys").assertTextEquals("Switch title IDs are read with the header_key in your prod.keys, which never leaves the Thor.")
+        rule.onNodeWithTag("prod-keys", useUnmergedTree = true).assertTextEquals("Switch title IDs are read with the header_key in your prod.keys, which never leaves the Thor.")
         update { it.copy(storage = it.storage.copy(prodKeys = null, prodKeysWithoutKey = true)) }
-        rule.onNodeWithTag("prod-keys").assertTextEquals("Your prod.keys has no header_key: each Switch game asks which save folder is its.")
+        rule.onNodeWithTag("prod-keys", useUnmergedTree = true).assertTextEquals("Your prod.keys has no header_key: each Switch game asks which save folder is its.")
     }
 }
