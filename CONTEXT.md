@@ -68,7 +68,7 @@ A ROM made of two or more launchable disc images, installed as a `Name.m3u/` fol
 ### Downloading
 
 **Download job**:
-The queued work of turning one ROM into an install.
+The queued work of turning one ROM into an install. A job can wait for its platform's folder: when the card doesn't settle where the platform's games go and nobody was there to ask (a sent game), until the owner answers in the queue.
 _Avoid_: task, transfer
 
 **Download part**:
@@ -84,6 +84,20 @@ _Avoid_: publish, commit, move
 
 **Install state**:
 What the catalog shows per ROM: not installed, queued, downloading, installed or failed.
+
+### Games sent from RomM
+
+**Install request**:
+RomM's record (RomM 5.4) of a game its owner sent to this device with **Install on device** in the web UI. Loom claims it, queues the game and reports how that went (done once it is in the queue, already installed, or failed with a reason), which ends it on RomM. A passing problem isn't reported: the next claim hands the request back.
+_Avoid_: remote install, push install
+
+**Sent game**:
+A game in the queue because of an install request rather than X in the library. It downloads like any other, by the platform's own file rules, and the queue marks it "From RomM".
+_Avoid_: remote install, pushed game
+
+**Claim**:
+Asking RomM for the install requests waiting for this device, which RomM then holds as taken until reported. Loom claims at start, when it comes to the front, after pairing again, when RomM answers again after being out of reach, every 15 minutes in the background, and while in front whenever RomM's device socket says a game was sent (every minute when the socket can't connect).
+_Avoid_: poll, fetch
 
 ### Saves
 

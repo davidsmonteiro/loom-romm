@@ -26,13 +26,17 @@ Loom does not launch games, replace the home screen, or emulate anything. It doe
   - The finished game appears with a single rename.
 - **Survives interruptions.** Pausing, the screen turning off, the app being killed, the SD card being pulled, or changing the server address in Settings: downloads resume where they stopped.
 - **Offloads.** Removing a game frees the space and keeps it in the library, so it can come back with one press.
+- **Receives games sent from RomM.** With RomM 5.4, **Install on device** in RomM's web UI (on your phone, say) lists the Thor. A game sent there lands in Loom's queue, marked **From RomM**, and downloads like one you picked, into the same folder; RomM shows "Added to downloads" once it's queued, "Already installed" if it's on the card, or "Failed" with Loom's reason.
+  - While Loom is open the game arrives within seconds; otherwise within about 15 minutes, or when Loom next opens. Nothing runs while the Thor sleeps, and RomM shows the Thor online only for a while after Loom last asked.
+  - When Loom would ask which folder the platform's games go in, the game waits in the queue instead, with a notification: press A on it there.
+  - **Receive games sent from RomM** in Settings → Downloads turns it off, and RomM stops offering the Thor. That line also says why games can't come when they can't, with **Pair again** beside it when only pairing again would fix it.
 - **Syncs 3DS and Switch saves with RomM.** Changed saves go up by themselves; RomM's come down only when you ask, after a backup; when both changed, Loom asks which to keep.
 
 ## Requirements
 
 | | |
 |---|---|
-| RomM | 5.0 or newer. Built and tested against **5.4.0**. |
+| RomM | 5.0 or newer. Built and tested against **5.4.0**. Sending games from RomM's web UI needs 5.4. |
 | Device | Android 11+ (minSdk 30). Designed for the AYN Thor's top screen, which runs Android 13. |
 | Permissions | **All files access**, to write into the folders Cocoon scans. Loom is sideloaded, so Play policy doesn't apply. Also notifications, and an optional battery-optimisation exemption so downloads restart in the background. |
 
@@ -143,7 +147,7 @@ In **Settings → Platform folders** you can change each platform's:
 Cocoon can read any folder for a system, so the folder name alone doesn't tell Loom which one Cocoon uses. Each platform therefore lists the other names its folder often has (ES-DE's, among others: `arcade`, `mame`, `fbneo` and `fba` for arcade; `genesis` and `megadrive`). At a platform's first download Loom looks at the card:
 - one of those folders holds games, or only one exists: Loom uses it and says so;
 - none exists: Loom creates the default;
-- several exist and it can't tell (ES-DE's template has them all, empty): Loom asks, with the likeliest folder focused, or **Another folder…** for any folder in the ROMs folder.
+- several exist and it can't tell (ES-DE's template has them all, empty): Loom asks, with the likeliest folder focused, or **Another folder…** for any folder in the ROMs folder. A game sent from RomM waits in the queue for that answer, first in the list and saying **Choose its folder**; A on it asks, and "Pause all" leaves it waiting.
 
 A `saves` folder in the ROMs folder (for emulators' saves, such as `ROMs/saves/Eden`) is never taken for a system folder: Loom doesn't look for games in it, offer it, mark it as a system when you browse, accept it as a platform's folder, or offload anything in it.
 
@@ -154,7 +158,7 @@ Either way the choice is remembered for that platform; change it in Settings →
 | Button | Library | Queue | Everywhere |
 |---|---|---|---|
 | D-pad | Move | Move | Move |
-| A | Game details | Choose a save, restore one, or pause / resume / retry a download | Select |
+| A | Game details | Choose a save or a folder, restore a save, or pause / resume / retry a download | Select |
 | B | | | Back (closes dialogs) |
 | X | Download, or offload (asks first) | Cancel (asks first) | |
 | Y | Search | | |
@@ -248,6 +252,8 @@ Long-press Loom's icon for the **Sync library** and **Downloads** shortcuts.
 | A multi-disc game shows up as one game per disc | RomM lists loose `(Disc N)` files as separate games; see [Preparing your RomM library](#preparing-your-romm-library). |
 | Multi-disc PS1 games don't start in DuckStation via Cocoon | A known Cocoon issue with relative `.m3u` paths for DuckStation's default player (CocoonFE discussion #414). |
 | "RomM doesn't have Loom as a device, so saves can't sync" | Loom was paired with a pasted token or pair code, which isn't tied to a device, or the device was deleted in RomM. Press **Pair again** beside it in Settings → Saves (or use Settings → Server & pairing → Pair again), with the code Loom shows. |
+| "Pair again, with the code Loom shows, to receive games from RomM" | RomM won't take the Thor's claims: Loom was paired with a pasted token or pair code, which isn't tied to a device, or the Thor was deleted on RomM's Devices page. Press **Pair again** beside it in Settings → Downloads and pair with the QR code (or the code beside it). |
+| RomM doesn't list the Thor under **Install on device** | Check Settings → Downloads: **Receive games sent from RomM** must be on, and its line says what else is missing (RomM 5.4, sending to devices switched on on the server with `DEVICE_INSTALL_ENABLED`, or pairing again). Loom tells RomM when it starts and whenever the switch changes, and again at its next claim if RomM was out of reach then. RomM offers no Install on device for the platforms it excludes (Windows games, by default). |
 | "Azahar (or Eden) wrote … less than a minute ago" | Loom only uploads a save that has been left alone for a minute. Try again shortly; with automatic upload on, Loom sends it by itself. |
 | A 3DS game's save says "not synced" | The reason follows. Usually Azahar's folder isn't where Loom looks (run the game in Azahar once, or choose the folder in Settings → Saves), or the game isn't a `.3ds`/`.cci` image and RomM read no title ID from it. |
 | A Switch game's save says "choose its Eden save folder" | Loom can't read the game's title ID: there's no `prod.keys` in the ROMs folder, its `header_key` doesn't open the game, or the game isn't an XCI or NSP. Add your `prod.keys`, or press **Choose save folder** and pick the folder Eden changed when the game last saved. |
@@ -274,7 +280,7 @@ Modules:
 
 Further reading:
 - [`CONTEXT.md`](CONTEXT.md): the project's vocabulary.
-- [`docs/adr/`](docs/adr/): the decisions behind staging, per-file downloads, archive checks, pairing, the Keystore, Retrofit, the module split, save sync's baseline and backups, and reading Switch title IDs on the Thor.
+- [`docs/adr/`](docs/adr/): the decisions behind staging, per-file downloads, archive checks, pairing, the Keystore, Retrofit, the module split, save sync's baseline and backups, reading Switch title IDs on the Thor, and receiving games sent from RomM.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md): Phases 2 and 3.
 
 ### Releases
