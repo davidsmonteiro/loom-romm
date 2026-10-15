@@ -10,13 +10,17 @@ import java.security.MessageDigest
 
 fun sha1(bytes: ByteArray) = MessageDigest.getInstance("SHA-1").digest(bytes).joinToString("") { "%02x".format(it) }
 
-/** A game RomM holds in one file, [fileId] of [data], as `GET api/roms/{id}` answers it. */
+/**
+ * A game RomM holds in one file, [fileId] of [data], as `GET api/roms/{id}` answers it, on the platform
+ * RomM calls [platformName].
+ */
 fun romJson(
     id: Int, fileId: Int, data: ByteArray, platformId: Int = 1, slug: String = "snes", name: String = "Chrono Trigger",
-    fileName: String = "$name.sfc",
+    fileName: String = "$name.sfc", platformName: String = "Super Nintendo Entertainment System",
 ): JsonObject = buildJsonObject {
     val stem = fileName.substringBeforeLast('.')
     put("id", id); put("platform_id", platformId); put("platform_slug", slug); put("platform_fs_slug", slug)
+    put("platform_display_name", platformName); put("platform_custom_name", null as String?)
     put("name", name); put("name_sort_key", null as String?); put("fs_name", fileName)
     put("fs_name_no_tags", stem); put("fs_name_no_ext", stem); put("fs_extension", fileName.substringAfterLast('.'))
     put("full_path", "roms/$slug/$fileName")

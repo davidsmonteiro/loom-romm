@@ -233,10 +233,36 @@ class QueueGameTest {
 
         val outcome = fromLibrary(77)
 
-        assertThat(outcome).isEqualTo(QueueGame.Outcome.Queued(db.downloadDao().jobForRom(77)!!.id, "snes games go in sfc/"))
+        assertThat(outcome).isEqualTo(QueueGame.Outcome.Queued(db.downloadDao().jobForRom(77)!!.id, "Super Nintendo games go in sfc/"))
         assertThat(db.downloadDao().jobForRom(77)!!.plan().systemFolder).isEqualTo("sfc")
         assertThat(romm.requestCount).isEqualTo(1) // asked once, for its platform and its files
         assertThat(syncsStarted()).isEqualTo(1)
+    }
+
+    /**
+     * Sent from RomM before the library has the game, only the game being new: the question (and the
+     * notification that says where to answer it) names the platform as the library does.
+     */
+    @Test fun aSentGameNotInTheLibraryYetIsAskedAboutByItsPlatformsName() = runBlocking<Unit> {
+        folders("snes", "sfc")
+
+        val outcome = fromRomm(77) as QueueGame.Outcome.WaitingForFolder
+
+        assertThat(outcome.ask.platformName).isEqualTo("Super Nintendo")
+    }
+
+    /** A platform the library doesn't have yet either: named as RomM names it, not by its slug. */
+    @Test fun aSentGameOnAPlatformNewToTheLibraryIsAskedAboutByRommsName() = runBlocking<Unit> {
+        folders("snes", "sfc")
+        answer = { id ->
+            MockResponse.Builder().code(200).setHeader("Content-Type", "application/json")
+                .body(romJson(id, 400, ByteArray(1_000) { it.toByte() }, platformId = 2, platformName = "Super Famicom").toString()).build()
+        }
+
+        val outcome = fromRomm(77) as QueueGame.Outcome.WaitingForFolder
+
+        assertThat(outcome.ask.platformId).isEqualTo(2)
+        assertThat(outcome.ask.platformName).isEqualTo("Super Famicom")
     }
 
     // --- a sent game waits in the queue for its folder ---

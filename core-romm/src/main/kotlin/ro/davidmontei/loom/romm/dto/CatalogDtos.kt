@@ -57,6 +57,8 @@ data class RomDto(
     @SerialName("platform_id") val platformId: Int,
     @SerialName("platform_slug") val platformSlug: String,
     @SerialName("platform_fs_slug") val platformFsSlug: String,
+    /** The platform's name as RomM shows it (its custom name, when it has one). */
+    @SerialName("platform_display_name") val platformDisplayName: String? = null,
     val name: String?,
     @SerialName("name_sort_key") val nameSortKey: String?,
     @SerialName("fs_name") val fsName: String,

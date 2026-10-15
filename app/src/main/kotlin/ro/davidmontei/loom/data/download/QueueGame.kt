@@ -157,7 +157,9 @@ class QueueGame @Inject constructor(
         (platformId ?: catalog.rom(romId)?.platformId)?.let { catalog.platform(it) }?.let { return Platform(it) to null }
         val rom = downloads.romFromRomm(romId)
         syncScheduler.enqueue()
-        return Platform(rom.platformId, rom.platformSlug, rom.platformSlug, rom.platformFsSlug) to rom
+        // Most often only the game is new: its platform is named as in the library, else as RomM names it.
+        val name = catalog.platform(rom.platformId)?.displayName ?: rom.platformDisplayName ?: rom.platformSlug
+        return Platform(rom.platformId, name, rom.platformSlug, rom.platformFsSlug) to rom
     }
 
     /** A folder Loom found on the card is remembered as if chosen, so the platform's games keep one home. */
