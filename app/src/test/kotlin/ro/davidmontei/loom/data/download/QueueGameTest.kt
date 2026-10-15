@@ -14,10 +14,12 @@ import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -54,6 +56,7 @@ import ro.davidmontei.loom.storage.engine.JobStatus
 import ro.davidmontei.loom.storage.engine.WaitReason
 import ro.davidmontei.loom.storage.mapping.SystemFolder
 import java.io.File
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
@@ -301,6 +304,38 @@ class QueueGameTest {
             assertThat(job.plan().systemFolder).isEqualTo("sfc")
         }
         assertThat(mapping.currentMapper().resolve("snes", "snes").folder).isEqualTo("sfc")
+    }
+
+    /**
+     * The folder chosen in the queue just as another game of the platform was sent, while RomM was asked
+     * for its files: too early for the choice to release it, so it's released once queued, rather than
+     * waiting (and asked about again) for a folder already chosen.
+     */
+    @Test fun aGameSentAsItsFolderIsChosenDoesntWaitForIt() = runBlocking<Unit> {
+        folders("snes", "sfc")
+        db.catalogDao().upsertRoms(listOf(rom(11)))
+        val first = (fromRomm(10) as QueueGame.Outcome.WaitingForFolder).jobId
+        val fetching = CountDownLatch(1)
+        val chosen = CountDownLatch(1)
+        val usual = answer
+        answer = { id ->
+            if (id == 11) {
+                fetching.countDown()
+                chosen.await(5, TimeUnit.SECONDS)
+            }
+            usual(id)
+        }
+        val second = async(Dispatchers.IO) { fromRomm(11) }
+        withContext(Dispatchers.IO) { assertThat(fetching.await(5, TimeUnit.SECONDS)).isTrue() }
+
+        val ask = (queue.askFolder(first) as QueueGame.Outcome.AskFolder).ask
+        queue.folderChosen(ask.fsSlug, "sfc", thenQueue = null, platformId = ask.platformId)
+        chosen.countDown()
+
+        val outcome = second.await()
+        val id = db.downloadDao().jobForRom(11)!!.id
+        assertThat(outcome).isEqualTo(QueueGame.Outcome.Queued(id))
+        assertThat(db.downloadDao().job(id)!!.let { it.phase to it.plan().systemFolder }).isEqualTo(JobPhase.QUEUED.name to "sfc")
     }
 
     /** The library's own question, answered, releases the platform's waiting games too. */

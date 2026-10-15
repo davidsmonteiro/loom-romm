@@ -85,7 +85,7 @@ class QueueGame @Inject constructor(
             is FolderDecision.Ask -> when (whenUnsure) {
                 WhenUnsure.ASK -> Outcome.AskFolder(platform.ask(romId, d))
                 WhenUnsure.WAIT_IN_QUEUE -> when (val r = downloads.enqueue(romId, installRequestId, waitForFolder = true, known = fetched)) {
-                    is EnqueueResult.Queued -> Outcome.WaitingForFolder(r.jobId, platform.ask(romId, d))
+                    is EnqueueResult.Queued -> waitOrGo(platform, r.jobId, platform.ask(romId, d))
                     else -> r.outcome()
                 }
             }
@@ -160,6 +160,18 @@ class QueueGame @Inject constructor(
         // Most often only the game is new: its platform is named as in the library, else as RomM names it.
         val name = catalog.platform(rom.platformId)?.displayName ?: rom.platformDisplayName ?: rom.platformSlug
         return Platform(rom.platformId, name, rom.platformSlug, rom.platformFsSlug) to rom
+    }
+
+    /**
+     * Game [jobId], just queued waiting for [platform]'s folder: the folder may have been chosen while
+     * the game was being queued (RomM asked for its files meanwhile), too early for the choice to
+     * release it. Asked again, a folder settled by now releases it ([Outcome.Queued]).
+     */
+    private suspend fun waitOrGo(platform: Platform, jobId: Long, ask: FolderAsk): Outcome {
+        val d = folders.decide(platform.slug, platform.fsSlug) as? FolderDecision.Use ?: return Outcome.WaitingForFolder(jobId, ask)
+        settle(platform, d)
+        downloads.releaseFolderWaits(listOf(platform.id), d.folder)
+        return Outcome.Queued(jobId)
     }
 
     /** A folder Loom found on the card is remembered as if chosen, so the platform's games keep one home. */
