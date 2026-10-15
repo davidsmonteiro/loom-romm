@@ -188,6 +188,29 @@ class PpssppSaveSyncTest : SaveSyncTestBase() {
         assertThat(state(lumines)).isEqualTo(SaveSyncState.IN_SYNC)
     }
 
+    /**
+     * An old Argosy's archive holds the game's installed data too, which a restore leaves out, so
+     * it hashes otherwise than the Thor's save. With no baseline saying they are one, it is still
+     * found to be the Thor's save: no conflict, and nothing on the card touched.
+     */
+    @Test fun anArchiveWithInstalledDataIsTheThorsSaveWithoutABaseline() = runBlocking<Unit> {
+        installPsp(lumines)
+        writeLuminesSaves()
+        val withData = argosyArchive("ULUS10064INSTALL/" to null, "ULUS10064INSTALL/PARAM.SFO" to INSTALL_SFO, "ULUS10064INSTALL/DATA.DAT" to ByteArray(4096) { 1 })
+        val argosys = romm.addSave(lumines.romId, withData, emulator = "ppsspp", device = "dev-argosy", fileName = "Lumines.zip")
+        assertThat(argosys.hash).isNotEqualTo(LUMINES_HASH)
+
+        val report = engine().sync(SaveSyncRequest.CHECK)
+
+        assertThat(report.conflicts).isEmpty()
+        assertThat(report.adopted).containsExactly(lumines.romId)
+        val baseline = saves.baseline(lumines.romId, "autosave")!!
+        assertThat(baseline.localHash).isEqualTo(LUMINES_HASH)
+        assertThat(baseline.serverSaveId).isEqualTo(argosys.id)
+        assertThat(folder("ULUS10064INSTALL").exists()).isFalse()
+        assertThat(state(lumines)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
     @Test fun aRestoreLeavesInstallDataAlone() = runBlocking<Unit> {
         installPsp(lumines)
         val installed = ByteArray(8192) { 1 }

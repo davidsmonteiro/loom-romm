@@ -66,11 +66,7 @@ class SaveRestorer(
         val parent = parentOf(unit)
         recover(unit)
         if (unit.hash() != expectedCurrent) throw SaveChangedException("The save changed since it was backed up")
-        val expected = when (unit) {
-            is SaveUnit.Folders -> SaveHasher.hashZip(archive, unit.roots.map { it.name }.toSet())
-            is SaveUnit.Prefixed -> SaveHasher.hashZip(archive, unit.roots.map { it.name }.toSet())
-            is SaveUnit.SingleFile -> SaveHasher.md5(archive)
-        }
+        val expected = hashOnceRestored(archive, unit)
 
         Files.createDirectories(parent)
         val work = Files.createDirectory(parent.resolve(WORK_PREFIX + UUID.randomUUID()))
@@ -104,6 +100,18 @@ class SaveRestorer(
         if (unit is SaveUnit.Prefixed) runCatching { removeEmpty(unit.roots.map { it.folder }) }
         runCatching { deleteTree(work) } // a leftover finished work folder is removed by the next recover
         return expected
+    }
+
+    /**
+     * The hash [unit] has once [archive] is restored in its place, as [restore] checks and returns
+     * it: only the archive's files under the unit's roots count; a raw save is all of it.
+     *
+     * @throws IOException when the archive can't be read, or isn't a zip where the unit needs one.
+     */
+    fun hashOnceRestored(archive: Path, unit: SaveUnit): String = when (unit) {
+        is SaveUnit.Folders -> SaveHasher.hashZip(archive, unit.roots.map { it.name }.toSet())
+        is SaveUnit.Prefixed -> SaveHasher.hashZip(archive, unit.roots.map { it.name }.toSet())
+        is SaveUnit.SingleFile -> SaveHasher.md5(archive)
     }
 
     /** [restore] for a unit of folders. */

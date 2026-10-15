@@ -494,6 +494,17 @@ class SaveSyncEngine(
                     Acted.NOTHING
                 }
                 SyncOutcome.CONFLICT -> {
+                    // A DS or PSP save that differs by hash may still be RomM's: see restoresAsLocal. Asked once per conflict.
+                    val askedBefore = existing != null && existing.reason == decision.name && existing.localHash == game.localHash &&
+                        existing.serverSaveId == head?.saveId && existing.serverHash == head?.contentHash
+                    if (decision in SAME_SAVE_MAYBE && game.save.unit !is SaveUnit.Folders && head != null && game.localHash != null &&
+                        !askedBefore && restoresAsLocal(api, deviceId, sessionId, game.save, head, game.localHash)
+                    ) {
+                        saves.deleteConflict(game.romId)
+                        adopt(api, deviceId, game.save, game.localHash, head)
+                        adopted += game.romId
+                        return Acted.DONE
+                    }
                     conflict(game, head, decision, existing?.detail?.takeIf { unreadableBefore })
                     Acted.NOTHING
                 }
@@ -792,19 +803,7 @@ class SaveSyncEngine(
         if (current != expectedLocal) throw SaveChangedException("The save on the Thor changed since Loom looked; nothing was replaced")
         val file = File(workDir, "download-$romId-${UUID.randomUUID()}.${save.extension()}")
         try {
-            rommCall { api.saveContent(head.saveId, deviceId, sessionId) }.use { body ->
-                body.byteStream().use { input -> copyCapped(input, file, save) }
-            }
-            val expected = head.contentHash
-            if (expected != null && SaveHasher.hashFile(file.toPath()) != expected && SaveHasher.md5(file.toPath()) != expected) {
-                throw SaveArchiveException("The downloaded save doesn't match RomM's hash; nothing was replaced")
-            }
-            val target = when (val unit = save.unit) {
-                is SaveUnit.Folders -> unit.also { checkFolders(save, it.roots, file) }
-                // The game's folders the archive brings join the unit, as Argosy's restore replaces them all.
-                is SaveUnit.Prefixed -> PpssppSaveLocator.forRestore(unit, file.toPath(), save.maxUnitBytes)
-                is SaveUnit.SingleFile -> unit.also { checkRaw(save, file) }
-            }
+            val target = fetch(api, deviceId, sessionId, save, head, file)
             // Only a save that can go in place needs the Thor's backed up: one refused above, every
             // time, would otherwise add a copy of the same save at each attempt.
             if (current != null) backups(save.unit).backUp(romId.toString(), save.title, save.unit, current)
@@ -813,6 +812,51 @@ class SaveSyncEngine(
             rommCall { api.confirmSaveDownloaded(head.saveId, SaveDownloadedRequest(deviceId, head.contentHash)) }
             writeBaseline(save, restored, head.saveId, head.contentHash, head.updatedAt)
             setState(romId, SaveSyncState.IN_SYNC, null)
+        } finally {
+            file.delete()
+        }
+    }
+
+    /**
+     * Downloads RomM's [head] for [save] to [file], checked against RomM's hash and laid out as the
+     * unit is, and returns the unit it restores into. A raw save loses Argosy's hardcore trailer.
+     *
+     * @throws UnrestorableSaveException when it never could be restored here.
+     * @throws SaveArchiveException when the download doesn't match RomM's hash.
+     */
+    private suspend fun fetch(api: RommApi, deviceId: String, sessionId: Int?, save: ResolvedSave.Ready, head: ServerHead, file: File): SaveUnit {
+        rommCall { api.saveContent(head.saveId, deviceId, sessionId) }.use { body ->
+            body.byteStream().use { input -> copyCapped(input, file, save) }
+        }
+        val expected = head.contentHash
+        if (expected != null && SaveHasher.hashFile(file.toPath()) != expected && SaveHasher.md5(file.toPath()) != expected) {
+            throw SaveArchiveException("The downloaded save doesn't match RomM's hash; nothing was replaced")
+        }
+        return when (val unit = save.unit) {
+            is SaveUnit.Folders -> unit.also { checkFolders(save, it.roots, file) }
+            // The game's folders the archive brings join the unit, as Argosy's restore replaces them all.
+            is SaveUnit.Prefixed -> PpssppSaveLocator.forRestore(unit, file.toPath(), save.maxUnitBytes)
+            is SaveUnit.SingleFile -> unit.also { checkRaw(save, file) }
+        }
+    }
+
+    /**
+     * Whether RomM's [head], restored, would be the Thor's save as it is, hashing as [local]. A
+     * DS or PSP restore leaves out what isn't the unit's (Argosy's hardcore trailer, an archive's
+     * folders of installed data or of another game), so a save Loom restored hashes otherwise than
+     * RomM's: only the baseline written then says they are one. With it lost (a `/downloaded` that
+     * never got through, Loom's data cleared, the save folder changed), this keeps one save from
+     * being a conflict. Nothing on the Thor is touched, and a comparison that fails leaves the conflict.
+     */
+    private suspend fun restoresAsLocal(api: RommApi, deviceId: String, sessionId: Int?, save: ResolvedSave.Ready, head: ServerHead, local: String): Boolean {
+        val file = File(workDir, "compare-${save.romId}-${UUID.randomUUID()}.${save.extension()}")
+        return try {
+            restorer.hashOnceRestored(file.toPath(), fetch(api, deviceId, sessionId, save, head, file)) == local
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (e.isFatal()) throw e
+            false
         } finally {
             file.delete()
         }
@@ -1066,6 +1110,9 @@ class SaveSyncEngine(
 
         /** Of those, the ones a game never synced from its folder gets only while RomM has no save of it. */
         private val NONE_ON_ROMM = setOf(SaveSyncState.NO_SAVE, SaveSyncState.LOCAL_NEWER, SaveSyncState.WRITING)
+
+        /** The conflicts a lost baseline can make of a save restored here and RomM's, one save differing only by hash. */
+        private val SAME_SAVE_MAYBE = setOf(SyncDecision.FIRST_SYNC_DIFFERS, SyncDecision.BOTH_CHANGED)
 
         private val ARCHIVE_STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH-mm-ss 'UTC'").withZone(ZoneOffset.UTC)
     }

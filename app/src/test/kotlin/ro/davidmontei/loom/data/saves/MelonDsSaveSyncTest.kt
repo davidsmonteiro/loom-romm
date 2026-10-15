@@ -104,6 +104,75 @@ class MelonDsSaveSyncTest : SaveSyncTestBase() {
         assertThat(romm.uploads()).isEmpty()
     }
 
+    /**
+     * The Thor's save is one Loom restored from Argosy's hardcore upload, so it hashes otherwise
+     * than RomM's. With no baseline saying they are one (Loom's data cleared, another melonDS
+     * folder), RomM's save, its trailer cut off, is still found to be the Thor's: no conflict.
+     */
+    @Test fun aSaveRestoredWithoutArgosysTrailerIsRommsWithoutABaseline() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        installDs(marioDs)
+        val save = bytes(2, 8192)
+        writeDsSave(marioDs, save)
+        val argosys = romm.addSave(marioDs.romId, save + ARGOSY_TRAILER, emulator = "melonds", device = "dev-argosy",
+            fileName = "New Super Mario Bros.sav")
+
+        val report = engine().sync(SaveSyncRequest.CHECK)
+
+        assertThat(report.conflicts).isEmpty()
+        assertThat(report.adopted).containsExactly(marioDs.romId)
+        assertThat(saves.conflict(marioDs.romId)).isNull()
+        val baseline = saves.baseline(marioDs.romId, "autosave")!!
+        assertThat(baseline.localHash).isEqualTo(SAVE2_MD5)
+        assertThat(baseline.serverSaveId).isEqualTo(argosys.id)
+        assertThat(baseline.serverHash).isEqualTo(SAVE2_WITH_TRAILER_MD5)
+        assertThat(downloadedBody(argosys.id)["content_hash"]!!.jsonPrimitive.content).isEqualTo(SAVE2_WITH_TRAILER_MD5)
+        assertThat(dsSave(marioDs).readBytes()).isEqualTo(save)
+        assertThat(romm.uploads()).isEmpty()
+
+        assertThat(engine().sync(SaveSyncRequest.CHECK).conflicts).isEmpty()
+        assertThat(state(marioDs)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
+    /**
+     * A pull restored Argosy's hardcore upload, then lost Wi-Fi before telling RomM: the baseline
+     * is still the one before. Both sides changed since, to one save: no conflict either.
+     */
+    @Test fun aRestoreWhoseBaselineWasNeverWrittenIsNoConflict() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        installDs(marioDs)
+        writeDsSave(marioDs, save1)
+        engine().sync(SaveSyncRequest.PUSH)
+        val save = bytes(2, 8192)
+        val argosys = romm.addSave(marioDs.romId, save + ARGOSY_TRAILER, emulator = "melonds", device = "dev-argosy",
+            fileName = "New Super Mario Bros.sav")
+        writeDsSave(marioDs, save, minutesAgo = 5) // what the restore put in place
+
+        val report = engine().sync(SaveSyncRequest.CHECK)
+
+        assertThat(report.conflicts).isEmpty()
+        assertThat(report.adopted).containsExactly(marioDs.romId)
+        assertThat(saves.baseline(marioDs.romId, "autosave")!!.serverSaveId).isEqualTo(argosys.id)
+        assertThat(state(marioDs)).isEqualTo(SaveSyncState.IN_SYNC)
+    }
+
+    /** A save that is another once its trailer is off stays a conflict, and RomM's is downloaded to compare only once. */
+    @Test fun aDifferentSaveUnderArgosysTrailerIsAConflictComparedOnce() = runBlocking<Unit> {
+        romm.rommVersion = "5.4.0"
+        installDs(marioDs)
+        writeDsSave(marioDs, save1)
+        val argosys = romm.addSave(marioDs.romId, bytes(2, 8192) + ARGOSY_TRAILER, emulator = "melonds", device = "dev-argosy",
+            fileName = "New Super Mario Bros.sav")
+
+        assertThat(engine().sync(SaveSyncRequest.CHECK).conflicts).containsExactly(marioDs.romId)
+        assertThat(engine().sync(SaveSyncRequest.CHECK).conflicts).containsExactly(marioDs.romId)
+
+        assertThat(saves.conflict(marioDs.romId)!!.reason).isEqualTo(SyncDecision.FIRST_SYNC_DIFFERS.name)
+        assertThat(romm.paths().count { it == "GET /api/saves/${argosys.id}/content" }).isEqualTo(1)
+        assertThat(dsSave(marioDs).readBytes()).isEqualTo(save1)
+        assertThat(saves.baseline(marioDs.romId, "autosave")).isNull()
+    }
+
     /** RomM's web player keeps a DS save as `<ROM>.srm`, raw, under melonDS's id: it is melonDS's save. */
     @Test fun theWebPlayersSrmRestoresAsMelonDs() = runBlocking<Unit> {
         installDs(marioDs)
